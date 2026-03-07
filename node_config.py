@@ -1,5 +1,6 @@
 import json
 import secrets
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -70,7 +71,7 @@ def create_service_token(service_name: str) -> str:
     token = generate_service_token()
     config.setdefault("service_tokens", {})[token] = {
         "service": service_name,
-        "created_at": int(__import__("time").time()),
+        "created_at": int(time.time()),
     }
     save_node_config(config)
     return token
@@ -117,7 +118,7 @@ def create_enrollment_token() -> str:
         raise ValueError("Only a master node can create enrollment tokens")
     token = generate_enrollment_token()
     config.setdefault("enrollment_tokens", {})[token] = {
-        "created_at": int(__import__("time").time()),
+        "created_at": int(time.time()),
     }
     save_node_config(config)
     return token

@@ -1,8 +1,11 @@
 import asyncio
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("inframatik.services")
 
 SERVICES_FILE = Path.home() / ".config" / "inframatik" / "services.json"
 PORTS_ENV_FILE = Path.home() / ".config" / "inframatik" / "ports.env"
@@ -165,8 +168,8 @@ async def register_service(
             if policy_id:
                 await create_access_app(name, hostname, policy_id)
             cf_route_added = True
-        except Exception:
-            pass  # CF setup is optional; service still gets registered
+        except Exception as e:
+            logger.debug("CF setup skipped for %s: %s", name, e)
 
     svc = {
         "port": port,
@@ -202,8 +205,8 @@ async def deregister_service(name: str):
             await remove_tunnel_route(svc["hostname"])
             await delete_dns_record(svc["hostname"])
             await delete_access_app(svc["hostname"])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("CF cleanup skipped for %s: %s", name, e)
 
     _save_registry(registry)
     return svc
