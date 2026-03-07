@@ -34,6 +34,9 @@ def api_request(endpoint, method, path, body=None, token=None):
             detail = str(e)
         print(f"  Error: {detail}", file=sys.stderr)
         return None
+    except urllib.error.URLError as e:
+        print(f"  Error: server unreachable ({e.reason})", file=sys.stderr)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -108,13 +111,16 @@ def edit_codex_toml(endpoint, token, path=".codex/config.toml"):
     # Append new inframatik section
     if filtered and filtered[-1].strip():
         filtered.append("")
+    def _toml_escape(s):
+        return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
     filtered.extend([
         "[mcp_servers.inframatik]",
         'type = "http"',
-        f'url = "{endpoint}/mcp"',
+        f'url = "{_toml_escape(endpoint)}/mcp"',
         "",
         "[mcp_servers.inframatik.headers]",
-        f'Authorization = "Bearer {token}"',
+        f'Authorization = "Bearer {_toml_escape(token)}"',
     ])
 
     toml_path.write_text("\n".join(filtered) + "\n")

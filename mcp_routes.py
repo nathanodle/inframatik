@@ -224,12 +224,7 @@ async def mcp_endpoint(request: Request):
             return _jsonrpc_result(req_id, {
                 "content": [{"type": "text", "text": result.get("text", "")}],
             })
-        except ValueError as e:
-            return _jsonrpc_result(req_id, {
-                "content": [{"type": "text", "text": f"Error: {e}"}],
-                "isError": True,
-            })
-        except RuntimeError as e:
+        except Exception as e:
             return _jsonrpc_result(req_id, {
                 "content": [{"type": "text", "text": f"Error: {e}"}],
                 "isError": True,
