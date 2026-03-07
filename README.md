@@ -1,6 +1,6 @@
 # inframatik
 
-A lightweight system dashboard and service manager for Linux machines. Monitor CPU, memory, disk, network, GPUs, and temperatures. Register and manage services with automatic port assignment. Optionally cluster multiple nodes with a master/worker architecture and Cloudflare tunnel integration.
+A system dashboard and service manager for Linux machines. Monitor CPU, memory, disk, network, GPUs, and temperatures. Register and manage services with automatic port assignment. Cluster multiple nodes with master/worker architecture. Cloudflare tunnel integration for public access with Zero Trust. Built-in MCP server for AI agent deployments.
 
 ## Quick Start
 
@@ -14,58 +14,49 @@ python3 -m venv venv
 ./venv/bin/uvicorn main:app --host 0.0.0.0 --port 9000
 ```
 
-Open `http://localhost:9000`. On first visit you'll be prompted to set up the node as **Standalone**, **Master**, or **Worker**.
+Open `http://localhost:9000`:
+1. Set an admin password (first visit only)
+2. Choose a node role: **Standalone**, **Master**, or **Worker**
+3. Dashboard loads with live system metrics
 
 ## Features
 
 - **System monitoring** — CPU (per-core), memory, disk, network interfaces, load average, temperatures, NVIDIA/AMD GPUs, top processes
 - **Service management** — register apps, auto-assign ports (8000–8999), start/stop/restart, view logs, systemd user units
-- **Multi-node clustering** — master/worker architecture with sidebar, proxy, heartbeats, and deploy-to-workers
-- **Cloudflare integration** (optional) — tunnel management, DNS records, Access applications, per-node tunnels
-- **Remote installer** — `curl | bash` script served by master for bootstrapping new nodes
+- **Multi-node clustering** — master/worker with enrollment tokens, sidebar, proxy, heartbeats, deploy-to-workers
+- **Cloudflare integration** — guided setup wizard, tunnel management, DNS records, Access applications, per-node tunnels, dashboard Zero Trust protection
+- **Authentication** — password login, CF Access JWT bypass, scoped service tokens, API keys for worker communication
+- **AI agent support** — built-in MCP server, scoped service tokens, CLI tool for repo setup, Claude Code + Codex integration
 
 ## Architecture
 
 ```
 FastAPI backend (Python)  ←→  Vanilla JS frontend
          │
-         ├── ~/.config/inframatik/node.json      (node identity & role)
+         ├── ~/.config/inframatik/node.json      (node identity, role, credentials, CF config)
          ├── ~/.config/inframatik/services.json   (service registry)
-         ├── ~/.config/inframatik/ports.env       (auto-generated port env vars)
-         └── ~/.config/inframatik/cf.env          (Cloudflare credentials, optional)
+         └── ~/.config/inframatik/ports.env       (auto-generated port env vars)
 ```
 
-Services run as **systemd user units** under `~/.config/systemd/user/`. They survive logout and start on boot (via `loginctl enable-linger`).
-
-Ports are auto-assigned from the 8000–8999 range. Each service gets `$PORT` and `$HOST` environment variables set in its unit file.
+- Services run as **systemd user units** under `~/.config/systemd/user/`
+- Ports are auto-assigned from 8000–8999 with `$PORT` and `$HOST` env vars
+- Services survive logout and start on boot (via `loginctl enable-linger`)
+- All credentials (CF tokens, API keys, password hash) stored in `node.json`
 
 ## Node Roles
 
-### Standalone
-
-Single machine dashboard. Monitors system metrics and manages local services. No clustering.
-
-### Master
-
-Central node that also monitors workers. The master:
-- Shows all nodes in a sidebar
-- Proxies API calls to workers
-- Deploys code updates to workers
-- Manages Cloudflare tunnels for all nodes (if configured)
-
-### Worker
-
-Connects to a master via heartbeats. The worker:
-- Sends registration + periodic heartbeats to the master
-- Exposes the same local API for the master to proxy through
-- Can receive code updates and CF tunnel tokens from the master
+| Role | Description |
+|------|-------------|
+| **Standalone** | Single machine. System monitoring + service management. No clustering. |
+| **Master** | Central node. Monitors workers via sidebar, proxies API calls, deploys updates, manages CF tunnels. |
+| **Worker** | Connects to a master via heartbeats. Receives updates and CF tunnel tokens from master. |
 
 ## Multi-Node Setup
 
 ### Option A: Install script (recommended)
 
 1. On the master, go to Settings → Workers → **Generate Enrollment Token**
-2. On the new machine, run the installer with the token:
+2. On the new machine:
 
 ```bash
 curl -fsSL http://MASTER_IP:9000/api/install.sh | bash -s -- --enroll TOKEN
@@ -77,7 +68,7 @@ curl -fsSL http://MASTER_IP:9000/api/install.sh | bash -s -- --enroll TOKEN --na
 INSTALL_CF=1 curl -fsSL http://MASTER_IP:9000/api/install.sh | bash -s -- --enroll TOKEN
 ```
 
-The worker enrolls automatically — no manual key copy-paste needed. Enrollment tokens are single-use.
+The installer prompts for an admin password, sets up a venv, creates a systemd service, installs the `inframatik` CLI, and enrolls with the master automatically. Enrollment tokens are single-use.
 
 ### Option B: Manual
 
@@ -87,99 +78,36 @@ The worker enrolls automatically — no manual key copy-paste needed. Enrollment
 
 ## Cloudflare Integration (Optional)
 
-Cloudflare integration enables public access to services via tunnels, automatic DNS records, and Zero Trust Access applications.
+Guided setup — no manual config files needed.
 
 ### Setup
 
 1. Go to Settings → Cloudflare
-2. Create a [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens) with these permissions:
+2. Create a [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens) with permissions:
    - Account → Cloudflare Tunnel → Edit
    - Account → Access: Apps and Policies → Edit
    - Zone → DNS → Edit
-3. Paste the token and click Validate
-4. Select your account and domain
-5. Optionally select or create an Access policy (for Zero Trust protection)
+3. Paste the token → the wizard auto-discovers your account, domains, and existing Access policies
+4. Select your account, domain, and optionally an Access policy (or create one)
 
-The wizard auto-discovers your account, domains, and existing policies. All credentials are stored in `node.json` — no manual config files needed.
+### What it enables
 
-### What it does
+- **Service hostnames** — register a service with a hostname (e.g. `myapp.example.com`) and inframatik creates the tunnel route, DNS record, and Access app automatically
+- **Dashboard access** — put the dashboard itself behind CF Access (Settings → Dashboard Access)
+- **Worker tunnels** — master can create and push CF tunnels to worker nodes
 
-When you register a service with a **hostname** (e.g. `myapp.example.com`):
-1. Adds an ingress route to the Cloudflare tunnel
-2. Creates a CNAME DNS record pointing to the tunnel
-3. Creates a CF Access application with the default policy (if configured)
+## Authentication
 
-Deleting the service cleans up all three.
+| Method | Used by | How it works |
+|--------|---------|-------------|
+| **Password login** | Browser users | Set during install or first visit. Sessions default to 24h. |
+| **CF Access JWT** | Users through CF | JWT validated cryptographically against CF public keys. No login needed. |
+| **API keys** | Worker ↔ master | Exchanged during enrollment. Used for heartbeats, registration, updates. |
+| **Service tokens** | AI agents, CI/CD | Scoped to one service. Can only manage that service. |
 
-## Configuration Reference
+All mutating API endpoints require authentication. Read-only system metrics also require a valid session.
 
-| File | Purpose | Auto-created |
-|------|---------|-------------|
-| `node.json` | Node identity, role, API keys, worker list, CF credentials | Yes (on setup) |
-| `services.json` | Registered services with ports and commands | Yes (first service) |
-| `ports.env` | Shell-sourceable port env vars (`$INFRA_<NAME>_PORT`) | Yes (auto-generated) |
-
-All files live in `~/.config/inframatik/`.
-
-### Port environment variables
-
-After registering a service, its port is available as an environment variable:
-
-```bash
-# Source in your .bashrc:
-source ~/.config/inframatik/ports.env
-
-echo $INFRA_MY_APP_PORT     # 8001
-curl localhost:$INFRA_MY_APP_PORT/api/health
-```
-
-## API Endpoints
-
-### System
-- `GET /api/system` — system metrics (CPU, memory, disk, network, GPUs, processes, temps)
-
-### Services
-- `GET /api/services` — list all services with status
-- `POST /api/services` — register a new service (`{name, command, working_dir, hostname?, lan?}`)
-- `DELETE /api/services/{name}` — remove a service
-- `POST /api/services/{name}/start|stop|restart` — control a service
-- `GET /api/services/{name}/logs` — view service logs
-- `GET /api/ports/next` — next available port
-
-### Tunnel
-- `GET /api/tunnel` — tunnel connection status
-
-### Cluster
-- `GET /api/node/info` — node role and identity
-- `GET /api/config` — full node configuration
-- `POST /api/config/init-standalone` — configure as standalone
-- `POST /api/config/init-master` — configure as master
-- `POST /api/config/init-worker` — configure as worker
-- `POST /api/config/reset` — reset to unconfigured
-- `GET /api/nodes` — list all nodes (master only)
-- `POST /api/config/workers` — add a worker (master only)
-- `DELETE /api/config/workers/{id}` — remove a worker (master only)
-- `POST /api/config/dashboard-access` — put dashboard behind CF Access (`{hostname}`)
-- `DELETE /api/config/dashboard-access` — remove dashboard from CF Access
-
-### Deploy
-- `GET /api/node/version` — current version info
-- `POST /api/update/deploy` — push code to all workers (master only)
-- `POST /api/update/deploy-self` — restart this node
-
-## Security
-
-All dashboard and API access requires authentication:
-
-- **Password login** — set during installation or first visit. Sessions default to 24 hours (configurable).
-- **CF Access bypass** — when accessed through Cloudflare Access, the CF JWT is validated cryptographically. No additional login needed.
-- **API keys** — worker-to-master communication uses API keys exchanged during enrollment.
-
-The install script prompts for an admin password. All mutating API endpoints require a valid session token, CF JWT, or API key.
-
-- **Service tokens** — scoped to a single service (`svc_...`). Can only manage that one service. Ideal for AI agents and CI/CD.
-
-## Agent / AI Integration
+## AI Agent Integration
 
 AI coding agents can deploy and manage services using scoped service tokens.
 
@@ -189,37 +117,97 @@ AI coding agents can deploy and manage services using scoped service tokens.
 inframatik init
 ```
 
-This walks you through: authenticating, creating a service token, writing a `.inframatik` config file, and optionally configuring Claude Code or Codex MCP servers.
+This walks you through:
+1. Authenticating with the inframatik server
+2. Creating a scoped service token for your app
+3. Writing a `.inframatik` config file with API instructions
+4. Optionally registering the MCP server with Claude Code or Codex
+5. Optionally appending deployment instructions to CLAUDE.md / AGENTS.md
 
 ### How it works
 
-1. `inframatik init` creates a `.inframatik` file in your repo with:
-   - API endpoint and scoped service token
-   - Inline instructions the model can read to know how to deploy
-2. The model reads `.inframatik` and uses `curl` or the REST API to register, start, stop, and manage the service
-3. The service token is scoped — it can only manage the one service it was created for
+The `.inframatik` file contains the API endpoint, a scoped service token, and inline instructions any model can read:
+
+```json
+{
+  "endpoint": "http://localhost:9000",
+  "token": "svc_...",
+  "service": "my-app",
+  "instructions": "Register: POST /api/services ...\nStart: POST /api/services/my-app/start\n..."
+}
+```
+
+A model reads this file and knows how to deploy via `curl` — no MCP required.
 
 ### MCP server
 
-inframatik includes a built-in MCP server at `/mcp` (streamable HTTP transport). When `inframatik init` registers the MCP server, agents get 5 typed tools:
+inframatik includes a built-in MCP server at `/mcp` (streamable HTTP transport). Five tools:
 
-- **deploy** — register and start the service
-- **restart** — restart the service
-- **stop** — stop the service
-- **logs** — get recent service logs
-- **status** — check service status
+| Tool | Description |
+|------|-------------|
+| `deploy` | Register and start the service |
+| `restart` | Restart the service |
+| `stop` | Stop the service |
+| `logs` | Get recent service logs |
+| `status` | Check service status |
 
-No extra deps or processes needed — the MCP server runs inside the same FastAPI app.
+No extra deps or processes — the MCP server runs inside the same FastAPI app. `inframatik init` auto-configures it for Claude Code (`.mcp.json`) and Codex (`.codex/config.toml`).
 
 ### Supported agent harnesses
 
-- **Claude Code** — detects `~/.claude`, registers MCP server in `.mcp.json`, appends to `CLAUDE.md`
-- **Codex CLI** — detects `~/.codex`, registers MCP server in `.codex/config.toml`, appends to `AGENTS.md`
-- **Any agent** — reads `.inframatik` directly for API instructions (no MCP required)
+- **Claude Code** — detects `~/.claude`, registers MCP via `claude mcp add` or `.mcp.json`
+- **Codex CLI** — detects `~/.codex`, registers MCP via `codex mcp add` or `.codex/config.toml`
+- **Any agent** — reads `.inframatik` directly for REST API instructions
 
 ## Service Management
 
 See [USAGE.md](USAGE.md) for detailed documentation on registering, managing, and configuring services.
+
+## API Reference
+
+### Authentication
+- `GET /api/auth/status` — check if password is set
+- `POST /api/auth/login` — login with password, returns session token
+- `POST /api/auth/logout` — invalidate session
+- `POST /api/auth/set-password` — set admin password (first run only)
+
+### System
+- `GET /api/system` — system metrics
+
+### Services
+- `GET /api/services` — list services
+- `POST /api/services` — register a service
+- `DELETE /api/services/{name}` — remove a service
+- `POST /api/services/{name}/start|stop|restart` — control a service
+- `GET /api/services/{name}/logs` — view logs
+- `GET /api/ports/next` — next available port
+
+### Cluster
+- `GET /api/node/info` — node role and identity
+- `GET /api/config` — node configuration
+- `POST /api/config/init-standalone|init-master|init-worker` — configure node role
+- `POST /api/config/reset` — reset to unconfigured
+- `GET /api/nodes` — list all nodes (master)
+- `POST /api/config/workers` — add a worker (master)
+- `DELETE /api/config/workers/{id}` — remove a worker (master)
+- `POST /api/config/enrollment-tokens` — generate enrollment token (master)
+- `POST /api/nodes/enroll` — enroll a worker with token
+- `POST /api/config/service-tokens` — generate scoped service token
+- `DELETE /api/config/service-tokens/{token}` — revoke service token
+- `POST /api/config/dashboard-access` — enable CF Access on dashboard
+- `DELETE /api/config/dashboard-access` — disable CF Access on dashboard
+
+### Deploy
+- `GET /api/node/version` — version info
+- `POST /api/update/deploy` — push code to workers (master)
+- `POST /api/update/deploy-self` — restart this node
+
+### MCP
+- `POST /mcp` — MCP streamable HTTP endpoint (service token required)
+
+## Migration from sysdashboard
+
+See [TEARDOWN.md](TEARDOWN.md) for instructions on removing old sysdashboard installations.
 
 ## License
 
