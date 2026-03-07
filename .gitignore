@@ -8,3 +8,4 @@ node.json
 services.json
 ports.env
 .inframatik
+vulns.md
