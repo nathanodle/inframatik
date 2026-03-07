@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+psutil
+httpx
+bcrypt
+PyJWT
+cryptography

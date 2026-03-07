@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>inframatik</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- Login screen -->
+<div id="login-screen" style="display:none">
+    <div class="login-container">
+        <h1 class="login-title">inframatik</h1>
+
+        <!-- Login form -->
+        <div id="login-form">
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="login-password" placeholder="Enter admin password" autocomplete="current-password"
+                       onkeydown="if(event.key==='Enter')submitLogin()">
+            </div>
+            <div class="form-error" id="login-error"></div>
+            <div class="form-actions">
+                <button class="btn primary" onclick="submitLogin()" style="width:100%">Log In</button>
+            </div>
+        </div>
+
+        <!-- Set password form (first run) -->
+        <div id="set-password-form" style="display:none">
+            <p class="settings-desc">Set an admin password to secure your dashboard.</p>
+            <div class="form-group">
+                <label>Password <span class="label-hint">(minimum 8 characters)</span></label>
+                <input type="password" id="set-password-input" placeholder="Choose a password" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+                <label>Confirm Password</label>
+                <input type="password" id="set-password-confirm" placeholder="Confirm password" autocomplete="new-password"
+                       onkeydown="if(event.key==='Enter')submitSetPassword()">
+            </div>
+            <div class="form-error" id="set-password-error"></div>
+            <div class="form-actions">
+                <button class="btn primary" onclick="submitSetPassword()" style="width:100%">Set Password</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Dashboard content (hidden until authenticated) -->
+<div id="dashboard-content">
+
+<!-- Top bar -->
+<header class="topbar">
+    <div class="topbar-left">
+        <h1 id="topbar-title">inframatik</h1>
+    </div>
+    <div class="topbar-right">
+        <span>
+            <span class="status-dot green" id="tunnel-dot"></span>
+            <span id="tunnel-text">Tunnel: checking...</span>
+        </span>
+        <span>up <span id="uptime">--</span></span>
+        <span class="version-tag" id="version-tag"></span>
+        <button class="btn settings-btn" onclick="openSettings()" title="Settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+        </button>
+    </div>
+</header>
+
+<div class="layout-wrapper">
+
+    <!-- Sidebar (hidden by default, shown on master) -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-section">
+            <div class="sidebar-heading">Nodes</div>
+            <div class="sidebar-nodes" id="sidebar-nodes"></div>
+        </div>
+    </nav>
+
+    <div class="container">
+
+        <!-- Host info bar -->
+        <div class="host-bar" id="host-bar"></div>
+
+        <!-- System tabs -->
+        <div class="section-header">
+            <h2>System</h2>
+            <div class="tabs">
+                <button class="tab active" data-tab="overview">Overview</button>
+                <button class="tab" data-tab="gpus">GPUs</button>
+                <button class="tab" data-tab="processes">Processes</button>
+                <button class="tab" data-tab="network">Network</button>
+                <button class="tab" data-tab="storage">Storage</button>
+            </div>
+        </div>
+
+        <!-- Tab: Overview -->
+        <div class="tab-content active" id="tab-overview">
+            <div class="metrics-grid">
+                <!-- CPU -->
+                <div class="metric-card">
+                    <div class="metric-label">CPU</div>
+                    <div class="metric-value" id="cpu-value">--<span class="unit">%</span></div>
+                    <div class="metric-sub" id="cpu-sub">-- cores</div>
+                    <div class="progress-bar"><div class="progress-fill green" id="cpu-bar" style="width:0%"></div></div>
+                    <div class="cpu-cores" id="cpu-cores"></div>
+                </div>
+
+                <!-- Memory -->
+                <div class="metric-card">
+                    <div class="metric-label">Memory</div>
+                    <div class="metric-value" id="mem-value">--<span class="unit">%</span></div>
+                    <div class="metric-sub" id="mem-sub">-- / --</div>
+                    <div class="progress-bar"><div class="progress-fill green" id="mem-bar" style="width:0%"></div></div>
+                </div>
+
+                <!-- Disk (primary) -->
+                <div class="metric-card">
+                    <div class="metric-label">Disk /</div>
+                    <div class="metric-value" id="disk-value">--<span class="unit">%</span></div>
+                    <div class="metric-sub" id="disk-sub">-- / --</div>
+                    <div class="progress-bar"><div class="progress-fill green" id="disk-bar" style="width:0%"></div></div>
+                </div>
+
+                <!-- Network rate -->
+                <div class="metric-card">
+                    <div class="metric-label">Network</div>
+                    <div class="metric-value" id="net-rate">--</div>
+                    <div class="metric-sub" id="net-rate-sub">--</div>
+                </div>
+
+                <!-- Load -->
+                <div class="metric-card">
+                    <div class="metric-label">Load Average</div>
+                    <div class="metric-value" id="load-value">--</div>
+                    <div class="metric-sub" id="load-sub">-- / -- (5m/15m)</div>
+                </div>
+
+                <!-- Temperatures -->
+                <div class="metric-card" id="temps-card">
+                    <div class="metric-label">Temperature</div>
+                    <div class="metric-value" id="temp-value">--<span class="unit">&deg;C</span></div>
+                    <div class="metric-sub" id="temp-sub">--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: GPUs -->
+        <div class="tab-content" id="tab-gpus">
+            <div class="metrics-grid" id="gpu-cards"></div>
+        </div>
+
+        <!-- Tab: Processes -->
+        <div class="tab-content" id="tab-processes">
+            <div class="process-table" id="process-table"></div>
+        </div>
+
+        <!-- Tab: Network -->
+        <div class="tab-content" id="tab-network">
+            <div class="metrics-grid" id="net-cards"></div>
+        </div>
+
+        <!-- Tab: Storage -->
+        <div class="tab-content" id="tab-storage">
+            <div class="metrics-grid" id="storage-cards"></div>
+        </div>
+
+        <!-- Tunnel (master only, hidden by default) -->
+        <div class="section-header" id="tunnel-section-header" style="display:none">
+            <h2>Tunnel</h2>
+            <div class="tabs" id="tunnel-tabs">
+                <button class="tunnel-tab active" data-tunnel-tab="cf-status">Status</button>
+                <button class="tunnel-tab" data-tunnel-tab="cf-routes">Routes</button>
+                <button class="tunnel-tab" data-tunnel-tab="cf-access">Access Apps</button>
+            </div>
+        </div>
+
+        <div class="tunnel-tab-content active" id="tunnel-tab-cf-status" style="display:none">
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Tunnel Status</div>
+                    <div class="metric-value" id="cf-tunnel-status">--</div>
+                    <div class="metric-sub" id="cf-tunnel-name">--</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Connections</div>
+                    <div class="metric-value" id="cf-tunnel-connections">--</div>
+                    <div class="metric-sub" id="cf-tunnel-locations">--</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Tunnel ID</div>
+                    <div class="metric-value mono-sm" id="cf-tunnel-id">--</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tunnel-tab-content" id="tunnel-tab-cf-routes" style="display:none">
+            <div class="cf-routes-table" id="cf-routes-table">
+                <div class="empty-state">Loading routes...</div>
+            </div>
+            <div class="cf-add-form">
+                <div class="cf-add-form-row">
+                    <div class="form-group">
+                        <label>Hostname</label>
+                        <input type="text" id="cf-route-hostname" placeholder="app.example.com" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Service</label>
+                        <input type="text" id="cf-route-service" placeholder="http://localhost:8001" autocomplete="off">
+                    </div>
+                    <button class="btn primary" onclick="addCfRoute()">Add Route</button>
+                </div>
+                <div class="form-error" id="cf-route-error"></div>
+            </div>
+        </div>
+
+        <div class="tunnel-tab-content" id="tunnel-tab-cf-access" style="display:none">
+            <div class="cf-access-table" id="cf-access-table">
+                <div class="empty-state">Loading access apps...</div>
+            </div>
+            <div class="cf-add-form">
+                <div class="cf-add-form-row">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" id="cf-access-name" placeholder="My App" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Hostname</label>
+                        <input type="text" id="cf-access-hostname" placeholder="app.example.com" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Policy</label>
+                        <select id="cf-access-policy"><option value="">Loading...</option></select>
+                    </div>
+                    <button class="btn primary" onclick="addCfAccessApp()">Add App</button>
+                </div>
+                <div class="form-error" id="cf-access-error"></div>
+            </div>
+        </div>
+
+        <!-- Services -->
+        <div class="section-header">
+            <h2>Services</h2>
+            <button class="btn primary new-service-btn" onclick="openNewService()">+ New Service</button>
+        </div>
+
+        <div class="services-list" id="services-list">
+            <div class="empty-state">No services registered yet. Add one to get started.</div>
+        </div>
+
+    </div>
+
+</div>
+
+<!-- New service modal -->
+<div class="modal-overlay" id="new-svc-modal">
+    <div class="modal">
+        <h3>Register New Service</h3>
+        <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="svc-name" placeholder="my-app" autocomplete="off">
+        </div>
+        <div class="form-group">
+            <label>Command</label>
+            <input type="text" id="svc-command" placeholder="uvicorn main:app" autocomplete="off">
+        </div>
+        <div class="form-group">
+            <label>Working Directory</label>
+            <input type="text" id="svc-workdir" placeholder="/home/user/my-app" autocomplete="off">
+        </div>
+        <div class="form-group">
+            <label>CF Hostname <span class="label-hint">(optional)</span></label>
+            <input type="text" id="svc-hostname" placeholder="myapp.example.com" autocomplete="off">
+        </div>
+        <div class="form-group checkbox-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="svc-lan">
+                <span>LAN accessible</span>
+                <span class="label-hint"> — bind to 0.0.0.0 instead of localhost</span>
+            </label>
+        </div>
+        <div class="port-preview" id="svc-port-preview"></div>
+        <div class="form-error" id="svc-error"></div>
+        <div class="form-actions">
+            <button class="btn" onclick="closeNewService()">Cancel</button>
+            <button class="btn primary" onclick="submitNewService()">Create</button>
+        </div>
+    </div>
+</div>
+
+<!-- Logs modal -->
+<div class="modal-overlay logs-modal" id="logs-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="logs-title">Logs</h3>
+            <button class="btn" onclick="closeLogs()">Close</button>
+        </div>
+        <div class="logs-content" id="logs-content"></div>
+    </div>
+</div>
+
+<!-- Settings modal -->
+<div class="modal-overlay" id="settings-modal">
+    <div class="modal settings-modal-content">
+        <div class="modal-header">
+            <h3>Settings</h3>
+            <button class="btn" onclick="closeSettings()">Close</button>
+        </div>
+
+        <!-- Unconfigured view (no config file) -->
+        <div id="settings-unconfigured">
+            <p class="settings-desc">This node is not configured yet. Set it up from the welcome screen or choose a role below.</p>
+            <div class="settings-actions-grid">
+                <div class="settings-option" onclick="showInitMaster()">
+                    <div class="settings-option-title">Set as Master</div>
+                    <div class="settings-option-desc">This node becomes the central dashboard. You can add worker nodes to monitor from here.</div>
+                </div>
+                <div class="settings-option" onclick="showInitWorker()">
+                    <div class="settings-option-title">Register as Worker</div>
+                    <div class="settings-option-desc">Register this node with a master. Enter the master's IP and get a key to paste there.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Standalone view (configured, single machine) -->
+        <div id="settings-standalone" style="display:none">
+            <div class="settings-info">
+                <div><span class="settings-info-label">Role:</span> Standalone</div>
+                <div><span class="settings-info-label">Node Name:</span> <span id="standalone-info-name">--</span></div>
+            </div>
+            <div class="settings-subsection" id="standalone-cf-setup"></div>
+            <div class="settings-subsection" id="standalone-dashboard-access"></div>
+
+            <p class="settings-desc">Upgrade to multi-node clustering:</p>
+            <div class="settings-actions-grid">
+                <div class="settings-option" onclick="showInitMaster()">
+                    <div class="settings-option-title">Upgrade to Master</div>
+                    <div class="settings-option-desc">Enable clustering and add worker nodes to monitor from here.</div>
+                </div>
+                <div class="settings-option" onclick="showInitWorker()">
+                    <div class="settings-option-title">Switch to Worker</div>
+                    <div class="settings-option-desc">Register this node with an existing master.</div>
+                </div>
+            </div>
+            <div class="form-actions section-divider">
+                <button class="btn danger" onclick="resetNode()">Reset</button>
+            </div>
+        </div>
+
+        <!-- Init master form -->
+        <div id="settings-init-master" style="display:none">
+            <div class="form-group">
+                <label>Node Name</label>
+                <input type="text" id="init-master-name" placeholder="e.g. my-server" autocomplete="off">
+            </div>
+            <div class="form-actions">
+                <button class="btn" onclick="showSettingsHome()">Back</button>
+                <button class="btn primary" onclick="submitInitMaster()">Set as Master</button>
+            </div>
+        </div>
+
+        <!-- Init worker form -->
+        <div id="settings-init-worker" style="display:none">
+            <div class="form-group">
+                <label>Node Name</label>
+                <input type="text" id="init-worker-name" placeholder="e.g. gpu-server" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Master Address</label>
+                <input type="text" id="init-worker-master" placeholder="http://192.168.1.10:9000" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Enrollment Token</label>
+                <input type="text" id="init-worker-token" placeholder="enroll-..." autocomplete="off">
+            </div>
+            <div class="form-actions">
+                <button class="btn" onclick="showSettingsHome()">Back</button>
+                <button class="btn primary" onclick="submitInitWorker()">Register</button>
+            </div>
+        </div>
+
+        <!-- Worker config display (shown after registering as worker) -->
+        <div id="settings-worker-key" style="display:none">
+            <p class="settings-desc">This node is registered as a worker. Copy the API key below and paste it into the master's settings.</p>
+            <div class="form-group">
+                <label>API Key (paste this on the master)</label>
+                <div class="key-display">
+                    <code id="worker-key-value">--</code>
+                    <button class="btn" onclick="copyWorkerKey(this)">Copy</button>
+                </div>
+            </div>
+            <div class="settings-info">
+                <div><span class="settings-info-label">Node Name:</span> <span id="worker-info-name">--</span></div>
+                <div><span class="settings-info-label">Master:</span> <span id="worker-info-master">--</span></div>
+            </div>
+            <div class="form-actions">
+                <button class="btn danger" onclick="resetNode()">Reset to Standalone</button>
+            </div>
+        </div>
+
+        <!-- Master config view -->
+        <div id="settings-master" style="display:none">
+            <div class="settings-info">
+                <div><span class="settings-info-label">Role:</span> Master</div>
+                <div><span class="settings-info-label">Node Name:</span> <span id="master-info-name">--</span></div>
+            </div>
+
+            <div class="settings-subsection">
+                <div class="settings-subsection-header">
+                    <span>Workers</span>
+                </div>
+                <div id="master-workers-list" class="master-workers-list"></div>
+            </div>
+
+            <div class="settings-subsection">
+                <div class="settings-subsection-header">Enroll Worker</div>
+                <div id="enrollment-tokens"></div>
+                <div class="form-actions">
+                    <button class="btn primary" onclick="generateEnrollmentToken()">Generate Enrollment Token</button>
+                </div>
+            </div>
+
+            <div class="settings-subsection">
+                <div class="settings-subsection-header">Deploy</div>
+                <div class="settings-info" style="margin-bottom:12px">
+                    <div><span class="settings-info-label">Local version:</span> <span id="deploy-version">--</span></div>
+                </div>
+                <p class="settings-desc">Push this node's code to all workers and restart them.</p>
+                <div id="deploy-results"></div>
+                <div class="form-actions">
+                    <button class="btn" onclick="deployRestart()">Restart Master</button>
+                    <button class="btn primary" onclick="deployToWorkers()">Deploy to Workers</button>
+                </div>
+            </div>
+
+            <div class="settings-subsection" id="master-cf-setup"></div>
+            <div class="settings-subsection" id="master-dashboard-access"></div>
+
+            <div class="form-actions section-divider">
+                <button class="btn danger" onclick="resetNode()">Reset to Standalone</button>
+            </div>
+        </div>
+
+        <div class="form-error" id="settings-error"></div>
+    </div>
+</div>
+
+<!-- First-run setup modal -->
+<div class="modal-overlay" id="setup-modal">
+    <div class="modal">
+        <!-- Step 1: choose role -->
+        <div id="setup-choose">
+            <h3>Welcome to inframatik</h3>
+            <p class="settings-desc">How will you use this node?</p>
+            <div class="settings-actions-grid setup-grid">
+                <div class="settings-option" onclick="showSetupForm('standalone')">
+                    <div class="settings-option-title">Standalone</div>
+                    <div class="settings-option-desc">Single machine dashboard. Monitor this system and manage services.</div>
+                </div>
+                <div class="settings-option" onclick="showSetupForm('master')">
+                    <div class="settings-option-title">Master</div>
+                    <div class="settings-option-desc">Central node for multi-machine clusters. Add workers to monitor from here.</div>
+                </div>
+                <div class="settings-option" onclick="showSetupForm('worker')">
+                    <div class="settings-option-title">Worker</div>
+                    <div class="settings-option-desc">Connect this node to a master for centralized monitoring.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: name form (standalone / master) -->
+        <div id="setup-name" style="display:none">
+            <h3 id="setup-name-title">Setup</h3>
+            <div class="form-group">
+                <label>Node Name</label>
+                <input type="text" id="setup-node-name" placeholder="e.g. my-server" autocomplete="off">
+            </div>
+            <div class="form-group" id="setup-hostname-group" style="display:none">
+                <label>Dashboard Hostname <span class="label-hint">(optional — requires cf.env)</span></label>
+                <input type="text" id="setup-dashboard-hostname" placeholder="dashboard.example.com" autocomplete="off">
+            </div>
+            <div class="form-error" id="setup-error"></div>
+            <div class="form-actions">
+                <button class="btn" onclick="showSetupChoose()">Back</button>
+                <button class="btn primary" id="setup-submit-btn" onclick="submitSetup()">Continue</button>
+            </div>
+        </div>
+
+        <!-- Step 2 alt: worker form (name + master + enrollment token) -->
+        <div id="setup-worker" style="display:none">
+            <h3>Register as Worker</h3>
+            <div class="form-group">
+                <label>Node Name</label>
+                <input type="text" id="setup-worker-name" placeholder="e.g. gpu-server" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Master Address</label>
+                <input type="text" id="setup-worker-master" placeholder="http://192.168.1.10:9000" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Enrollment Token</label>
+                <input type="text" id="setup-worker-token" placeholder="enroll-..." autocomplete="off">
+            </div>
+            <div class="form-error" id="setup-worker-error"></div>
+            <div class="form-actions">
+                <button class="btn" onclick="showSetupChoose()">Back</button>
+                <button class="btn primary" onclick="submitSetupWorker()">Register</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+</div><!-- end dashboard-content -->
+
+<script src="/static/app.js?v=12"></script>
+</body>
+</html>

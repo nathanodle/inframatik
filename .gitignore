@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.claude/
+.claude.json
+node.json
+services.json
+ports.env
