@@ -667,6 +667,7 @@ async function loadSettingsView() {
             renderMasterWorkers(config.workers || {});
             renderEnrollmentTokens(config.enrollment_tokens || []);
             renderCfSetup('master-cf-setup', config.cf_configured);
+            renderServiceTokens('master-service-tokens', config.service_tokens || []);
             renderDashboardAccess('master-dashboard-access', config.dashboard_hostname);
             loadDeployInfo();
         } else if (config.role === 'worker') {
@@ -678,6 +679,7 @@ async function loadSettingsView() {
             document.getElementById('settings-standalone').style.display = 'block';
             document.getElementById('standalone-info-name').textContent = config.node_name;
             renderCfSetup('standalone-cf-setup', config.cf_configured);
+            renderServiceTokens('standalone-service-tokens', config.service_tokens || []);
             renderDashboardAccess('standalone-dashboard-access', config.dashboard_hostname);
         } else {
             document.getElementById('settings-unconfigured').style.display = 'block';
@@ -1008,6 +1010,61 @@ async function cancelEnrollmentToken(token) {
     } catch (e) {
         alert('Failed to cancel token: ' + e.message);
     }
+}
+
+// ---- Service Tokens ----
+
+function renderServiceTokens(containerId, tokens) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+
+    const tokenRows = tokens.map(t => `
+        <div class="master-worker-row">
+            <span>${esc(t.service)}</span>
+            <span class="master-worker-address">${new Date(t.created_at * 1000).toLocaleDateString()}</span>
+            <button class="btn danger" onclick="revokeServiceToken('${containerId}')">Revoke</button>
+        </div>
+    `).join('');
+
+    el.innerHTML = `
+        <div class="settings-subsection-header">Service Tokens</div>
+        ${tokens.length > 0 ? tokenRows : '<p class="settings-desc">No service tokens. Generate one to let AI agents manage a service.</p>'}
+        <div id="${containerId}-new-token" style="display:none">
+            <div class="master-worker-row" style="background:var(--bg-input);padding:12px;border-radius:var(--radius-sm);margin:8px 0">
+                <code id="${containerId}-token-value" style="word-break:break-all"></code>
+                <button class="btn" onclick="copyText(document.getElementById('${containerId}-token-value').textContent, this)">Copy</button>
+            </div>
+            <p class="settings-desc">Copy this token now — it won't be shown again.</p>
+        </div>
+        <div class="form-group" style="margin-top:8px">
+            <input type="text" id="${containerId}-service-name" placeholder="Service name" autocomplete="off">
+        </div>
+        <div class="form-actions">
+            <button class="btn primary" onclick="generateServiceToken('${containerId}')">Generate Token</button>
+        </div>`;
+}
+
+async function generateServiceToken(containerId) {
+    const nameEl = document.getElementById(`${containerId}-service-name`);
+    const service = nameEl.value.trim();
+    if (!service) { alert('Service name is required.'); return; }
+    try {
+        const result = await api('POST', '/api/config/service-tokens', { service });
+        // Show the token once
+        const tokenDisplay = document.getElementById(`${containerId}-new-token`);
+        document.getElementById(`${containerId}-token-value`).textContent = result.token;
+        tokenDisplay.style.display = '';
+        nameEl.value = '';
+    } catch (e) {
+        alert('Failed to generate token: ' + e.message);
+    }
+}
+
+async function revokeServiceToken(containerId) {
+    // For now, revoke requires knowing the token value which we don't display after creation.
+    // This is a limitation — would need to store token IDs or use a different revocation scheme.
+    // TODO: Add token ID-based revocation
+    alert('Token revocation from dashboard coming soon. Use the API: DELETE /api/config/service-tokens/{token}');
 }
 
 function showSettingsHome() {

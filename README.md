@@ -177,6 +177,34 @@ All dashboard and API access requires authentication:
 
 The install script prompts for an admin password. All mutating API endpoints require a valid session token, CF JWT, or API key.
 
+- **Service tokens** — scoped to a single service (`svc_...`). Can only manage that one service. Ideal for AI agents and CI/CD.
+
+## Agent / AI Integration
+
+AI coding agents can deploy and manage services using scoped service tokens.
+
+### Quick setup
+
+```bash
+inframatik init
+```
+
+This walks you through: authenticating, creating a service token, writing a `.inframatik` config file, and optionally configuring Claude Code or Codex MCP servers.
+
+### How it works
+
+1. `inframatik init` creates a `.inframatik` file in your repo with:
+   - API endpoint and scoped service token
+   - Inline instructions the model can read to know how to deploy
+2. The model reads `.inframatik` and uses `curl` or the REST API to register, start, stop, and manage the service
+3. The service token is scoped — it can only manage the one service it was created for
+
+### Supported agent harnesses
+
+- **Claude Code** — detects `~/.claude`, registers MCP server in `.mcp.json`, appends to `CLAUDE.md`
+- **Codex CLI** — detects `~/.codex`, registers MCP server in `.codex/config.toml`, appends to `AGENTS.md`
+- **Any agent** — reads `.inframatik` directly for API instructions (no MCP required)
+
 ## Service Management
 
 See [USAGE.md](USAGE.md) for detailed documentation on registering, managing, and configuring services.

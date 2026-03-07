@@ -17,6 +17,8 @@ from node_config import (
     set_dashboard_hostname,
     generate_api_key,
     generate_node_id,
+    create_service_token,
+    revoke_service_token,
     create_enrollment_token,
     consume_enrollment_token,
     delete_enrollment_token,
@@ -187,6 +189,12 @@ async def config_get():
         result["api_key"] = config["api_key"]
         result["workers"] = config.get("workers", {})
         result["enrollment_tokens"] = list(config.get("enrollment_tokens", {}).keys())
+    # Include service tokens summary (no token values)
+    svc_tokens = config.get("service_tokens", {})
+    result["service_tokens"] = [
+        {"service": v["service"], "created_at": v.get("created_at")}
+        for v in svc_tokens.values()
+    ]
     return result
 
 
@@ -323,6 +331,27 @@ async def config_create_enrollment_token():
 async def config_delete_enrollment_token(token: str):
     delete_enrollment_token(token)
     return {"status": "deleted"}
+
+
+# --- Service tokens ---
+
+class ServiceTokenBody(BaseModel):
+    service: str
+
+
+@cluster_router.post("/api/config/service-tokens")
+async def config_create_service_token(body: ServiceTokenBody):
+    try:
+        token = create_service_token(body.service)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"token": token, "service": body.service}
+
+
+@cluster_router.delete("/api/config/service-tokens/{token}")
+async def config_revoke_service_token(token: str):
+    revoke_service_token(token)
+    return {"status": "revoked"}
 
 
 class EnrollBody(BaseModel):
@@ -744,13 +773,24 @@ SVC_EOF
 echo "==> Enabling linger for $CURRENT_USER..."
 sudo loginctl enable-linger "$CURRENT_USER"
 
-# 8. Enable and start the service
+# 8. Install CLI
+echo "==> Installing CLI..."
+chmod +x "$INSTALL_DIR/inframatik-cli.py"
+mkdir -p "$HOME/.local/bin"
+ln -sf "$INSTALL_DIR/inframatik-cli.py" "$HOME/.local/bin/inframatik"
+if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+    echo "    Added ~/.local/bin to PATH (open a new terminal to use 'inframatik' command)"
+fi
+
+# 9. Enable and start the service
+
 systemctl --user daemon-reload
 systemctl --user enable "$SERVICE_NAME"
 systemctl --user restart "$SERVICE_NAME"
 echo "==> inframatik started on port 9000"
 
-# 9. Set admin password
+# 10. Set admin password
 if [ -n "$ADMIN_PW" ]; then
     sleep 2
     PW_BODY=$(python3 -c "import json,sys; print(json.dumps({'password': sys.argv[1]}))" "$ADMIN_PW")
@@ -760,7 +800,7 @@ if [ -n "$ADMIN_PW" ]; then
     echo "==> Admin password set"
 fi
 
-# 10. Optional: enroll as worker with master
+# 11. Optional: enroll as worker with master
 if [ -n "$ENROLL_TOKEN" ]; then
     [ -z "$NODE_NAME" ] && NODE_NAME=$(hostname -s)
     echo "==> Enrolling with master as: $NODE_NAME"

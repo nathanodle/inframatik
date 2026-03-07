@@ -121,7 +121,8 @@ async def validate_cf_access(token: str, config: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 async def check_auth(request) -> bool:
-    """Check if request is authenticated via any method. Returns True if auth passes."""
+    """Check if request is authenticated via any method. Returns True if auth passes.
+    Sets request.state.service_scope if using a scoped service token."""
     config = get_node_config()
 
     # Path 1: X-Api-Key (worker-to-master)
@@ -135,11 +136,19 @@ async def check_auth(request) -> bool:
         if await validate_cf_access(cf_jwt, config):
             return True
 
-    # Path 3: Session token
+    # Path 3: Session token or service token
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
+        # Check session tokens first
         if validate_session(token):
             return True
+        # Check scoped service tokens
+        if token.startswith("svc_"):
+            from node_config import get_service_token_scope
+            scope = get_service_token_scope(token)
+            if scope:
+                request.state.service_scope = scope
+                return True
 
     return False

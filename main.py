@@ -63,6 +63,11 @@ _SELF_AUTH_PATHS = {
 }
 
 
+# Paths that service tokens are allowed to access
+_SERVICE_TOKEN_PATHS = {"/api/services", "/api/ports/next"}
+_SERVICE_TOKEN_PREFIXES = ("/api/services/",)
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -70,10 +75,25 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if path in _SELF_AUTH_PATHS:
         return await call_next(request)
+
     # Require auth for everything else
+    request.state.service_scope = None
     from auth import check_auth
     if not await check_auth(request):
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
+    # If using a scoped service token, enforce path restrictions
+    scope = getattr(request.state, "service_scope", None)
+    if scope:
+        allowed = path in _SERVICE_TOKEN_PATHS or any(path.startswith(p) for p in _SERVICE_TOKEN_PREFIXES)
+        if not allowed:
+            return JSONResponse(status_code=403, content={"detail": "Service token cannot access this endpoint"})
+        # Verify the service name in the path matches the scope
+        if path.startswith("/api/services/"):
+            path_service = path.split("/api/services/")[1].split("/")[0]
+            if path_service != scope:
+                return JSONResponse(status_code=403, content={"detail": f"Token is scoped to service '{scope}'"})
+
     return await call_next(request)
 
 
@@ -121,12 +141,19 @@ async def api_next_port():
 # --- Services ---
 
 @app.get("/api/services")
-async def api_list_services():
-    return await list_services()
+async def api_list_services(request: Request):
+    services = await list_services()
+    scope = getattr(request.state, "service_scope", None)
+    if scope:
+        services = [s for s in services if s.get("name") == scope]
+    return services
 
 
 @app.post("/api/services", status_code=201)
-async def api_register_service(body: ServiceCreate):
+async def api_register_service(body: ServiceCreate, request: Request):
+    scope = getattr(request.state, "service_scope", None)
+    if scope and body.name != scope:
+        raise HTTPException(status_code=403, detail=f"Token is scoped to service '{scope}'")
     try:
         svc = await register_service(
             name=body.name,

@@ -58,6 +58,46 @@ def verify_admin_password(password: str) -> bool:
     return verify_password(password, hashed)
 
 
+def generate_service_token() -> str:
+    return "svc_" + secrets.token_hex(32)
+
+
+def create_service_token(service_name: str) -> str:
+    """Generate a scoped service token. Returns the token string."""
+    config = get_node_config()
+    if not config:
+        raise ValueError("Node not configured")
+    token = generate_service_token()
+    config.setdefault("service_tokens", {})[token] = {
+        "service": service_name,
+        "created_at": int(__import__("time").time()),
+    }
+    save_node_config(config)
+    return token
+
+
+def revoke_service_token(token: str):
+    """Remove a service token."""
+    config = get_node_config()
+    if not config:
+        return
+    tokens = config.get("service_tokens", {})
+    if token in tokens:
+        del tokens[token]
+        save_node_config(config)
+
+
+def get_service_token_scope(token: str) -> Optional[str]:
+    """Return the service name a token is scoped to, or None if invalid."""
+    config = get_node_config()
+    if not config:
+        return None
+    entry = config.get("service_tokens", {}).get(token)
+    if not entry:
+        return None
+    return entry.get("service")
+
+
 def generate_api_key() -> str:
     return "sdk_" + secrets.token_hex(32)
 
