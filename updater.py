@@ -17,7 +17,7 @@ INCLUDE_PATTERNS = [
 ]
 
 # Never include these
-EXCLUDE = {"venv", "__pycache__", ".git", ".env", "node.json"}
+EXCLUDE = {"venv", "__pycache__", ".git", ".env", "node.json", "tests", "docs"}
 
 
 def get_version() -> dict:
