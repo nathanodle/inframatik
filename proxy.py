@@ -106,9 +106,19 @@ async def _handle_local(method: str, path: str, body: dict = None):
         status = await restart_service(name)
         return {"name": name, "status": status}
 
-    if path.startswith("/api/services/") and path.endswith("/logs") and method == "GET":
+    if path.startswith("/api/services/") and "/logs" in path and method == "GET":
         name = _service_name_from_path(path)
-        logs = await get_service_logs(name)
+        # Extract lines param from query string if present
+        lines = 100
+        if "?" in path:
+            query = path.split("?", 1)[1]
+            for param in query.split("&"):
+                if param.startswith("lines="):
+                    try:
+                        lines = int(param.split("=", 1)[1])
+                    except ValueError:
+                        pass
+        logs = await get_service_logs(name, lines=lines)
         return {"name": name, "logs": logs}
 
     if path == "/api/tunnel" and method == "GET":

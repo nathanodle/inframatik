@@ -60,8 +60,9 @@ def build_package() -> bytes:
             # Skip excluded dirs/files
             if any(part in EXCLUDE for part in rel.parts):
                 continue
-            # Only include .py files, static/*, and requirements.txt
-            if rel.suffix == ".py" or rel.parts[0] == "static" or rel.name == "requirements.txt":
+            # Only include .py files, static/*, requirements.txt, and install.sh
+            if (rel.suffix == ".py" or rel.parts[0] == "static"
+                    or rel.name in ("requirements.txt", "install.sh")):
                 tar.add(path, arcname=str(rel))
     buf.seek(0)
     return buf.read()
