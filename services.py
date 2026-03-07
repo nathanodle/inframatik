@@ -124,6 +124,8 @@ async def register_service(
 
     if not command or '\n' in command or '\r' in command:
         raise ValueError("Command must be a single line")
+    if ' ; ' in command or command.startswith('; ') or command.endswith(' ;'):
+        raise ValueError("Command cannot contain semicolons (systemd interprets them as command separators)")
     if '\n' in working_dir or '\r' in working_dir:
         raise ValueError("Working directory must be a single line")
 

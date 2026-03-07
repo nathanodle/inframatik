@@ -107,7 +107,7 @@ def generate_node_id() -> str:
 
 
 def generate_enrollment_token() -> str:
-    return "enroll-" + secrets.token_hex(4)
+    return "enroll-" + secrets.token_hex(16)
 
 
 def create_enrollment_token() -> str:

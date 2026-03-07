@@ -187,7 +187,11 @@ async def config_get():
         result["master_url"] = config["master_url"]
     elif config["role"] == "master":
         result["api_key"] = config["api_key"]
-        result["workers"] = config.get("workers", {})
+        # Strip api_keys from worker entries (only expose name/address/tunnel_id)
+        workers = {}
+        for wid, w in config.get("workers", {}).items():
+            workers[wid] = {k: v for k, v in w.items() if k != "api_key"}
+        result["workers"] = workers
         result["enrollment_tokens"] = list(config.get("enrollment_tokens", {}).keys())
     # Include service tokens summary (no token values)
     svc_tokens = config.get("service_tokens", {})
