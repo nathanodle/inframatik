@@ -32,12 +32,18 @@ def verify_password(password: str, hashed: str) -> bool:
 # Session management
 # ---------------------------------------------------------------------------
 
+MAX_SESSIONS = 100
+
+
 def create_session(duration_hours: int = 24) -> tuple[str, int]:
     token = secrets.token_hex(32)
     expires_at = int(time.time()) + duration_hours * 3600
     _sessions[token] = {"expires_at": expires_at}
-    # Clean expired sessions periodically
     _cleanup_sessions()
+    # Evict oldest sessions if over limit
+    while len(_sessions) > MAX_SESSIONS:
+        oldest = min(_sessions, key=lambda t: _sessions[t]["expires_at"])
+        del _sessions[oldest]
     return token, expires_at
 
 

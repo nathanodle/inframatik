@@ -146,10 +146,12 @@ async def register_service(
         raise ValueError(f"Working directory does not exist: {working_dir}")
 
     host = "0.0.0.0" if lan else "127.0.0.1"
+    # Escape % as %% for systemd (prevents specifier expansion)
+    safe_command = command.replace("%", "%%")
     unit_content = UNIT_TEMPLATE.format(
         name=name,
         working_dir=str(working_path),
-        command=command,
+        command=safe_command,
         port=port,
         host=host,
     )

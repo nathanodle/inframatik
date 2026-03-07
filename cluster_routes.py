@@ -383,15 +383,9 @@ async def enroll_worker(body: EnrollBody, request: Request):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    # Build master URL from the incoming request
-    host = request.headers.get("host", "localhost:9000")
-    scheme = request.headers.get("x-forwarded-proto", "http")
-    master_url = f"{scheme}://{host}"
-
     return {
         "status": "enrolled",
         "api_key": worker_api_key,
-        "master_url": master_url,
     }
 
 
@@ -579,9 +573,12 @@ async def install_script(request: Request):
     if not config or config.get("role") != "master":
         raise HTTPException(403, "Only master can serve install scripts")
 
-    # Build master URL from the request
+    # Build master URL from the request (validate host header)
+    import re as _re
     host = request.headers.get("host", "localhost:9000")
-    scheme = request.headers.get("x-forwarded-proto", "http")
+    if not _re.match(r'^[a-zA-Z0-9._-]+(:\d+)?$', host):
+        raise HTTPException(400, "Invalid host header")
+    scheme = "https" if request.headers.get("x-forwarded-proto") == "https" else "http"
     master_url = f"{scheme}://{host}"
 
     script = _INSTALL_SCRIPT_PATH.read_text().replace("__MASTER_URL__", master_url)
