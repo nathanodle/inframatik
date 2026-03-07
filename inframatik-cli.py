@@ -299,8 +299,14 @@ def cmd_init():
 
 
 def cmd_mcp():
-    print("MCP server coming soon — will be an HTTP endpoint built into inframatik.")
-    print("For now, models can use the REST API directly. See .inframatik for details.")
+    print("The MCP server is built into inframatik — no separate process needed.")
+    print()
+    print("Endpoint: http://<server>:9000/mcp")
+    print("Transport: streamable HTTP")
+    print("Auth: service token (from .inframatik)")
+    print()
+    print("If you ran 'inframatik init', your agent harness is already configured.")
+    print("The MCP server exposes: deploy, restart, stop, logs, status")
 
 
 # ---------------------------------------------------------------------------

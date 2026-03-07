@@ -23,6 +23,7 @@ from tunnel import get_tunnel_status, get_tunnel_routes
 from node_config import get_node_config
 from cluster_routes import cluster_router
 from cf_routes import cf_router
+from mcp_routes import mcp_router
 from nodes import stale_checker_loop, heartbeat_sender_loop
 
 
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="inframatik", lifespan=lifespan)
 app.include_router(cluster_router)
 app.include_router(cf_router)
+app.include_router(mcp_router)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -64,7 +66,7 @@ _SELF_AUTH_PATHS = {
 
 
 # Paths that service tokens are allowed to access
-_SERVICE_TOKEN_PATHS = {"/api/services", "/api/ports/next"}
+_SERVICE_TOKEN_PATHS = {"/api/services", "/api/ports/next", "/mcp"}
 _SERVICE_TOKEN_PREFIXES = ("/api/services/",)
 
 

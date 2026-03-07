@@ -199,6 +199,18 @@ This walks you through: authenticating, creating a service token, writing a `.in
 2. The model reads `.inframatik` and uses `curl` or the REST API to register, start, stop, and manage the service
 3. The service token is scoped — it can only manage the one service it was created for
 
+### MCP server
+
+inframatik includes a built-in MCP server at `/mcp` (streamable HTTP transport). When `inframatik init` registers the MCP server, agents get 5 typed tools:
+
+- **deploy** — register and start the service
+- **restart** — restart the service
+- **stop** — stop the service
+- **logs** — get recent service logs
+- **status** — check service status
+
+No extra deps or processes needed — the MCP server runs inside the same FastAPI app.
+
 ### Supported agent harnesses
 
 - **Claude Code** — detects `~/.claude`, registers MCP server in `.mcp.json`, appends to `CLAUDE.md`
