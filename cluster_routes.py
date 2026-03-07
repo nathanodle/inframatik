@@ -517,6 +517,8 @@ async def node_update(request: Request):
     body = await request.body()
     if not body:
         raise HTTPException(400, "Empty package")
+    if len(body) > 50 * 1024 * 1024:  # 50MB max
+        raise HTTPException(413, "Package too large")
     try:
         apply_package(body)
     except Exception as e:

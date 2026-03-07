@@ -155,6 +155,17 @@ async def register_service(
         port=port,
         host=host,
     )
+    # Reserve the port immediately (before any async operations)
+    svc = {
+        "port": port,
+        "command": command,
+        "working_dir": str(working_path),
+        "hostname": hostname,
+        "lan": lan,
+    }
+    registry[name] = svc
+    _save_registry(registry)
+
     _unit_path(name).write_text(unit_content)
     await _daemon_reload()
 
@@ -172,16 +183,6 @@ async def register_service(
             cf_route_added = True
         except Exception as e:
             logger.debug("CF setup skipped for %s: %s", name, e)
-
-    svc = {
-        "port": port,
-        "command": command,
-        "working_dir": str(working_path),
-        "hostname": hostname,
-        "lan": lan,
-    }
-    registry[name] = svc
-    _save_registry(registry)
 
     return {**svc, "name": name, "status": "inactive", "unit": _unit_name(name), "cf_route_added": cf_route_added}
 
