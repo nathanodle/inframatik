@@ -267,15 +267,22 @@ async def validate_cf_access(token: str, config: dict) -> bool:
             # Decode WITHOUT verification just to peek at issuer
             unverified = jwt.decode(token, options={"verify_signature": False, "verify_aud": False})
             iss = unverified.get("iss", "")
+            logger.debug("CF JWT auto-discovery: iss=%s, aud_from_jwt=%s", iss, unverified.get("aud"))
             # iss must be https://<team>.cloudflareaccess.com — reject anything else
             if iss.endswith(".cloudflareaccess.com") or ".cloudflareaccess.com/" in iss:
                 team_domain = iss.split("//")[-1].split(".cloudflareaccess.com")[0]
                 if not team_domain or "/" in team_domain or "." in team_domain:
+                    logger.debug("CF JWT: rejected suspicious team_domain=%s", team_domain)
                     team_domain = ""  # reject suspicious values
+                else:
+                    logger.debug("CF JWT: discovered team_domain=%s", team_domain)
                 # Also auto-discover AUD if not set
                 if not aud:
                     aud = unverified.get("aud", [None])[0] if isinstance(unverified.get("aud"), list) else unverified.get("aud")
-        except Exception:
+            else:
+                logger.debug("CF JWT: issuer '%s' is not cloudflareaccess.com", iss)
+        except Exception as e:
+            logger.debug("CF JWT: failed to peek at unverified claims: %s", e)
             pass
 
     if not team_domain or not aud:
@@ -321,8 +328,16 @@ async def check_auth(request) -> bool:
     # Path 2: CF Access JWT (header from CF proxy, or cookie from browser)
     cf_jwt = request.headers.get("Cf-Access-Jwt-Assertion") or request.cookies.get("CF_Authorization")
     if cf_jwt and config:
-        if await validate_cf_access(cf_jwt, config):
-            return True
+        logger.debug("CF JWT found (len=%d), attempting validation", len(cf_jwt))
+        try:
+            result = await validate_cf_access(cf_jwt, config)
+            if result:
+                logger.debug("CF JWT validation succeeded")
+                return True
+            else:
+                logger.debug("CF JWT validation returned False")
+        except Exception as e:
+            logger.warning("CF JWT validation error: %s", e)
 
     # Path 3: Session cookie
     session_cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
