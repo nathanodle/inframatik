@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo ""
+echo "  inframatik uninstall"
+echo ""
+
+# --- Stop and remove managed services ---
+MANAGED=$(systemctl --user list-units --type=service --no-legend 2>/dev/null | grep 'infra-' | awk '{print $1}' || true)
+if [ -n "$MANAGED" ]; then
+    echo "==> Stopping managed services..."
+    for svc in $MANAGED; do
+        systemctl --user disable --now "$svc" 2>/dev/null || true
+        echo "    Stopped $svc"
+    done
+fi
+
+# --- Remove managed service unit files ---
+for f in ~/.config/systemd/user/infra-*.service; do
+    [ -f "$f" ] && rm -f "$f" && echo "    Removed $(basename "$f")"
+done
+
+# --- Stop cloudflared user service ---
+if systemctl --user is-active cloudflared >/dev/null 2>&1; then
+    echo "==> Stopping cloudflared..."
+    systemctl --user disable --now cloudflared 2>/dev/null || true
+fi
+rm -f ~/.config/systemd/user/cloudflared.service
+
+# --- Stop inframatik ---
+if systemctl --user is-active inframatik >/dev/null 2>&1; then
+    echo "==> Stopping inframatik..."
+    systemctl --user disable --now inframatik 2>/dev/null || true
+fi
+rm -f ~/.config/systemd/user/inframatik.service
+
+# --- Reload systemd ---
+systemctl --user daemon-reload 2>/dev/null
+systemctl --user reset-failed 2>/dev/null || true
+
+# --- Remove config ---
+if [ -d ~/.config/inframatik ]; then
+    echo "==> Removing config (~/.config/inframatik/)..."
+    rm -rf ~/.config/inframatik/
+fi
+
+# --- Remove cloudflared binary ---
+if [ -f ~/.local/bin/cloudflared ]; then
+    echo "==> Removing cloudflared binary..."
+    rm -f ~/.local/bin/cloudflared
+fi
+
+# --- Remove CLI symlink ---
+if [ -L ~/.local/bin/inframatik ]; then
+    echo "==> Removing CLI symlink..."
+    rm -f ~/.local/bin/inframatik
+fi
+
+# --- Clean .bashrc ---
+if grep -q 'inframatik' ~/.bashrc 2>/dev/null; then
+    echo "==> Cleaning .bashrc..."
+    sed -i '/inframatik/d' ~/.bashrc
+    # Remove blank lines left behind
+    sed -i '/^$/N;/^\n$/d' ~/.bashrc
+fi
+
+echo ""
+echo "  ✓ inframatik uninstalled"
+echo ""
+echo "    Config, services, cloudflared, and CLI removed."
+echo "    The code directory ($(pwd)) was not deleted."
+echo "    Run ./setup to reinstall."
+echo ""
