@@ -318,8 +318,8 @@ async def check_auth(request) -> bool:
     if api_key and config and api_key == config.get("api_key"):
         return True
 
-    # Path 2: CF Access JWT
-    cf_jwt = request.headers.get("Cf-Access-Jwt-Assertion")
+    # Path 2: CF Access JWT (header from CF proxy, or cookie from browser)
+    cf_jwt = request.headers.get("Cf-Access-Jwt-Assertion") or request.cookies.get("CF_Authorization")
     if cf_jwt and config:
         if await validate_cf_access(cf_jwt, config):
             return True
