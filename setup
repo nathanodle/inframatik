@@ -9,7 +9,7 @@ echo "  inframatik setup"
 echo ""
 
 # --- Prerequisites ---
-for cmd in python3 sudo; do
+for cmd in python3 curl sudo; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "ERROR: $cmd is required but not installed."
         exit 1
@@ -22,19 +22,23 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 # --- Admin password ---
+ADMIN_PW=""
 while true; do
     read -sp "Set admin password (min 8 chars): " ADMIN_PW
     echo
     if [ ${#ADMIN_PW} -lt 8 ]; then
         echo "  Password too short."
+        ADMIN_PW=""
         continue
     fi
     read -sp "Confirm password: " ADMIN_PW_CONFIRM
     echo
     if [ "$ADMIN_PW" != "$ADMIN_PW_CONFIRM" ]; then
         echo "  Passwords do not match."
+        ADMIN_PW=""
         continue
     fi
+    unset ADMIN_PW_CONFIRM
     break
 done
 
@@ -77,27 +81,57 @@ systemctl --user daemon-reload
 systemctl --user enable --now "$SERVICE_NAME"
 echo "==> Service started"
 
-# --- Wait for it ---
+# --- Wait for server ---
 echo -n "    Waiting for server"
-for i in $(seq 1 15); do
+SERVER_READY=false
+for i in $(seq 1 20); do
     if curl -sS -o /dev/null -w "" "http://127.0.0.1:9000/api/auth/status" 2>/dev/null; then
         echo " ready"
+        SERVER_READY=true
         break
     fi
     echo -n "."
     sleep 1
 done
 
-# --- Set admin password ---
-PW_BODY=$(python3 -c "import json,sys; print(json.dumps({'password': sys.argv[1]}))" "$ADMIN_PW")
-PW_RESP=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:9000/api/auth/set-password" \
-    -H "Content-Type: application/json" \
-    -d "$PW_BODY")
-if [ "$PW_RESP" = "200" ]; then
-    echo "==> Admin password set"
-else
-    echo "WARNING: Failed to set password (HTTP $PW_RESP). Set it in the browser at http://localhost:9000"
+if [ "$SERVER_READY" = false ]; then
+    echo " timeout"
+    echo "ERROR: Server did not start. Check: systemctl --user status inframatik"
+    unset ADMIN_PW
+    exit 1
 fi
+
+# --- Set admin password (piped via stdin to avoid process arg exposure) ---
+python3 -c "
+import json, sys, urllib.request, urllib.error
+pw = sys.stdin.readline().strip()
+body = json.dumps({'password': pw}).encode()
+req = urllib.request.Request(
+    'http://127.0.0.1:9000/api/auth/set-password',
+    data=body,
+    headers={'Content-Type': 'application/json'},
+    method='POST',
+)
+try:
+    with urllib.request.urlopen(req) as resp:
+        result = json.loads(resp.read())
+        if result.get('status') == 'password_set':
+            print('==> Admin password set')
+        else:
+            print('WARNING: Unexpected response:', result)
+except urllib.error.HTTPError as e:
+    detail = ''
+    try:
+        detail = json.loads(e.read()).get('detail', '')
+    except Exception:
+        pass
+    if e.code == 400 and 'already set' in detail.lower():
+        print('==> Password already set (re-run detected)')
+    else:
+        print(f'WARNING: Failed to set password (HTTP {e.code}): {detail}')
+        print('    Set it in the browser at http://localhost:9000')
+" <<< "$ADMIN_PW"
+unset ADMIN_PW
 
 # --- Install CLI ---
 echo "==> Installing CLI..."
