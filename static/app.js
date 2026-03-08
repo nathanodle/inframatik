@@ -565,24 +565,34 @@ async function submitSetupFinal() {
         ? '/api/config/init-master'
         : '/api/config/init-standalone';
 
-    // Disable submit button
     const submitBtn = document.getElementById('setup-submit-btn');
+    const backBtn = document.getElementById('setup-name-back-btn');
+    const progressEl = document.getElementById('setup-progress');
+    const progressText = document.getElementById('setup-progress-text');
+    const progressBar = document.getElementById('setup-progress-bar');
+
     submitBtn.disabled = true;
     submitBtn.textContent = 'Setting up...';
+    backBtn.disabled = true;
 
-    // Show progress area
-    const progressEl = document.getElementById('setup-progress');
+    function showProgress(msg, pct) {
+        progressEl.style.display = '';
+        progressText.textContent = msg;
+        if (pct !== undefined) progressBar.style.width = pct + '%';
+    }
+
+    function hideProgress() {
+        progressEl.style.display = 'none';
+        progressBar.style.width = '0%';
+    }
 
     try {
-        // 1. Create role
+        showProgress('Creating node...', 10);
         await api('POST', endpoint, { name });
 
-        // 2. If CF enabled, save CF config + enable dashboard access
         if (setupCf.enabled) {
             try {
-                progressEl.style.display = '';
-                progressEl.textContent = 'Saving Cloudflare configuration...';
-
+                showProgress('Saving Cloudflare configuration...', 20);
                 await api('POST', '/api/cf/setup/save', {
                     token: setupCf.token,
                     account_id: setupCf.account_id,
@@ -594,32 +604,32 @@ async function submitSetupFinal() {
                 const hostname = `${name}.${domain}`;
 
                 // Listen for progress via WebSocket
-                let cfDone = false;
+                let stepCount = 0;
                 onWsProgress('dashboard-access', (msg) => {
-                    progressEl.textContent = msg.message;
-                    if (msg.done) cfDone = true;
+                    stepCount++;
+                    const pct = Math.min(30 + stepCount * 10, 90);
+                    showProgress(msg.message, pct);
                 });
 
-                progressEl.textContent = 'Setting up dashboard access...';
+                showProgress('Setting up dashboard access...', 30);
                 await api('POST', '/api/config/dashboard-access', { hostname });
-                // API returns when done, but WS may have already shown progress
                 delete wsProgressCallbacks['dashboard-access'];
             } catch (cfErr) {
                 delete wsProgressCallbacks['dashboard-access'];
-                progressEl.style.display = 'none';
+                hideProgress();
                 errEl.textContent = 'Note: Cloudflare setup failed (' + cfErr.message + '). You can configure it in Settings.';
                 await new Promise(r => setTimeout(r, 3000));
             }
         }
 
-        progressEl.style.display = '';
-        progressEl.textContent = 'Done! Redirecting to dashboard...';
+        showProgress('Done! Redirecting to dashboard...', 100);
         await new Promise(r => setTimeout(r, 1000));
         location.reload();
     } catch (e) {
         submitBtn.disabled = false;
         submitBtn.textContent = 'Get Started';
-        progressEl.style.display = 'none';
+        backBtn.disabled = false;
+        hideProgress();
         errEl.textContent = e.message;
     }
 }

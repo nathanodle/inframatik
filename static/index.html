@@ -599,12 +599,17 @@
                     <input type="text" id="setup-node-name-plain" placeholder="e.g. my-server" autocomplete="off">
                 </div>
             </div>
+            <div id="setup-progress" style="display:none;margin:12px 0">
+                <div class="settings-desc" id="setup-progress-text" style="color:var(--accent);margin-bottom:8px"></div>
+                <div class="progress-bar" style="height:6px">
+                    <div class="progress-fill green" id="setup-progress-bar" style="width:0%;transition:width 0.3s ease"></div>
+                </div>
+            </div>
             <div class="form-error" id="setup-error"></div>
             <div class="form-actions">
-                <button class="btn" onclick="setupNameBack()">Back</button>
+                <button class="btn" id="setup-name-back-btn" onclick="setupNameBack()">Back</button>
                 <button class="btn primary" id="setup-submit-btn" onclick="submitSetupFinal()">Get Started</button>
             </div>
-            <div id="setup-progress" class="settings-desc" style="display:none;margin-top:12px;color:var(--accent)"></div>
         </div>
 
         <!-- Step 2 alt: worker form (name + master + enrollment token) -->
