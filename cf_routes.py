@@ -1,10 +1,14 @@
-import asyncio
-
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
 import httpx
+from cloudflared import (
+    setup_cloudflared_user_service,
+    get_cloudflared_user_service_status,
+    get_cloudflared_user_service_logs,
+    restart_cloudflared_user_service,
+)
 
 from node_config import (
     get_node_config,
@@ -41,6 +45,14 @@ def _require_cf_config():
     cfg = _load_cf_config()
     if not cfg:
         raise HTTPException(400, "Cloudflare not configured. Set up in Settings → Cloudflare.")
+
+
+def _require_internal_api_key(request: Request):
+    """Require worker API key for internal master→worker proxy calls."""
+    api_key = request.headers.get("X-Api-Key")
+    config = get_node_config()
+    if not api_key or not config or api_key != config.get("api_key"):
+        raise HTTPException(401, "API key required")
 
 
 # ---------------------------------------------------------------------------
@@ -269,18 +281,61 @@ async def api_receive_tunnel_token(body: ReceiveTunnelTokenBody, request: Reques
     if not api_key or not config or api_key != config.get("api_key"):
         raise HTTPException(401, "API key required")
     set_tunnel_id(body.tunnel_id)
-
-    proc = await asyncio.create_subprocess_exec(
-        "sudo", "/usr/local/bin/infra-cf-setup", body.token,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    stdout, _ = await proc.communicate()
-
-    if proc.returncode != 0:
-        raise HTTPException(500, "Failed to setup cloudflared")
+    try:
+        await setup_cloudflared_user_service(body.token)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
 
     return {"status": "token_received", "tunnel_id": body.tunnel_id}
+
+
+# ---------------------------------------------------------------------------
+# Local cloudflared user service controls
+# ---------------------------------------------------------------------------
+
+@cf_router.get("/api/cf/service/status")
+async def api_cf_service_status():
+    return await get_cloudflared_user_service_status()
+
+
+@cf_router.get("/api/cf/service/logs")
+async def api_cf_service_logs(lines: int = 80):
+    try:
+        logs = await get_cloudflared_user_service_logs(lines=lines)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return {"lines": lines, "logs": logs}
+
+
+@cf_router.post("/api/cf/service/restart")
+async def api_cf_service_restart():
+    try:
+        service = await restart_cloudflared_user_service()
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return {"status": "restarted", "service": service}
+
+
+@cf_router.get("/api/internal/cf/service/status")
+async def api_internal_cf_service_status(request: Request):
+    _require_internal_api_key(request)
+    return await api_cf_service_status()
+
+
+@cf_router.get("/api/internal/cf/service/logs")
+async def api_internal_cf_service_logs(request: Request, lines: int = 80):
+    _require_internal_api_key(request)
+    return await api_cf_service_logs(lines=lines)
+
+
+@cf_router.post("/api/internal/cf/service/restart")
+async def api_internal_cf_service_restart(request: Request):
+    _require_internal_api_key(request)
+    return await api_cf_service_restart()
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ const API = '';
 let refreshInterval;
 let prevNet = null;
 let prevNetTime = null;
-let authToken = sessionStorage.getItem('authToken');
+let authToken = null;
 
 // ---- Cluster state ----
 let isMaster = false;
@@ -51,13 +51,11 @@ function tempColor(c) {
 async function api(method, path, body, extraHeaders) {
     const headers = { 'Content-Type': 'application/json', ...extraHeaders };
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-    const opts = { method, headers };
+    const opts = { method, headers, credentials: 'same-origin' };
     if (body) opts.body = JSON.stringify(body);
     const resp = await fetch(API + path, opts);
     if (resp.status === 401 && !path.startsWith('/api/auth/')) {
         // Session expired or invalid — show login
-        authToken = null;
-        sessionStorage.removeItem('authToken');
         showLogin();
         throw new Error('Session expired');
     }
@@ -228,6 +226,7 @@ async function submitSetupWorker() {
             name,
             master_url,
             api_key: result.api_key,
+            update_public_key: result.signing_public_key || null,
         });
         location.reload();
     } catch (e) {
@@ -1216,6 +1215,7 @@ async function refreshCfSection() {
             tunnelData = { connected: false, connections: 0, detail: 'unreachable' };
         }
         renderCfStatus(tunnelData);
+        await refreshCfServiceControl();
 
         // If this node has no tunnel configured, show empty state for routes
         if (!currentTunnelId) {
@@ -1245,6 +1245,76 @@ function renderCfStatus(d) {
     document.getElementById('cf-tunnel-id').textContent = currentTunnelId || 'Not configured';
     document.getElementById('cf-tunnel-name').textContent =
         currentTunnelId ? `Tunnel ${currentTunnelId.slice(0, 8)}...` : '--';
+}
+
+function cfServiceEndpoint(kind, lines = null) {
+    let base = `/api/cf/service/${kind}`;
+    if (isMaster && selectedNodeId && selectedNodeId !== selfNodeId) {
+        base = `/api/nodes/${selectedNodeId}/cf/service/${kind}`;
+    }
+    if (lines !== null) {
+        return `${base}?lines=${encodeURIComponent(lines)}`;
+    }
+    return base;
+}
+
+function renderCfServiceStatus(status) {
+    const stateEl = document.getElementById('cf-service-state');
+    const enabledEl = document.getElementById('cf-service-enabled');
+    const resultEl = document.getElementById('cf-service-result');
+    const pidEl = document.getElementById('cf-service-pid');
+    if (!stateEl || !enabledEl || !resultEl || !pidEl) return;
+
+    const activeState = status.active_state || 'unknown';
+    const subState = status.sub_state || '';
+    const stateLabel = subState && subState !== activeState
+        ? `${activeState} (${subState})`
+        : activeState;
+
+    stateEl.textContent = stateLabel;
+    if (activeState === 'active') stateEl.style.color = 'var(--green)';
+    else if (activeState === 'failed') stateEl.style.color = 'var(--red)';
+    else if (activeState === 'activating' || activeState === 'deactivating') stateEl.style.color = 'var(--yellow)';
+    else stateEl.style.color = 'var(--text-secondary)';
+
+    enabledEl.textContent = status.unit_file_state || 'unknown';
+    resultEl.textContent = status.result || '--';
+    pidEl.textContent = status.main_pid ? String(status.main_pid) : '--';
+}
+
+async function refreshCfServiceControl() {
+    const errEl = document.getElementById('cf-service-error');
+    const logsEl = document.getElementById('cf-service-logs');
+    if (!errEl || !logsEl) return;
+
+    errEl.textContent = '';
+    try {
+        const status = await api('GET', cfServiceEndpoint('status'));
+        renderCfServiceStatus(status);
+    } catch (e) {
+        errEl.textContent = `Status unavailable: ${e.message}`;
+    }
+
+    try {
+        const data = await api('GET', cfServiceEndpoint('logs', 80));
+        logsEl.textContent = data.logs || 'No recent logs.';
+    } catch (e) {
+        logsEl.textContent = 'Logs unavailable.';
+        errEl.textContent = errEl.textContent
+            ? `${errEl.textContent} Logs unavailable: ${e.message}`
+            : `Logs unavailable: ${e.message}`;
+    }
+}
+
+async function restartCfService() {
+    const errEl = document.getElementById('cf-service-error');
+    if (errEl) errEl.textContent = '';
+    try {
+        await api('POST', cfServiceEndpoint('restart'));
+        await refreshCfServiceControl();
+    } catch (e) {
+        if (errEl) errEl.textContent = e.message;
+    }
 }
 
 function renderCfRoutes(routes) {
@@ -1459,17 +1529,11 @@ async function checkAuthAndInit() {
             document.getElementById('set-password-form').style.display = '';
             return;
         }
-        if (!authToken) {
-            showLogin();
-            return;
-        }
-        // Validate existing token against an authenticated endpoint
+        // Validate existing cookie session against an authenticated endpoint
         const resp = await fetch('/api/config', {
-            headers: { 'Authorization': `Bearer ${authToken}` },
+            credentials: 'same-origin',
         });
         if (resp.status === 401) {
-            authToken = null;
-            sessionStorage.removeItem('authToken');
             showLogin();
             return;
         }
@@ -1498,8 +1562,6 @@ async function submitLogin() {
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.detail || 'Login failed');
-        authToken = data.token;
-        sessionStorage.setItem('authToken', authToken);
         document.getElementById('login-password').value = '';
         showDashboard();
         const configured = await initCluster();
@@ -1534,10 +1596,9 @@ async function submitSetPassword() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ password: pw }),
         });
-        const loginData = await loginResp.json();
+        await loginResp.json();
         if (loginResp.ok) {
-            authToken = loginData.token;
-            sessionStorage.setItem('authToken', authToken);
+            authToken = null;
         }
         showDashboard();
         const configured = await initCluster();

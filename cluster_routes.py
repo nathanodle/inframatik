@@ -1,4 +1,6 @@
 import asyncio
+import ipaddress
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -17,16 +19,39 @@ from node_config import (
     set_tunnel_id,
     set_dashboard_hostname,
     generate_api_key,
-    generate_node_id,
     create_service_token,
+    rotate_service_token,
     revoke_service_token,
+    normalize_service_token_capability,
     create_enrollment_token,
     consume_enrollment_token,
     delete_enrollment_token,
+    cleanup_expired_tokens,
+    assert_worker_address_allowed,
+    get_worker_target_allowlist,
+    set_worker_target_allowlist,
+    is_worker_allowlist_required,
 )
-from nodes import register_node, heartbeat_node, get_all_nodes, unregister_node
+from nodes import (
+    register_node,
+    heartbeat_node,
+    validate_heartbeat_key,
+    get_all_nodes,
+    unregister_node,
+)
 from proxy import proxy_to_node
-from updater import get_version, build_package, apply_package, restart_service, push_update_to_worker
+from updater import (
+    get_version,
+    build_package,
+    apply_package,
+    restart_service,
+    push_update_to_worker,
+    sign_package,
+    verify_package_signature,
+    get_signing_public_key_b64,
+    get_signing_public_key_pem,
+)
+from cloudflared import setup_cloudflared_user_service
 
 cluster_router = APIRouter()
 
@@ -43,6 +68,46 @@ class SetPasswordBody(BaseModel):
     password: str
 
 
+def _is_loopback_addr(addr: str) -> bool:
+    if not addr:
+        return False
+    if addr == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(addr).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_local_bootstrap_request(request: Request) -> bool:
+    if os.getenv("INFRAMATIK_ALLOW_REMOTE_BOOTSTRAP", "").lower() in ("1", "true", "yes"):
+        return True
+
+    client_host = request.client.host if request.client else ""
+    if not _is_loopback_addr(client_host):
+        return False
+
+    # If behind a local reverse proxy, ensure request wasn't forwarded from remote.
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        first_hop = xff.split(",", 1)[0].strip()
+        if first_hop and not _is_loopback_addr(first_hop):
+            return False
+
+    return True
+
+
+def _request_client_id(request: Request) -> str:
+    """Best-effort client identifier for login throttling."""
+    client_host = request.client.host if request.client else ""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff and _is_loopback_addr(client_host):
+        first_hop = xff.split(",", 1)[0].strip()
+        if first_hop:
+            return first_hop
+    return client_host or "unknown"
+
+
 @cluster_router.get("/api/auth/status")
 async def auth_status():
     from node_config import has_admin_password
@@ -50,31 +115,72 @@ async def auth_status():
 
 
 @cluster_router.post("/api/auth/login")
-async def auth_login(body: LoginBody):
+async def auth_login(body: LoginBody, request: Request):
     from node_config import verify_admin_password
-    from auth import create_session
+    from auth import (
+        create_session,
+        login_is_allowed,
+        record_failed_login,
+        record_successful_login,
+        SESSION_COOKIE_NAME,
+        SESSION_COOKIE_SECURE,
+    )
+
+    client_id = _request_client_id(request)
+    allowed, retry_after = login_is_allowed(client_id)
+    if not allowed:
+        raise HTTPException(429, f"Too many login attempts. Retry in {retry_after}s")
+
     if not verify_admin_password(body.password):
+        retry_after = record_failed_login(client_id)
+        if retry_after > 0:
+            raise HTTPException(429, f"Too many failed attempts. Retry in {retry_after}s")
         raise HTTPException(401, "Invalid password")
+
+    record_successful_login(client_id)
     config = get_node_config()
     duration = config.get("session_duration_hours", 24) if config else 24
     token, expires_at = create_session(duration)
-    return {"token": token, "expires_at": expires_at}
+    response = JSONResponse({"token": token, "expires_at": expires_at})
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=duration * 3600,
+        httponly=True,
+        secure=SESSION_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+    return response
 
 
 @cluster_router.post("/api/auth/logout")
 async def auth_logout(request: Request):
-    from auth import invalidate_session
+    from auth import invalidate_session, SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         invalidate_session(auth_header[7:])
-    return {"status": "logged_out"}
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    if cookie_token:
+        invalidate_session(cookie_token)
+
+    response = JSONResponse({"status": "logged_out"})
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        samesite="lax",
+        secure=SESSION_COOKIE_SECURE,
+    )
+    return response
 
 
 @cluster_router.post("/api/auth/set-password")
-async def auth_set_password(body: SetPasswordBody):
+async def auth_set_password(body: SetPasswordBody, request: Request):
     from node_config import has_admin_password, set_admin_password
     if has_admin_password():
         raise HTTPException(400, "Password already set. Use settings to change it.")
+    if not _is_local_bootstrap_request(request):
+        raise HTTPException(403, "First password setup must be done from localhost")
     if len(body.password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
     set_admin_password(body.password)
@@ -142,6 +248,7 @@ class InitWorkerBody(BaseModel):
     name: str
     master_url: str
     api_key: Optional[str] = None
+    update_public_key: Optional[str] = None
 
 
 @cluster_router.post("/api/config/init-worker")
@@ -149,7 +256,12 @@ async def config_init_worker(body: InitWorkerBody):
     config = get_node_config()
     if config is not None and config.get("role") not in ("standalone", None):
         raise HTTPException(400, "Node already configured. Reset first.")
-    new_config = init_as_worker(body.name, body.master_url, api_key=body.api_key)
+    new_config = init_as_worker(
+        body.name,
+        body.master_url,
+        api_key=body.api_key,
+        update_public_key=body.update_public_key,
+    )
     return {
         "node_id": new_config["node_id"],
         "node_name": new_config["node_name"],
@@ -166,12 +278,16 @@ async def config_reset(request: Request):
         api_key = request.headers.get("X-Api-Key")
         if not api_key or api_key != config["api_key"]:
             raise HTTPException(401, "API key required")
+
+    from auth import clear_all_sessions
     reset_config()
+    clear_all_sessions()
     return {"status": "reset", "role": "unconfigured"}
 
 
 @cluster_router.get("/api/config")
 async def config_get():
+    cleanup_expired_tokens()
     config = get_node_config()
     if not config:
         return {"role": "unconfigured"}
@@ -193,11 +309,25 @@ async def config_get():
         for wid, w in config.get("workers", {}).items():
             workers[wid] = {k: v for k, v in w.items() if k != "api_key"}
         result["workers"] = workers
-        result["enrollment_tokens"] = list(config.get("enrollment_tokens", {}).keys())
+        result["worker_target_allowlist"] = get_worker_target_allowlist(config=config)
+        result["worker_target_allowlist_required"] = is_worker_allowlist_required()
+        result["enrollment_tokens"] = [
+            {
+                "token": token,
+                "created_at": meta.get("created_at"),
+                "expires_at": meta.get("expires_at"),
+            }
+            for token, meta in config.get("enrollment_tokens", {}).items()
+        ]
     # Include service tokens summary (no token values)
     svc_tokens = config.get("service_tokens", {})
     result["service_tokens"] = [
-        {"service": v["service"], "created_at": v.get("created_at")}
+        {
+            "service": v["service"],
+            "capability": v.get("capability", "deploy"),
+            "created_at": v.get("created_at"),
+            "expires_at": v.get("expires_at"),
+        }
         for v in svc_tokens.values()
     ]
     return result
@@ -236,14 +366,7 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
 
             # Start cloudflared with the tunnel token
             token = await get_tunnel_token(tid)
-            proc = await asyncio.create_subprocess_exec(
-                "sudo", "/usr/local/bin/infra-cf-setup", token,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            stdout, _ = await proc.communicate()
-            if proc.returncode != 0:
-                raise ValueError("Failed to start cloudflared")
+            await setup_cloudflared_user_service(token)
 
         # Add ingress route for the dashboard
         await add_tunnel_route(body.hostname, "http://localhost:9000", tunnel_id=tid)
@@ -261,6 +384,8 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
         return {"status": "enabled", "hostname": body.hostname, "tunnel_id": tid}
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
 
 
 @cluster_router.delete("/api/config/dashboard-access")
@@ -301,6 +426,49 @@ class AddWorkerBody(BaseModel):
     api_key: str
 
 
+class WorkerTargetAllowlistBody(BaseModel):
+    entries: list[str]
+
+
+@cluster_router.get("/api/config/worker-target-allowlist")
+async def config_get_worker_target_allowlist():
+    config = get_node_config()
+    if not config or config.get("role") != "master":
+        raise HTTPException(400, "Only a master node can manage worker target allowlist")
+    try:
+        entries = get_worker_target_allowlist(config=config)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "entries": entries,
+        "required": is_worker_allowlist_required(),
+    }
+
+
+@cluster_router.put("/api/config/worker-target-allowlist")
+async def config_set_worker_target_allowlist(body: WorkerTargetAllowlistBody):
+    try:
+        entries = set_worker_target_allowlist(body.entries)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "entries": entries,
+        "required": is_worker_allowlist_required(),
+    }
+
+
+@cluster_router.delete("/api/config/worker-target-allowlist")
+async def config_clear_worker_target_allowlist():
+    try:
+        entries = set_worker_target_allowlist([])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "entries": entries,
+        "required": is_worker_allowlist_required(),
+    }
+
+
 @cluster_router.post("/api/config/workers")
 async def config_add_worker(body: AddWorkerBody):
     try:
@@ -328,7 +496,13 @@ async def config_create_enrollment_token():
         token = create_enrollment_token()
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {"token": token}
+    config = get_node_config() or {}
+    meta = config.get("enrollment_tokens", {}).get(token, {})
+    return {
+        "token": token,
+        "created_at": meta.get("created_at"),
+        "expires_at": meta.get("expires_at"),
+    }
 
 
 @cluster_router.delete("/api/config/enrollment-tokens/{token}")
@@ -341,15 +515,46 @@ async def config_delete_enrollment_token(token: str):
 
 class ServiceTokenBody(BaseModel):
     service: str
+    capability: Optional[str] = None
 
 
 @cluster_router.post("/api/config/service-tokens")
 async def config_create_service_token(body: ServiceTokenBody):
     try:
-        token = create_service_token(body.service)
+        token = create_service_token(body.service, capability=body.capability)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {"token": token, "service": body.service}
+    config = get_node_config() or {}
+    meta = config.get("service_tokens", {}).get(token, {})
+    capability = meta.get("capability")
+    try:
+        capability = normalize_service_token_capability(capability)
+    except ValueError:
+        capability = "deploy"
+    return {
+        "token": token,
+        "service": body.service,
+        "capability": capability,
+        "created_at": meta.get("created_at"),
+        "expires_at": meta.get("expires_at"),
+    }
+
+
+@cluster_router.post("/api/config/service-tokens/{token}/rotate")
+async def config_rotate_service_token(token: str):
+    try:
+        new_token, service, capability = rotate_service_token(token)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    config = get_node_config() or {}
+    meta = config.get("service_tokens", {}).get(new_token, {})
+    return {
+        "token": new_token,
+        "service": service,
+        "capability": capability,
+        "created_at": meta.get("created_at"),
+        "expires_at": meta.get("expires_at"),
+    }
 
 
 @cluster_router.delete("/api/config/service-tokens/{token}")
@@ -365,27 +570,34 @@ class EnrollBody(BaseModel):
 
 
 @cluster_router.post("/api/nodes/enroll")
-async def enroll_worker(body: EnrollBody, request: Request):
+async def enroll_worker(body: EnrollBody):
     """Worker presents an enrollment token to register with the master."""
     config = get_node_config()
     if not config or config.get("role") != "master":
         raise HTTPException(400, "Not a master node")
+
+    try:
+        normalized_address = assert_worker_address_allowed(body.address, config=config)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
     if not consume_enrollment_token(body.token):
         raise HTTPException(401, "Invalid or expired enrollment token")
 
     # Generate credentials for the worker
     worker_api_key = generate_api_key()
+    signing_public_key = get_signing_public_key_pem()
 
     # Store worker in master config
     try:
-        add_worker(body.node_name, body.address, worker_api_key)
+        add_worker(body.node_name, normalized_address, worker_api_key)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
     return {
         "status": "enrolled",
         "api_key": worker_api_key,
+        "signing_public_key": signing_public_key,
     }
 
 
@@ -419,6 +631,8 @@ async def heartbeat(body: HeartbeatBody, request: Request):
     api_key = request.headers.get("X-Api-Key")
     if not api_key:
         raise HTTPException(401, "API key required")
+    if not validate_heartbeat_key(body.node_id, api_key):
+        raise HTTPException(401, "Invalid API key for node")
     ok = heartbeat_node(body.node_id)
     if not ok:
         raise HTTPException(404, "Node not registered — re-register required")
@@ -498,6 +712,34 @@ async def proxy_tunnel(node_id: str):
         raise HTTPException(502, str(e))
 
 
+@cluster_router.get("/api/nodes/{node_id}/cf/service/status")
+async def proxy_cf_service_status(node_id: str):
+    try:
+        return await proxy_to_node(node_id, "GET", "/api/internal/cf/service/status")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/cf/service/logs")
+async def proxy_cf_service_logs(node_id: str, lines: int = 80):
+    try:
+        return await proxy_to_node(
+            node_id,
+            "GET",
+            f"/api/internal/cf/service/logs?lines={lines}",
+        )
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/cf/service/restart")
+async def proxy_cf_service_restart(node_id: str):
+    try:
+        return await proxy_to_node(node_id, "POST", "/api/internal/cf/service/restart")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
 # ---------------------------------------------------------------------------
 # Updates / deployment
 # ---------------------------------------------------------------------------
@@ -519,6 +761,21 @@ async def node_update(request: Request):
         raise HTTPException(400, "Empty package")
     if len(body) > 50 * 1024 * 1024:  # 50MB max
         raise HTTPException(413, "Package too large")
+    allow_unsigned = os.getenv("INFRAMATIK_ALLOW_UNSIGNED_UPDATES", "").lower() in ("1", "true", "yes")
+    package_sig = request.headers.get("X-Inframatik-Package-Signature", "").strip()
+    trusted_public_key = config.get("update_public_key")
+    if not trusted_public_key and config.get("role") in ("master", "standalone"):
+        trusted_public_key = get_signing_public_key_pem()
+
+    if not package_sig:
+        if not allow_unsigned:
+            raise HTTPException(401, "Missing package signature")
+    else:
+        if not trusted_public_key:
+            raise HTTPException(400, "No trusted update signing key configured")
+        if not verify_package_signature(body, package_sig, trusted_public_key):
+            raise HTTPException(401, "Invalid package signature")
+
     try:
         apply_package(body)
     except Exception as e:
@@ -536,13 +793,18 @@ async def deploy_to_workers():
         raise HTTPException(403, "Only master can deploy updates")
 
     package = build_package()
+    package_sig = sign_package(package)
     workers = config.get("workers", {})
     results = {}
 
     tasks = []
     for node_id, worker in workers.items():
         tasks.append((node_id, worker["name"], push_update_to_worker(
-            worker["address"], worker["api_key"], package
+            worker["address"],
+            worker["api_key"],
+            package,
+            package_sig["signature_b64"],
+            package_sig["key_id"],
         )))
 
     for node_id, name, coro in tasks:
@@ -582,8 +844,13 @@ async def install_script(request: Request):
         raise HTTPException(400, "Invalid host header")
     scheme = "https" if request.headers.get("x-forwarded-proto") == "https" else "http"
     master_url = f"{scheme}://{host}"
+    package_public_key_b64 = get_signing_public_key_b64()
 
-    script = _INSTALL_SCRIPT_PATH.read_text().replace("__MASTER_URL__", master_url)
+    script = (
+        _INSTALL_SCRIPT_PATH.read_text()
+        .replace("__MASTER_URL__", master_url)
+        .replace("__PACKAGE_PUBLIC_KEY_B64__", package_public_key_b64)
+    )
     return PlainTextResponse(script, media_type="text/plain")
 
 
@@ -595,4 +862,13 @@ async def install_package():
         raise HTTPException(403, "Only master can serve install packages")
 
     package = build_package()
-    return Response(content=package, media_type="application/gzip")
+    package_sig = sign_package(package)
+    return Response(
+        content=package,
+        media_type="application/gzip",
+        headers={
+            "X-Inframatik-Package-Signature": package_sig["signature_b64"],
+            "X-Inframatik-Package-Key-Id": package_sig["key_id"],
+            "X-Inframatik-Package-Signed-At": str(package_sig["signed_at"]),
+        },
+    )

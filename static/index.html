@@ -198,6 +198,23 @@
                     <div class="metric-value mono-sm" id="cf-tunnel-id">--</div>
                 </div>
             </div>
+            <div class="cf-service-panel">
+                <div class="cf-service-header">
+                    <div class="metric-label">cloudflared User Service</div>
+                    <div class="cf-service-state mono-sm" id="cf-service-state">--</div>
+                </div>
+                <div class="cf-service-info">
+                    <span><span class="settings-info-label">Enabled:</span> <span id="cf-service-enabled">--</span></span>
+                    <span><span class="settings-info-label">Result:</span> <span id="cf-service-result">--</span></span>
+                    <span><span class="settings-info-label">PID:</span> <span id="cf-service-pid">--</span></span>
+                </div>
+                <div class="cf-service-actions">
+                    <button class="btn" onclick="refreshCfServiceControl()">Refresh</button>
+                    <button class="btn primary" onclick="restartCfService()">Restart Service</button>
+                </div>
+                <div class="form-error" id="cf-service-error"></div>
+                <div class="logs-content cf-service-logs" id="cf-service-logs">No logs loaded.</div>
+            </div>
         </div>
 
         <div class="tunnel-tab-content" id="tunnel-tab-cf-routes" style="display:none">

@@ -20,7 +20,7 @@ from services import (
     next_available_port,
 )
 from tunnel import get_tunnel_status, get_tunnel_routes
-from node_config import get_node_config
+from node_config import get_node_config, service_token_capability_allows
 from cluster_routes import cluster_router
 from cf_routes import cf_router
 from mcp_routes import mcp_router
@@ -62,12 +62,36 @@ _PUBLIC_PATHS = {
 _SELF_AUTH_PATHS = {
     "/api/nodes/register", "/api/nodes/heartbeat", "/api/node/update",
     "/api/cf/token", "/api/config/reset", "/api/nodes/enroll",
+    "/api/internal/cf/service/status",
+    "/api/internal/cf/service/logs",
+    "/api/internal/cf/service/restart",
 }
 
 
-# Paths that service tokens are allowed to access
-_SERVICE_TOKEN_PATHS = {"/api/services", "/api/ports/next", "/mcp"}
-_SERVICE_TOKEN_PREFIXES = ("/api/services/",)
+def _service_token_required_capability(path: str, method: str) -> Optional[str]:
+    if path == "/mcp" and method == "POST":
+        return "read"
+    if path == "/api/ports/next" and method == "GET":
+        return "deploy"
+    if path == "/api/services":
+        if method == "GET":
+            return "read"
+        if method == "POST":
+            return "deploy"
+        return None
+    if path.startswith("/api/services/"):
+        if method == "GET" and path.endswith("/logs"):
+            return "read"
+        if method == "POST" and (
+            path.endswith("/start")
+            or path.endswith("/stop")
+            or path.endswith("/restart")
+        ):
+            return "operate"
+        if method == "DELETE":
+            return "deploy"
+        return None
+    return None
 
 
 @app.middleware("http")
@@ -80,6 +104,7 @@ async def auth_middleware(request: Request, call_next):
 
     # Require auth for everything else
     request.state.service_scope = None
+    request.state.service_capability = None
     from auth import check_auth
     if not await check_auth(request):
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})
@@ -87,9 +112,15 @@ async def auth_middleware(request: Request, call_next):
     # If using a scoped service token, enforce path restrictions
     scope = getattr(request.state, "service_scope", None)
     if scope:
-        allowed = path in _SERVICE_TOKEN_PATHS or any(path.startswith(p) for p in _SERVICE_TOKEN_PREFIXES)
-        if not allowed:
+        required_capability = _service_token_required_capability(path, request.method)
+        if not required_capability:
             return JSONResponse(status_code=403, content={"detail": "Service token cannot access this endpoint"})
+        token_capability = getattr(request.state, "service_capability", "deploy")
+        if not service_token_capability_allows(token_capability, required_capability):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": f"Service token capability '{token_capability}' cannot perform this action"},
+            )
         # Verify the service name in the path matches the scope
         if path.startswith("/api/services/"):
             path_service = path.split("/api/services/")[1].split("/")[0]

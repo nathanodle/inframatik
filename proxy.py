@@ -1,6 +1,7 @@
 import httpx
 
 from nodes import resolve_node
+from node_config import assert_worker_address_allowed
 
 PROXY_TIMEOUT = 10
 
@@ -17,7 +18,10 @@ async def proxy_to_node(node_id: str, method: str, path: str, body: dict = None)
     if target is None:
         return await _handle_local(method, path, body)
 
-    address = target["address"]
+    try:
+        address = assert_worker_address_allowed(target["address"])
+    except ValueError as e:
+        raise ValueError(f"Invalid worker address: {e}")
     api_key = target["api_key"]
     url = f"{address}{path}"
     headers = {"X-Api-Key": api_key}
@@ -66,6 +70,11 @@ async def _handle_local(method: str, path: str, body: dict = None):
         get_service_logs,
     )
     from tunnel import get_tunnel_status, get_tunnel_routes
+    from cloudflared import (
+        get_cloudflared_user_service_status,
+        get_cloudflared_user_service_logs,
+        restart_cloudflared_user_service,
+    )
 
     if path == "/api/system" and method == "GET":
         return get_system_metrics()
@@ -125,5 +134,25 @@ async def _handle_local(method: str, path: str, body: dict = None):
         status = await get_tunnel_status()
         status["routes"] = await get_tunnel_routes()
         return status
+
+    if path == "/api/internal/cf/service/status" and method == "GET":
+        return await get_cloudflared_user_service_status()
+
+    if path.startswith("/api/internal/cf/service/logs") and method == "GET":
+        lines = 80
+        if "?" in path:
+            query = path.split("?", 1)[1]
+            for param in query.split("&"):
+                if param.startswith("lines="):
+                    try:
+                        lines = int(param.split("=", 1)[1])
+                    except ValueError:
+                        pass
+        logs = await get_cloudflared_user_service_logs(lines=lines)
+        return {"lines": lines, "logs": logs}
+
+    if path == "/api/internal/cf/service/restart" and method == "POST":
+        service = await restart_cloudflared_user_service()
+        return {"status": "restarted", "service": service}
 
     raise ValueError(f"Unknown local route: {method} {path}")
