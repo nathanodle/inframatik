@@ -397,23 +397,50 @@ class ValidateTokenBody(BaseModel):
 
 @cf_router.post("/api/cf/setup/validate-token")
 async def cf_setup_validate_token(body: ValidateTokenBody):
-    """Validate a CF API token and return accessible accounts."""
+    """Validate a CF API token and return accessible accounts.
+
+    Tries /accounts first, falls back to discovering accounts from /zones
+    (works with tokens that only have zone-scoped permissions).
+    """
     try:
         async with httpx.AsyncClient(timeout=10) as client:
+            # Try listing accounts directly
             resp = await client.get(
                 "https://api.cloudflare.com/client/v4/accounts",
                 headers=_cf_headers(body.token),
                 params={"per_page": 50},
             )
             data = resp.json()
-    except (httpx.HTTPError, ValueError):
+            if not data.get("success"):
+                raise HTTPException(401, "Invalid API token")
+            accounts = [{"id": a["id"], "name": a.get("name", "")} for a in data.get("result", [])]
+
+            # If no accounts returned, discover from zones
+            if not accounts:
+                zone_resp = await client.get(
+                    "https://api.cloudflare.com/client/v4/zones",
+                    headers=_cf_headers(body.token),
+                    params={"per_page": 50, "status": "active"},
+                )
+                zone_data = zone_resp.json()
+                if not zone_data.get("success") or not zone_data.get("result"):
+                    raise HTTPException(400, "Token has no accessible accounts or zones")
+                # Extract unique accounts from zones
+                seen = {}
+                for z in zone_data["result"]:
+                    acct = z.get("account", {})
+                    aid = acct.get("id")
+                    if aid and aid not in seen:
+                        seen[aid] = acct.get("name", aid)
+                accounts = [{"id": k, "name": v} for k, v in seen.items()]
+
+            if not accounts:
+                raise HTTPException(400, "No accounts accessible with this token")
+            return {"accounts": accounts}
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(400, "Failed to connect to Cloudflare API")
-    if not data.get("success"):
-        raise HTTPException(401, "Invalid API token")
-    accounts = [{"id": a["id"], "name": a.get("name", "")} for a in data.get("result", [])]
-    if not accounts:
-        raise HTTPException(400, "No accounts accessible with this token")
-    return {"accounts": accounts}
 
 
 class ListZonesBody(BaseModel):
