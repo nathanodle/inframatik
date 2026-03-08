@@ -1,5 +1,6 @@
 import asyncio
 import ipaddress
+import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -22,6 +23,8 @@ from node_config import (
     create_service_token,
     rotate_service_token,
     revoke_service_token,
+    revoke_service_token_by_id,
+    service_token_id,
     normalize_service_token_capability,
     create_enrollment_token,
     consume_enrollment_token,
@@ -54,6 +57,17 @@ from updater import (
 from cloudflared import setup_cloudflared_user_service
 
 cluster_router = APIRouter()
+logger = logging.getLogger("inframatik.cluster")
+_NODE_ROLES = {"standalone", "master", "worker"}
+
+
+def _configured_role(config: Optional[dict]) -> Optional[str]:
+    if not config:
+        return None
+    role = config.get("role")
+    if role in _NODE_ROLES:
+        return role
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -194,12 +208,13 @@ async def auth_set_password(body: SetPasswordBody, request: Request):
 @cluster_router.get("/api/node/info")
 async def node_info():
     config = get_node_config()
-    if not config:
+    role = _configured_role(config)
+    if not role:
         return {"role": "unconfigured", "node_name": None, "node_id": None}
     return {
-        "role": config["role"],
-        "node_name": config["node_name"],
-        "node_id": config["node_id"],
+        "role": role,
+        "node_name": config.get("node_name"),
+        "node_id": config.get("node_id"),
     }
 
 
@@ -221,7 +236,7 @@ class InitBody(BaseModel):
 @cluster_router.post("/api/config/init-standalone")
 async def config_init_standalone(body: InitBody):
     config = get_node_config()
-    if config is not None:
+    if _configured_role(config) is not None:
         raise HTTPException(400, "Node already configured. Reset first.")
     new_config = init_as_standalone(body.name)
     return {
@@ -234,7 +249,8 @@ async def config_init_standalone(body: InitBody):
 @cluster_router.post("/api/config/init-master")
 async def config_init_master(body: InitBody):
     config = get_node_config()
-    if config is not None and config.get("role") not in ("standalone", None):
+    role = _configured_role(config)
+    if role not in ("standalone", None):
         raise HTTPException(400, "Node already configured. Reset first.")
     new_config = init_as_master(body.name)
     return {
@@ -254,7 +270,8 @@ class InitWorkerBody(BaseModel):
 @cluster_router.post("/api/config/init-worker")
 async def config_init_worker(body: InitWorkerBody):
     config = get_node_config()
-    if config is not None and config.get("role") not in ("standalone", None):
+    role = _configured_role(config)
+    if role not in ("standalone", None):
         raise HTTPException(400, "Node already configured. Reset first.")
     new_config = init_as_worker(
         body.name,
@@ -289,21 +306,22 @@ async def config_reset(request: Request):
 async def config_get():
     cleanup_expired_tokens()
     config = get_node_config()
-    if not config:
+    role = _configured_role(config)
+    if not role:
         return {"role": "unconfigured"}
     result = {
-        "role": config["role"],
-        "node_id": config["node_id"],
-        "node_name": config["node_name"],
+        "role": role,
+        "node_id": config.get("node_id"),
+        "node_name": config.get("node_name"),
     }
     result["tunnel_id"] = config.get("tunnel_id")
     result["dashboard_hostname"] = config.get("dashboard_hostname")
     result["cf_configured"] = bool(config.get("cf_token") and config.get("cf_account_id"))
-    if config["role"] == "worker":
-        result["api_key"] = config["api_key"]
-        result["master_url"] = config["master_url"]
-    elif config["role"] == "master":
-        result["api_key"] = config["api_key"]
+    if role == "worker":
+        result["api_key"] = config.get("api_key")
+        result["master_url"] = config.get("master_url")
+    elif role == "master":
+        result["api_key"] = config.get("api_key")
         # Strip api_keys from worker entries (only expose name/address/tunnel_id)
         workers = {}
         for wid, w in config.get("workers", {}).items():
@@ -323,12 +341,13 @@ async def config_get():
     svc_tokens = config.get("service_tokens", {})
     result["service_tokens"] = [
         {
+            "token_id": service_token_id(token),
             "service": v["service"],
             "capability": v.get("capability", "deploy"),
             "created_at": v.get("created_at"),
             "expires_at": v.get("expires_at"),
         }
-        for v in svc_tokens.values()
+        for token, v in svc_tokens.items()
     ]
     return result
 
@@ -401,21 +420,28 @@ async def config_disable_dashboard_access():
     if not hostname:
         raise HTTPException(404, "Dashboard access not configured")
 
+    warnings: list[str] = []
     try:
         await remove_tunnel_route(hostname)
-    except Exception:
-        pass
+    except Exception as e:
+        warnings.append(f"Failed to remove tunnel route: {e}")
+        logger.warning("Dashboard access cleanup failed (route %s): %s", hostname, e)
     try:
         await delete_dns_record(hostname)
-    except Exception:
-        pass
+    except Exception as e:
+        warnings.append(f"Failed to delete DNS record: {e}")
+        logger.warning("Dashboard access cleanup failed (dns %s): %s", hostname, e)
     try:
         await delete_access_app(hostname)
-    except Exception:
-        pass
+    except Exception as e:
+        warnings.append(f"Failed to delete Access app: {e}")
+        logger.warning("Dashboard access cleanup failed (access %s): %s", hostname, e)
 
     set_dashboard_hostname(None)
-    return {"status": "disabled"}
+    response = {"status": "disabled"}
+    if warnings:
+        response["warnings"] = warnings
+    return response
 
 
 # --- Worker management (master only) ---
@@ -533,6 +559,7 @@ async def config_create_service_token(body: ServiceTokenBody):
         capability = "deploy"
     return {
         "token": token,
+        "token_id": service_token_id(token),
         "service": body.service,
         "capability": capability,
         "created_at": meta.get("created_at"),
@@ -550,11 +577,19 @@ async def config_rotate_service_token(token: str):
     meta = config.get("service_tokens", {}).get(new_token, {})
     return {
         "token": new_token,
+        "token_id": service_token_id(new_token),
         "service": service,
         "capability": capability,
         "created_at": meta.get("created_at"),
         "expires_at": meta.get("expires_at"),
     }
+
+
+@cluster_router.delete("/api/config/service-tokens/by-id/{token_id}")
+async def config_revoke_service_token_by_id(token_id: str):
+    if not revoke_service_token_by_id(token_id):
+        raise HTTPException(404, "Service token not found")
+    return {"status": "revoked"}
 
 
 @cluster_router.delete("/api/config/service-tokens/{token}")
@@ -797,19 +832,37 @@ async def deploy_to_workers():
     workers = config.get("workers", {})
     results = {}
 
-    tasks = []
+    worker_targets = []
+    coroutines = []
     for node_id, worker in workers.items():
-        tasks.append((node_id, worker["name"], push_update_to_worker(
-            worker["address"],
-            worker["api_key"],
-            package,
-            package_sig["signature_b64"],
-            package_sig["key_id"],
-        )))
+        worker_targets.append((node_id, worker["name"]))
+        coroutines.append(
+            push_update_to_worker(
+                worker["address"],
+                worker["api_key"],
+                package,
+                package_sig["signature_b64"],
+                package_sig["key_id"],
+            )
+        )
 
-    for node_id, name, coro in tasks:
-        result = await coro
-        results[node_id] = {"name": name, **result}
+    if coroutines:
+        responses = await asyncio.gather(*coroutines, return_exceptions=True)
+        for (node_id, name), response in zip(worker_targets, responses):
+            if isinstance(response, Exception):
+                results[node_id] = {
+                    "name": name,
+                    "status": "error",
+                    "detail": str(response),
+                }
+            elif isinstance(response, dict):
+                results[node_id] = {"name": name, **response}
+            else:
+                results[node_id] = {
+                    "name": name,
+                    "status": "error",
+                    "detail": "Invalid worker response type",
+                }
 
     return {"status": "deployed", "workers": results}
 

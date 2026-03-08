@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -43,6 +44,28 @@ def api_request(endpoint, method, path, body=None, token=None):
 # Config file editing
 # ---------------------------------------------------------------------------
 
+def secure_write_text(path, content, mode=0o600):
+    """Write text atomically with restrictive permissions."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        dir=str(target.parent),
+    )
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, target)
+        os.chmod(target, mode)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 def ensure_gitignore(entry, path=".gitignore"):
     """Add entry to .gitignore if not already present."""
     gitignore = Path(path)
@@ -69,9 +92,6 @@ def edit_mcp_json(endpoint, token, path=".mcp.json"):
         except (json.JSONDecodeError, ValueError):
             print(f"  Warning: {path} is malformed, skipping")
             return False
-        # Backup
-        backup = Path(f"{path}.bak")
-        backup.write_text(mcp_path.read_text())
 
     config.setdefault("mcpServers", {})
     config["mcpServers"]["inframatik"] = {
@@ -79,7 +99,7 @@ def edit_mcp_json(endpoint, token, path=".mcp.json"):
         "url": f"{endpoint}/mcp",
         "headers": {"Authorization": f"Bearer {token}"},
     }
-    mcp_path.write_text(json.dumps(config, indent=2) + "\n")
+    secure_write_text(mcp_path, json.dumps(config, indent=2) + "\n")
     return True
 
 
@@ -92,9 +112,6 @@ def edit_codex_toml(endpoint, token, path=".codex/config.toml"):
     existing_lines = []
     if toml_path.exists():
         existing_lines = toml_path.read_text().splitlines()
-        # Backup
-        backup = Path(f"{path}.bak")
-        backup.write_text(toml_path.read_text())
 
     # Remove existing inframatik section if present
     filtered = []
@@ -123,7 +140,7 @@ def edit_codex_toml(endpoint, token, path=".codex/config.toml"):
         f'Authorization = "Bearer {_toml_escape(token)}"',
     ])
 
-    toml_path.write_text("\n".join(filtered) + "\n")
+    secure_write_text(toml_path, "\n".join(filtered) + "\n")
     return True
 
 
@@ -228,12 +245,13 @@ def cmd_init():
         inframatik_config["hostname"] = hostname
     inframatik_config["instructions"] = instructions
 
-    Path(".inframatik").write_text(json.dumps(inframatik_config, indent=2) + "\n")
+    secure_write_text(".inframatik", json.dumps(inframatik_config, indent=2) + "\n")
     print("✓ Wrote .inframatik")
 
     # 6. Gitignore
-    if ensure_gitignore(".inframatik"):
-        print("✓ Added .inframatik to .gitignore")
+    for entry in (".inframatik", ".mcp.json", ".codex/", "*.bak"):
+        if ensure_gitignore(entry):
+            print(f"✓ Added {entry} to .gitignore")
 
     print()
 
@@ -304,6 +322,49 @@ def cmd_init():
     print(f"Done! Token is scoped to service '{service}'.")
 
 
+def cmd_rotate():
+    cfg_path = Path(".inframatik")
+    if not cfg_path.exists():
+        print("Error: .inframatik not found in current directory.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        config = json.loads(cfg_path.read_text())
+    except Exception:
+        print("Error: .inframatik is not valid JSON.", file=sys.stderr)
+        sys.exit(1)
+
+    endpoint = str(config.get("endpoint", "")).rstrip("/")
+    current_token = config.get("token")
+    service = config.get("service", "<unknown>")
+    if not endpoint or not current_token:
+        print("Error: .inframatik must include endpoint and token.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Rotate service token for '{service}' at {endpoint}\n")
+    password = getpass.getpass("Admin password: ")
+    login = api_request(endpoint, "POST", "/api/auth/login", {"password": password})
+    if not login:
+        print("Authentication failed.")
+        sys.exit(1)
+
+    session_token = login["token"]
+    rotate = api_request(
+        endpoint,
+        "POST",
+        f"/api/config/service-tokens/{current_token}/rotate",
+        token=session_token,
+    )
+    if not rotate:
+        print("Token rotation failed.")
+        sys.exit(1)
+
+    new_token = rotate["token"]
+    config["token"] = new_token
+    secure_write_text(cfg_path, json.dumps(config, indent=2) + "\n")
+    print("✓ Rotated service token and updated .inframatik")
+
+
 def cmd_mcp():
     print("The MCP server is built into inframatik — no separate process needed.")
     print()
@@ -325,12 +386,15 @@ def main():
         print()
         print("Commands:")
         print("  init    Set up a service token and configure agent harnesses")
-        print("  mcp     Run as MCP server (coming soon)")
+        print("  rotate  Rotate the current project's service token")
+        print("  mcp     Show MCP endpoint and auth usage")
         sys.exit(0)
 
     cmd = sys.argv[1]
     if cmd == "init":
         cmd_init()
+    elif cmd == "rotate":
+        cmd_rotate()
     elif cmd == "mcp":
         cmd_mcp()
     else:

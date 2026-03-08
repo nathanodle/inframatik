@@ -7,6 +7,7 @@ Auth uses scoped service tokens (svc_...) validated by the main auth middleware.
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
+from node_config import service_token_capability_allows
 from services import (
     list_services,
     register_service,
@@ -14,7 +15,6 @@ from services import (
     stop_service,
     restart_service,
     get_service_logs,
-    get_service_status,
 )
 
 mcp_router = APIRouter()
@@ -172,6 +172,14 @@ _TOOL_HANDLERS = {
     "status": _tool_status,
 }
 
+_TOOL_REQUIRED_CAPABILITY = {
+    "deploy": "deploy",
+    "restart": "operate",
+    "stop": "operate",
+    "logs": "read",
+    "status": "read",
+}
+
 
 # ---------------------------------------------------------------------------
 # MCP endpoint
@@ -183,6 +191,7 @@ async def mcp_endpoint(request: Request):
     scope = getattr(request.state, "service_scope", None)
     if not scope:
         raise HTTPException(403, "Service token required for MCP endpoint")
+    token_capability = getattr(request.state, "service_capability", "deploy")
 
     try:
         body = await request.json()
@@ -208,7 +217,12 @@ async def mcp_endpoint(request: Request):
         return _jsonrpc_result(req_id, {})
 
     if method == "tools/list":
-        return _jsonrpc_result(req_id, {"tools": TOOLS})
+        allowed_tools = []
+        for tool in TOOLS:
+            required = _TOOL_REQUIRED_CAPABILITY.get(tool["name"], "deploy")
+            if service_token_capability_allows(token_capability, required):
+                allowed_tools.append(tool)
+        return _jsonrpc_result(req_id, {"tools": allowed_tools})
 
     if method == "tools/call":
         params = body.get("params", {})
@@ -218,6 +232,13 @@ async def mcp_endpoint(request: Request):
         handler = _TOOL_HANDLERS.get(tool_name)
         if not handler:
             return _jsonrpc_error(req_id, -32602, f"Unknown tool: {tool_name}")
+        required = _TOOL_REQUIRED_CAPABILITY.get(tool_name, "deploy")
+        if not service_token_capability_allows(token_capability, required):
+            return _jsonrpc_error(
+                req_id,
+                -32603,
+                f"Tool '{tool_name}' requires '{required}' capability",
+            )
 
         try:
             result = await handler(scope, tool_args)

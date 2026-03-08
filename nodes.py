@@ -6,7 +6,12 @@ from typing import Optional
 
 import httpx
 
-from node_config import get_node_config, get_worker_by_api_key
+from node_config import (
+    get_node_config,
+    get_worker_by_api_key,
+    normalize_worker_address,
+    assert_worker_address_allowed,
+)
 
 # Cache for active health check results: address -> (status, timestamp)
 _health_cache: dict[str, tuple[str, float]] = {}
@@ -38,10 +43,31 @@ def register_node(node_id: str, node_name: str, address: str, api_key: str) -> b
         return False
 
     config_node_id, worker_config = match
+    try:
+        reported_address = normalize_worker_address(address)
+    except ValueError:
+        return False
+    try:
+        expected_address = assert_worker_address_allowed(worker_config["address"])
+    except ValueError:
+        logger.warning(
+            "Rejected register for %s: configured address for worker %s is invalid",
+            node_name,
+            config_node_id,
+        )
+        return False
+    if reported_address != expected_address:
+        logger.warning(
+            "Rejected register for %s: reported address %s does not match configured address %s",
+            node_name,
+            reported_address,
+            expected_address,
+        )
+        return False
 
     _nodes[node_id] = {
         "node_name": node_name,
-        "address": address.rstrip("/"),
+        "address": expected_address,
         "status": "online",
         "last_seen": time.time(),
         "registered_at": time.time(),
@@ -64,8 +90,32 @@ def heartbeat_node(node_id: str) -> bool:
     return False
 
 
+def validate_heartbeat_key(node_id: str, api_key: str) -> bool:
+    """Validate worker API key and enforce key->node binding when node is registered."""
+    match = get_worker_by_api_key(api_key)
+    if not match:
+        return False
+
+    config_node_id, _ = match
+    real_id = _id_map.get(node_id, node_id)
+
+    # If node is registered, heartbeat key must match that node's configured worker identity.
+    if real_id in _nodes:
+        return _nodes[real_id].get("config_node_id") == config_node_id
+
+    # If node is not registered yet, allow heartbeat auth to pass and let caller return 404
+    # so workers can trigger their re-registration flow.
+    return True
+
+
 async def _check_health(address: str) -> str:
     """Ping a worker's /api/system endpoint. Returns 'online' or 'offline'. Cached."""
+    try:
+        address = assert_worker_address_allowed(address)
+    except ValueError:
+        logger.warning("Skipped health check for invalid worker address: %s", address)
+        return "offline"
+
     now = time.time()
     cached = _health_cache.get(address)
     if cached and (now - cached[1]) < HEALTH_CACHE_TTL:
@@ -152,16 +202,27 @@ def resolve_node(node_id: str) -> Optional[dict]:
         info = _nodes[real_id]
         cfg_id = info.get("config_node_id", node_id)
         worker_cfg = config.get("workers", {}).get(cfg_id, {})
+        address = worker_cfg.get("address")
+        if not address:
+            raise ValueError(f"Worker '{cfg_id}' has no configured address")
+        try:
+            normalized_address = assert_worker_address_allowed(address, config=config)
+        except ValueError as e:
+            raise ValueError(f"Invalid worker address for '{cfg_id}': {e}")
         return {
-            "address": info["address"],
+            "address": normalized_address,
             "api_key": worker_cfg.get("api_key", ""),
         }
 
     # Check config (not yet registered)
     worker = config.get("workers", {}).get(node_id)
     if worker:
+        try:
+            normalized_address = assert_worker_address_allowed(worker["address"], config=config)
+        except ValueError as e:
+            raise ValueError(f"Invalid worker address for '{node_id}': {e}")
         return {
-            "address": worker["address"],
+            "address": normalized_address,
             "api_key": worker["api_key"],
         }
 
@@ -253,5 +314,5 @@ async def heartbeat_sender_loop():
                         headers=headers,
                         json=register_payload,
                     )
-        except Exception:
-            pass  # Master unreachable, keep trying
+        except Exception as e:
+            logger.debug("Heartbeat failed, will retry: %s", e)

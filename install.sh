@@ -2,12 +2,13 @@
 set -euo pipefail
 
 MASTER_URL="__MASTER_URL__"
+PACKAGE_PUBLIC_KEY_B64="__PACKAGE_PUBLIC_KEY_B64__"
 INSTALL_DIR="$HOME/inframatik"
 CONFIG_DIR="$HOME/.config/inframatik"
 SERVICE_NAME="inframatik"
 ENROLL_TOKEN=""
 NODE_NAME=""
-ADMIN_PW=""
+ADMIN_PW="${INFRAMATIK_ADMIN_PASSWORD:-}"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -21,12 +22,13 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --password)
-            ADMIN_PW="$2"
-            shift 2
+            echo "ERROR: --password is no longer supported for security reasons."
+            echo "Use interactive prompt input or INFRAMATIK_ADMIN_PASSWORD environment variable."
+            exit 1
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: curl ... | bash -s -- [--enroll <token>] [--name <node-name>] [--password <pw>]"
+            echo "Usage: curl ... | bash -s -- [--enroll <token>] [--name <node-name>]"
             exit 1
             ;;
     esac
@@ -36,7 +38,16 @@ echo "==> inframatik installer"
 echo "    Master: $MASTER_URL"
 echo ""
 
-# Prompt for admin password if not provided and terminal is interactive
+# Validate and acknowledge env-provided admin password when used.
+if [ -n "$ADMIN_PW" ]; then
+    if [ ${#ADMIN_PW} -lt 8 ]; then
+        echo "ERROR: INFRAMATIK_ADMIN_PASSWORD must be at least 8 characters."
+        exit 1
+    fi
+    echo "==> Using admin password from INFRAMATIK_ADMIN_PASSWORD"
+fi
+
+# Prompt for admin password if not provided via env and terminal is interactive.
 if [ -z "$ADMIN_PW" ] && [ -t 0 ]; then
     while true; do
         read -sp "Set admin password (min 8 chars): " ADMIN_PW
@@ -58,7 +69,7 @@ if [ -z "$ADMIN_PW" ] && [ -t 0 ]; then
 fi
 
 # Check prerequisites
-for cmd in python3 curl sudo; do
+for cmd in python3 curl sudo sha256sum openssl base64; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "ERROR: $cmd is required but not installed."
         exit 1
@@ -81,7 +92,43 @@ fi
 # 1. Download and extract code
 echo "==> Downloading code package..."
 mkdir -p "$INSTALL_DIR"
-curl -sSL "$MASTER_URL/api/install/package" | tar xz -C "$INSTALL_DIR"
+TMP_PKG="$(mktemp)"
+TMP_HEADERS="$(mktemp)"
+TMP_PUB="$(mktemp)"
+TMP_SIG="$(mktemp)"
+
+if ! curl -fsSL -D "$TMP_HEADERS" -o "$TMP_PKG" "$MASTER_URL/api/install/package"; then
+    echo "ERROR: Failed to download install package."
+    rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
+    exit 1
+fi
+
+PKG_SIG="$(awk -F': ' 'tolower($1) == "x-inframatik-package-signature" {print $2}' "$TMP_HEADERS" | tr -d '\r' | tail -n 1)"
+if [ -z "$PKG_SIG" ]; then
+    echo "ERROR: Missing package signature header from master."
+    rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
+    exit 1
+fi
+
+if ! printf '%s' "$PACKAGE_PUBLIC_KEY_B64" | base64 -d > "$TMP_PUB"; then
+    echo "ERROR: Invalid embedded signing public key."
+    rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
+    exit 1
+fi
+if ! printf '%s' "$PKG_SIG" | base64 -d > "$TMP_SIG"; then
+    echo "ERROR: Invalid package signature encoding."
+    rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
+    exit 1
+fi
+
+if ! openssl pkeyutl -verify -rawin -pubin -inkey "$TMP_PUB" -sigfile "$TMP_SIG" -in "$TMP_PKG" >/dev/null 2>&1; then
+    echo "ERROR: Package signature verification failed."
+    rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
+    exit 1
+fi
+
+tar xzf "$TMP_PKG" -C "$INSTALL_DIR"
+rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
 echo "    Extracted to $INSTALL_DIR"
 
 # 2. Create Python venv and install deps
@@ -89,7 +136,33 @@ echo "==> Setting up Python environment..."
 if [ ! -d "$INSTALL_DIR/venv" ]; then
     python3 -m venv "$INSTALL_DIR/venv"
 fi
-"$INSTALL_DIR/venv/bin/pip" install -q -r "$INSTALL_DIR/requirements.txt"
+REQ_LOCK_FILE="$INSTALL_DIR/requirements.lock"
+REQ_FILE="$INSTALL_DIR/requirements.txt"
+ALLOW_UNHASHED_DEPS="${INFRAMATIK_ALLOW_UNHASHED_DEPS:-}"
+
+if [ -f "$REQ_LOCK_FILE" ]; then
+    if "$INSTALL_DIR/venv/bin/pip" install -q --require-hashes -r "$REQ_LOCK_FILE"; then
+        echo "    Installed hash-pinned dependencies from requirements.lock"
+    else
+        if [ "$ALLOW_UNHASHED_DEPS" = "1" ]; then
+            echo "WARNING: Hash-locked install failed; falling back to requirements.txt because INFRAMATIK_ALLOW_UNHASHED_DEPS=1."
+            "$INSTALL_DIR/venv/bin/pip" install -q -r "$REQ_FILE"
+        else
+            echo "ERROR: Hash-locked dependency install failed."
+            echo "If this host/platform cannot satisfy requirements.lock, set INFRAMATIK_ALLOW_UNHASHED_DEPS=1 to bypass (not recommended)."
+            exit 1
+        fi
+    fi
+else
+    if [ "$ALLOW_UNHASHED_DEPS" = "1" ]; then
+        echo "WARNING: requirements.lock missing; falling back to requirements.txt because INFRAMATIK_ALLOW_UNHASHED_DEPS=1."
+        "$INSTALL_DIR/venv/bin/pip" install -q -r "$REQ_FILE"
+    else
+        echo "ERROR: requirements.lock is required for secure hash-pinned installs."
+        echo "Set INFRAMATIK_ALLOW_UNHASHED_DEPS=1 to bypass (not recommended)."
+        exit 1
+    fi
+fi
 echo "    Dependencies installed"
 
 # 3. Create config directory
@@ -111,8 +184,9 @@ if [ -z "$INSTALL_CF" ]; then
 fi
 
 if [ -n "$INSTALL_CF" ]; then
-    if command -v cloudflared &>/dev/null; then
-        echo "==> cloudflared already installed: $(cloudflared --version 2>&1 | head -1)"
+    CF_USER_BIN="$HOME/.local/bin/cloudflared"
+    if [ -x "$CF_USER_BIN" ]; then
+        echo "==> cloudflared already installed: $("$CF_USER_BIN" --version 2>&1 | head -1)"
     else
         echo "==> Installing cloudflared..."
         ARCH=$(uname -m)
@@ -122,59 +196,41 @@ if [ -n "$INSTALL_CF" ]; then
             armv7l)  CF_ARCH="arm" ;;
             *)       echo "    Unsupported architecture: $ARCH"; exit 1 ;;
         esac
-        CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}"
-        sudo curl -sSL -o /usr/local/bin/cloudflared "$CF_URL"
-        sudo chmod +x /usr/local/bin/cloudflared
-        echo "    Installed cloudflared to /usr/local/bin/cloudflared"
+        CLOUDFLARED_VERSION="${CLOUDFLARED_VERSION:-2025.2.1}"
+        CF_BASE_URL="https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}"
+        CF_BIN_URL="${CF_BASE_URL}/cloudflared-linux-${CF_ARCH}"
+        CF_SHA_URL="${CF_BASE_URL}/cloudflared-linux-${CF_ARCH}.sha256"
+        CF_SHA_URL_ALT="${CF_BASE_URL}/cloudflared-linux-${CF_ARCH}.sha256sum"
+        TMP_BIN="$(mktemp)"
+        TMP_SHA="$(mktemp)"
+
+        if ! curl -fsSL -o "$TMP_BIN" "$CF_BIN_URL"; then
+            echo "ERROR: Failed to download cloudflared binary from ${CF_BIN_URL}"
+            rm -f "$TMP_BIN" "$TMP_SHA"
+            exit 1
+        fi
+        if ! curl -fsSL -o "$TMP_SHA" "$CF_SHA_URL"; then
+            if ! curl -fsSL -o "$TMP_SHA" "$CF_SHA_URL_ALT"; then
+                echo "ERROR: Failed to download cloudflared checksum file."
+                rm -f "$TMP_BIN" "$TMP_SHA"
+                exit 1
+            fi
+        fi
+
+        EXPECTED_SHA="$(grep -Eo '[0-9a-fA-F]{64}' "$TMP_SHA" | head -n 1 | tr 'A-F' 'a-f')"
+        ACTUAL_SHA="$(sha256sum "$TMP_BIN" | awk '{print $1}')"
+        if [ -z "$EXPECTED_SHA" ] || [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+            echo "ERROR: cloudflared checksum verification failed."
+            rm -f "$TMP_BIN" "$TMP_SHA"
+            exit 1
+        fi
+
+        mkdir -p "$HOME/.local/bin"
+        chmod 0755 "$TMP_BIN"
+        mv "$TMP_BIN" "$CF_USER_BIN"
+        rm -f "$TMP_BIN" "$TMP_SHA"
+        echo "    Installed cloudflared ${CLOUDFLARED_VERSION} to ${CF_USER_BIN}"
     fi
-
-    echo "==> Installing CF setup helper..."
-    sudo tee /usr/local/bin/infra-cf-setup > /dev/null << 'HELPER_EOF'
-#!/bin/bash
-# infra-cf-setup: accepts a tunnel token, writes config, starts cloudflared
-set -euo pipefail
-
-if [ $# -ne 1 ]; then
-    echo "Usage: infra-cf-setup <tunnel-token>"
-    exit 1
-fi
-
-TOKEN="$1"
-CF_DIR="/etc/cloudflared"
-
-mkdir -p "$CF_DIR"
-echo "$TOKEN" > "$CF_DIR/token"
-chmod 600 "$CF_DIR/token"
-
-# Create systemd service for cloudflared
-cat > /etc/systemd/system/cloudflared.service << 'SVC'
-[Unit]
-Description=cloudflared tunnel
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/cloudflared tunnel run --token-file /etc/cloudflared/token
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
-SVC
-
-systemctl daemon-reload
-systemctl enable cloudflared
-systemctl restart cloudflared
-echo "cloudflared service started"
-HELPER_EOF
-    sudo chmod +x /usr/local/bin/infra-cf-setup
-
-    echo "==> Configuring sudoers for CF helper..."
-    sudo tee /etc/sudoers.d/infra-cf > /dev/null << SUDOERS_EOF
-${CURRENT_USER} ALL=(root) NOPASSWD: /usr/local/bin/infra-cf-setup
-SUDOERS_EOF
-    sudo chmod 440 /etc/sudoers.d/infra-cf
 fi
 
 # 5. Add ports.env to .bashrc
@@ -228,9 +284,51 @@ echo "==> inframatik started on port 9000"
 if [ -n "$ADMIN_PW" ]; then
     sleep 2
     PW_BODY=$(python3 -c "import json,sys; print(json.dumps({'password': sys.argv[1]}))" "$ADMIN_PW")
-    PW_RESULT=$(curl -sS -X POST "http://127.0.0.1:9000/api/auth/set-password" \
+    PW_RESULT_FILE="$(mktemp)"
+    if ! PW_HTTP_CODE=$(curl -sS -o "$PW_RESULT_FILE" -w "%{http_code}" -X POST "http://127.0.0.1:9000/api/auth/set-password" \
         -H "Content-Type: application/json" \
-        -d "$PW_BODY")
+        -d "$PW_BODY"); then
+        echo "ERROR: Failed to call local password setup endpoint."
+        rm -f "$PW_RESULT_FILE"
+        exit 1
+    fi
+    if [ "$PW_HTTP_CODE" != "200" ]; then
+        PW_DETAIL=$(python3 - "$PW_RESULT_FILE" <<'PY'
+import json
+import pathlib
+import sys
+text = pathlib.Path(sys.argv[1]).read_text()
+try:
+    data = json.loads(text)
+except Exception:
+    print(text.strip() or "unknown error")
+    raise SystemExit(0)
+detail = data.get("detail") or data.get("error") or text
+print(str(detail).strip() or "unknown error")
+PY
+)
+        echo "ERROR: Failed to set admin password (HTTP $PW_HTTP_CODE): $PW_DETAIL"
+        rm -f "$PW_RESULT_FILE"
+        exit 1
+    fi
+    PW_STATUS=$(python3 - "$PW_RESULT_FILE" <<'PY'
+import json
+import pathlib
+import sys
+text = pathlib.Path(sys.argv[1]).read_text()
+try:
+    data = json.loads(text)
+except Exception:
+    print("")
+    raise SystemExit(0)
+print(data.get("status", ""))
+PY
+)
+    rm -f "$PW_RESULT_FILE"
+    if [ "$PW_STATUS" != "password_set" ]; then
+        echo "ERROR: Password setup endpoint returned unexpected response."
+        exit 1
+    fi
     echo "==> Admin password set"
 fi
 
@@ -251,11 +349,12 @@ if [ -n "$ENROLL_TOKEN" ]; then
         -H "Content-Type: application/json" \
         -d "$ENROLL_BODY")
 
-    API_KEY=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])" 2>/dev/null || echo "")
+    API_KEY=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || echo "")
+    SIGNING_PUBLIC_KEY=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('signing_public_key',''))" 2>/dev/null || echo "")
 
     if [ -n "$API_KEY" ]; then
         # Configure as worker locally with credentials from master
-        CONFIG_BODY=$(python3 -c "import json,sys; print(json.dumps({'name': sys.argv[1], 'master_url': sys.argv[2], 'api_key': sys.argv[3]}))" "$NODE_NAME" "$MASTER_URL" "$API_KEY")
+        CONFIG_BODY=$(python3 -c "import json,sys; print(json.dumps({'name': sys.argv[1], 'master_url': sys.argv[2], 'api_key': sys.argv[3], 'update_public_key': sys.argv[4]}))" "$NODE_NAME" "$MASTER_URL" "$API_KEY" "$SIGNING_PUBLIC_KEY")
         curl -sS -X POST "http://127.0.0.1:9000/api/config/init-worker" \
             -H "Content-Type: application/json" \
             -d "$CONFIG_BODY" > /dev/null

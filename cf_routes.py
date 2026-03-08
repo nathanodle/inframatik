@@ -62,7 +62,10 @@ def _require_internal_api_key(request: Request):
 @cf_router.get("/api/cf/tunnels")
 async def api_list_tunnels():
     _require_cf_config()
-    return await list_tunnels()
+    try:
+        return await list_tunnels()
+    except ValueError as e:
+        raise HTTPException(502, str(e))
 
 
 class CreateTunnelBody(BaseModel):
@@ -97,7 +100,10 @@ async def api_get_tunnel_token(tunnel_id: str):
 @cf_router.get("/api/cf/routes")
 async def api_list_routes(tunnel_id: Optional[str] = None):
     _require_cf_config()
-    return await get_tunnel_routes(tunnel_id=tunnel_id)
+    try:
+        return await get_tunnel_routes(tunnel_id=tunnel_id)
+    except ValueError as e:
+        raise HTTPException(502, str(e))
 
 
 class AddRouteBody(BaseModel):
@@ -133,7 +139,10 @@ async def api_remove_route(hostname: str, tunnel_id: Optional[str] = None):
 @cf_router.get("/api/cf/dns")
 async def api_list_dns():
     _require_cf_config()
-    return await list_dns_records()
+    try:
+        return await list_dns_records()
+    except ValueError as e:
+        raise HTTPException(502, str(e))
 
 
 class CreateDnsBody(BaseModel):
@@ -170,7 +179,10 @@ async def api_delete_dns(hostname: str):
 @cf_router.get("/api/cf/access/apps")
 async def api_list_access_apps():
     _require_cf_config()
-    return await list_access_apps()
+    try:
+        return await list_access_apps()
+    except ValueError as e:
+        raise HTTPException(502, str(e))
 
 
 class CreateAccessAppBody(BaseModel):
@@ -208,7 +220,10 @@ async def api_delete_access_app(hostname: str):
 @cf_router.get("/api/cf/access/policies")
 async def api_list_policies():
     _require_cf_config()
-    return await list_access_policies()
+    try:
+        return await list_access_policies()
+    except ValueError as e:
+        raise HTTPException(502, str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +372,7 @@ async def cf_setup_validate_token(body: ValidateTokenBody):
                 params={"per_page": 50},
             )
             data = resp.json()
-    except Exception:
+    except (httpx.HTTPError, ValueError):
         raise HTTPException(400, "Failed to connect to Cloudflare API")
     if not data.get("success"):
         raise HTTPException(401, "Invalid API token")
@@ -383,7 +398,7 @@ async def cf_setup_zones(body: ListZonesBody):
                 params={"account.id": body.account_id, "per_page": 50, "status": "active"},
             )
             data = resp.json()
-    except Exception:
+    except (httpx.HTTPError, ValueError):
         raise HTTPException(400, "Failed to fetch zones")
     if not data.get("success"):
         raise HTTPException(400, f"Failed to list zones: {data.get('errors')}")
@@ -406,7 +421,7 @@ async def cf_setup_policies(body: ListPoliciesBody):
                 headers=_cf_headers(body.token),
             )
             data = resp.json()
-    except Exception:
+    except (httpx.HTTPError, ValueError):
         raise HTTPException(400, "Failed to fetch policies")
     if not data.get("success"):
         return {"policies": []}
@@ -440,7 +455,7 @@ async def cf_setup_create_policy(body: CreatePolicyBody):
                 json=payload,
             )
             data = resp.json()
-    except Exception:
+    except (httpx.HTTPError, ValueError):
         raise HTTPException(400, "Failed to create policy")
     if not data.get("success"):
         raise HTTPException(400, f"Failed to create policy: {data.get('errors')}")

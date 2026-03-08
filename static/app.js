@@ -976,13 +976,47 @@ function renderEnrollmentTokens(tokens) {
         el.innerHTML = '<p class="settings-desc">Generate a token to enroll a new worker. The token is single-use.</p>';
         return;
     }
-    el.innerHTML = tokens.map(t => `
+
+    // Backward/forward-compatible token shape support:
+    // - old: ["enroll-abc..."]
+    // - new: [{token, created_at, expires_at}]
+    const items = tokens
+        .map((entry) => {
+            if (typeof entry === 'string') {
+                return { token: entry, created_at: null, expires_at: null };
+            }
+            if (!entry || typeof entry !== 'object') return null;
+            const token = typeof entry.token === 'string' ? entry.token : '';
+            if (!token) return null;
+            return {
+                token,
+                created_at: entry.created_at ?? null,
+                expires_at: entry.expires_at ?? null,
+            };
+        })
+        .filter(Boolean);
+
+    if (items.length === 0) {
+        el.innerHTML = '<p class="settings-desc">Generate a token to enroll a new worker. The token is single-use.</p>';
+        return;
+    }
+
+    el.innerHTML = items.map((t) => {
+        const created = t.created_at
+            ? new Date(t.created_at * 1000).toLocaleString()
+            : 'unknown';
+        const expires = t.expires_at
+            ? new Date(t.expires_at * 1000).toLocaleString()
+            : 'unknown';
+        return `
         <div class="master-worker-row">
-            <code>${esc(t)}</code>
-            <button class="btn" onclick="copyText('${esc(t)}', this)">Copy</button>
-            <button class="btn danger" onclick="cancelEnrollmentToken('${esc(t)}')">Cancel</button>
+            <code>${esc(t.token)}</code>
+            <span class="master-worker-address">created ${esc(created)} · expires ${esc(expires)}</span>
+            <button class="btn" onclick="copyText('${esc(t.token)}', this)">Copy</button>
+            <button class="btn danger" onclick="cancelEnrollmentToken('${esc(t.token)}')">Cancel</button>
         </div>
-    `).join('') + '<p class="settings-desc" style="margin-top:8px">Run on the new machine: <code>curl ... | bash -s -- --enroll TOKEN</code></p>';
+    `;
+    }).join('') + '<p class="settings-desc" style="margin-top:8px">Run on the new machine: <code>curl ... | bash -s -- --enroll TOKEN</code></p>';
 }
 
 function copyText(text, btn) {
@@ -1017,13 +1051,16 @@ function renderServiceTokens(containerId, tokens) {
     const el = document.getElementById(containerId);
     if (!el) return;
 
-    const tokenRows = tokens.map(t => `
+    const tokenRows = tokens.map(t => {
+        const createdDate = t.created_at ? new Date(t.created_at * 1000).toLocaleDateString() : '--';
+        return `
         <div class="master-worker-row">
             <span>${esc(t.service)}</span>
-            <span class="master-worker-address">${new Date(t.created_at * 1000).toLocaleDateString()}</span>
-            <button class="btn danger" onclick="revokeServiceToken('${containerId}')">Revoke</button>
+            <span class="master-worker-address">${createdDate}</span>
+            <button class="btn danger" onclick="revokeServiceToken('${containerId}', '${esc(t.token_id || '')}', '${esc(t.service || '')}')">Revoke</button>
         </div>
-    `).join('');
+    `;
+    }).join('');
 
     el.innerHTML = `
         <div class="settings-subsection-header">Service Tokens</div>
@@ -1059,11 +1096,19 @@ async function generateServiceToken(containerId) {
     }
 }
 
-async function revokeServiceToken(containerId) {
-    // For now, revoke requires knowing the token value which we don't display after creation.
-    // This is a limitation — would need to store token IDs or use a different revocation scheme.
-    // TODO: Add token ID-based revocation
-    alert('Token revocation from dashboard coming soon. Use the API: DELETE /api/config/service-tokens/{token}');
+async function revokeServiceToken(containerId, tokenId, serviceName) {
+    if (!tokenId) {
+        alert('This token cannot be revoked from the dashboard because it has no token ID.');
+        return;
+    }
+    const label = serviceName ? ` for "${serviceName}"` : '';
+    if (!confirm(`Revoke this service token${label}?`)) return;
+    try {
+        await api('DELETE', `/api/config/service-tokens/by-id/${encodeURIComponent(tokenId)}`);
+        await loadSettingsView();
+    } catch (e) {
+        alert('Failed to revoke token: ' + e.message);
+    }
 }
 
 function showSettingsHome() {
@@ -1135,6 +1180,7 @@ async function submitInitWorker() {
             name,
             master_url,
             api_key: result.api_key,
+            update_public_key: result.signing_public_key || null,
         });
         location.reload();
     } catch (e) {

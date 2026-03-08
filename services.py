@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import re
+import shutil
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +14,10 @@ PORTS_ENV_FILE = Path.home() / ".config" / "inframatik" / "ports.env"
 UNIT_DIR = Path.home() / ".config" / "systemd" / "user"
 PORT_RANGE = range(8000, 9000)
 UNIT_PREFIX = "infra-"
+_SYSTEMCTL_IS_ACTIVE = ("is-active",)
+_SYSTEMCTL_ENABLE_NOW = ("enable", "--now")
+_SYSTEMCTL_DISABLE_NOW = ("disable", "--now")
+_SYSTEMCTL_RESTART = ("restart",)
 
 UNIT_TEMPLATE = """\
 [Unit]
@@ -35,16 +41,70 @@ WantedBy=default.target
 def _load_registry() -> dict:
     if SERVICES_FILE.exists():
         try:
-            return json.loads(SERVICES_FILE.read_text())
-        except (json.JSONDecodeError, ValueError):
+            data = json.loads(SERVICES_FILE.read_text())
+            if not isinstance(data, dict):
+                raise ValueError("Service registry root must be a JSON object")
+            return data
+        except (json.JSONDecodeError, ValueError, OSError) as e:
+            logger.error("Service registry is invalid (%s): %s", SERVICES_FILE, e)
+            _quarantine_corrupt_registry(SERVICES_FILE)
+            recovered = _load_registry_backup()
+            if recovered is not None:
+                logger.warning(
+                    "Recovered service registry from backup (%s) after corruption",
+                    _registry_backup_file(),
+                )
+                _save_registry(recovered)
+                return recovered
             return {}
     return {}
 
 
 def _save_registry(data: dict):
     SERVICES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _backup_registry()
     SERVICES_FILE.write_text(json.dumps(data, indent=2))
     _write_ports_env(data)
+
+
+def _registry_backup_file() -> Path:
+    return Path(f"{SERVICES_FILE}.bak")
+
+
+def _backup_registry():
+    if not SERVICES_FILE.exists():
+        return
+    backup = _registry_backup_file()
+    try:
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(SERVICES_FILE, backup)
+    except OSError as e:
+        logger.warning("Failed to write registry backup (%s): %s", backup, e)
+
+
+def _load_registry_backup() -> Optional[dict]:
+    backup = _registry_backup_file()
+    if not backup.exists():
+        logger.warning("No service registry backup found at %s", backup)
+        return None
+    try:
+        data = json.loads(backup.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("Backup registry root must be a JSON object")
+        return data
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        logger.error("Service registry backup is invalid (%s): %s", backup, e)
+        return None
+
+
+def _quarantine_corrupt_registry(path: Path):
+    suffix = f".corrupt-{time.time_ns()}"
+    quarantine = Path(f"{path}{suffix}")
+    try:
+        path.replace(quarantine)
+        logger.warning("Moved corrupt service registry to %s", quarantine)
+    except OSError as e:
+        logger.error("Failed to quarantine corrupt service registry (%s): %s", path, e)
 
 
 def _env_var_name(name: str) -> str:
@@ -74,8 +134,13 @@ async def _run(cmd: list[str]) -> tuple[int, str]:
     return proc.returncode, stdout.decode().strip()
 
 
-async def _systemctl(action: str, unit: str) -> tuple[int, str]:
-    return await _run(["systemctl", "--user"] + action.split() + [unit])
+async def _systemctl(action_tokens: tuple[str, ...], unit: str) -> tuple[int, str]:
+    if not action_tokens:
+        raise ValueError("systemctl action cannot be empty")
+    for token in action_tokens:
+        if not token or any(ch.isspace() for ch in token):
+            raise ValueError("systemctl action tokens must be explicit argv parts")
+    return await _run(["systemctl", "--user", *action_tokens, unit])
 
 
 async def _daemon_reload():
@@ -87,6 +152,20 @@ def _validate_name(name: str):
         raise ValueError("Name must be lowercase alphanumeric, hyphens, underscores")
     if len(name) > 48:
         raise ValueError("Name must be 48 characters or less")
+
+
+def _validate_command(command: str):
+    if not command:
+        raise ValueError("Command must be a single line")
+    if any(ord(ch) < 32 for ch in command):
+        raise ValueError("Command contains unsupported control characters")
+    if ";" in command:
+        raise ValueError("Command cannot contain semicolons")
+
+
+def _validate_working_dir(working_dir: str):
+    if any(ord(ch) < 32 for ch in working_dir):
+        raise ValueError("Working directory contains unsupported control characters")
 
 
 def get_allocated_ports() -> set[int]:
@@ -103,7 +182,7 @@ def next_available_port() -> Optional[int]:
 
 
 async def get_service_status(name: str) -> str:
-    code, output = await _systemctl("is-active", _unit_name(name))
+    code, output = await _systemctl(_SYSTEMCTL_IS_ACTIVE, _unit_name(name))
     return output  # "active", "inactive", "failed", etc.
 
 
@@ -124,13 +203,8 @@ async def register_service(
     lan: bool = False,
 ) -> dict:
     _validate_name(name)
-
-    if not command or '\n' in command or '\r' in command:
-        raise ValueError("Command must be a single line")
-    if ' ; ' in command or command.startswith('; ') or command.endswith(' ;'):
-        raise ValueError("Command cannot contain semicolons (systemd interprets them as command separators)")
-    if '\n' in working_dir or '\r' in working_dir:
-        raise ValueError("Working directory must be a single line")
+    _validate_command(command)
+    _validate_working_dir(working_dir)
 
     registry = _load_registry()
 
@@ -192,7 +266,7 @@ async def deregister_service(name: str):
     if name not in registry:
         raise ValueError(f"Service '{name}' not found")
 
-    await _systemctl("disable --now", _unit_name(name))
+    await _systemctl(_SYSTEMCTL_DISABLE_NOW, _unit_name(name))
 
     unit = _unit_path(name)
     if unit.exists():
@@ -219,7 +293,7 @@ async def start_service(name: str) -> str:
     registry = _load_registry()
     if name not in registry:
         raise ValueError(f"Service '{name}' not found")
-    code, output = await _systemctl("enable --now", _unit_name(name))
+    code, output = await _systemctl(_SYSTEMCTL_ENABLE_NOW, _unit_name(name))
     if code != 0:
         raise RuntimeError(f"Failed to start: {output}")
     return await get_service_status(name)
@@ -229,7 +303,7 @@ async def stop_service(name: str) -> str:
     registry = _load_registry()
     if name not in registry:
         raise ValueError(f"Service '{name}' not found")
-    code, output = await _systemctl("disable --now", _unit_name(name))
+    code, output = await _systemctl(_SYSTEMCTL_DISABLE_NOW, _unit_name(name))
     if code != 0:
         raise RuntimeError(f"Failed to stop: {output}")
     return await get_service_status(name)
@@ -239,7 +313,7 @@ async def restart_service(name: str) -> str:
     registry = _load_registry()
     if name not in registry:
         raise ValueError(f"Service '{name}' not found")
-    code, output = await _systemctl("restart", _unit_name(name))
+    code, output = await _systemctl(_SYSTEMCTL_RESTART, _unit_name(name))
     if code != 0:
         raise RuntimeError(f"Failed to restart: {output}")
     return await get_service_status(name)
