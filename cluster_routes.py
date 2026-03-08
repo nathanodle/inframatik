@@ -459,15 +459,19 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
             await init_tunnel_config(tid)
             set_tunnel_id(tid)
 
+            await send_progress(_task, "adding_route", "Adding tunnel route for dashboard...")
+            await add_tunnel_route(hostname, "http://localhost:9000", tunnel_id=tid)
+
             await send_progress(_task, "getting_token", "Getting tunnel connector token...")
             token = await get_tunnel_token(tid)
 
             await send_progress(_task, "installing_cloudflared", "Installing and starting cloudflared...")
             await setup_cloudflared_user_service(token)
             await send_progress(_task, "cloudflared_ready", "cloudflared is running")
-
-        await send_progress(_task, "adding_route", "Adding tunnel route for dashboard...")
-        await add_tunnel_route(hostname, "http://localhost:9000", tunnel_id=tid)
+        else:
+            # Tunnel exists already — just add the route
+            await send_progress(_task, "adding_route", "Adding tunnel route for dashboard...")
+            await add_tunnel_route(hostname, "http://localhost:9000", tunnel_id=tid)
 
         await send_progress(_task, "creating_dns", f"Creating DNS record for {hostname}...")
         await create_dns_record(
