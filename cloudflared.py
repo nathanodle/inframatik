@@ -175,18 +175,20 @@ def _write_cloudflared_unit():
     _secure_write_text(CLOUDFLARED_UNIT_PATH, unit_content, mode=0o644)
 
 
+async def ensure_cloudflared_binary():
+    """Download and install cloudflared if not already present."""
+    if CLOUDFLARED_BINARY_PATH.exists() and os.access(CLOUDFLARED_BINARY_PATH, os.X_OK):
+        return  # Already installed
+    await update_cloudflared_user_binary()
+
+
 async def setup_cloudflared_user_service(token: str):
     token = (token or "").strip()
     if not token:
         raise ValueError("Tunnel token is required")
 
-    if not CLOUDFLARED_BINARY_PATH.exists():
-        raise RuntimeError(
-            f"cloudflared is not installed at {CLOUDFLARED_BINARY_PATH}. "
-            "Re-run installer with INSTALL_CF=1."
-        )
-    if not os.access(CLOUDFLARED_BINARY_PATH, os.X_OK):
-        raise RuntimeError(f"cloudflared binary is not executable: {CLOUDFLARED_BINARY_PATH}")
+    # Auto-install cloudflared if missing
+    await ensure_cloudflared_binary()
 
     _secure_write_text(CLOUDFLARED_TOKEN_PATH, token, mode=0o600)
     _write_cloudflared_unit()
