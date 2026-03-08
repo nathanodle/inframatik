@@ -73,13 +73,19 @@ def test_mcp_json_malformed():
 
 
 @_run_in_tmpdir
-def test_mcp_json_backup():
-    """Existing file creates backup before modifying."""
+def test_mcp_json_no_backup():
+    """Existing file should not create plaintext backup files."""
     existing = {"mcpServers": {}}
     Path(".mcp.json").write_text(json.dumps(existing))
     cli.edit_mcp_json(ENDPOINT, TOKEN)
-    assert Path(".mcp.json.bak").exists()
-    assert json.loads(Path(".mcp.json.bak").read_text()) == existing
+    assert not Path(".mcp.json.bak").exists()
+
+
+@_run_in_tmpdir
+def test_mcp_json_mode_600():
+    """Secret-bearing MCP config should be owner-only readable."""
+    cli.edit_mcp_json(ENDPOINT, TOKEN)
+    assert (Path(".mcp.json").stat().st_mode & 0o777) == 0o600
 
 
 # ---------------------------------------------------------------------------
@@ -121,14 +127,27 @@ def test_codex_toml_update():
 
 
 @_run_in_tmpdir
-def test_codex_toml_backup():
-    """Existing file creates backup."""
+def test_codex_toml_no_backup():
+    """Existing file should not create plaintext backup files."""
     Path(".codex").mkdir()
     original = '[mcp_servers.other]\ncommand = "test"\n'
     Path(".codex/config.toml").write_text(original)
     cli.edit_codex_toml(ENDPOINT, TOKEN)
-    assert Path(".codex/config.toml.bak").exists()
-    assert Path(".codex/config.toml.bak").read_text() == original
+    assert not Path(".codex/config.toml.bak").exists()
+
+
+@_run_in_tmpdir
+def test_codex_toml_mode_600():
+    """Secret-bearing Codex config should be owner-only readable."""
+    cli.edit_codex_toml(ENDPOINT, TOKEN)
+    assert (Path(".codex/config.toml").stat().st_mode & 0o777) == 0o600
+
+
+@_run_in_tmpdir
+def test_secure_write_text_mode_600():
+    """Secure writes should enforce restrictive mode even for new files."""
+    cli.secure_write_text(".inframatik", "{}\n")
+    assert (Path(".inframatik").stat().st_mode & 0o777) == 0o600
 
 
 # ---------------------------------------------------------------------------
