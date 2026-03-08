@@ -215,13 +215,17 @@ async function validateSetupCfToken() {
         const data = await api('POST', '/api/cf/setup/validate-token', { token });
         setupCf.token = token;
 
+        // Hide token input + validate button, show success
+        document.getElementById('setup-cf-token').disabled = true;
+        // Replace validate button with checkmark
+        const btns = document.getElementById('setup-cf-config').querySelectorAll('.form-actions')[0];
+        if (btns) btns.innerHTML = '<button class="btn" onclick="showSetupCfConsent()">Back</button> <span style="color:var(--green)">✓ Token valid</span>';
+
         // Auto-select account if only one
-        let account_id, account_name;
+        let account_id;
         if (data.accounts.length === 1) {
             account_id = data.accounts[0].id;
-            account_name = data.accounts[0].name;
         } else {
-            // Show account picker
             document.getElementById('setup-cf-steps').innerHTML = `
                 <div class="form-group">
                     <label>Account</label>
@@ -248,6 +252,17 @@ async function selectSetupCfAccount() {
     await loadSetupCfZones();
 }
 
+function _policyCoversEmail(policy, email) {
+    if (!email || !policy.include) return false;
+    const lower = email.toLowerCase();
+    const domain = lower.split('@')[1] || '';
+    for (const rule of policy.include) {
+        if (rule.email && rule.email.email && rule.email.email.toLowerCase() === lower) return true;
+        if (rule.email_domain && rule.email_domain.domain && domain.endsWith(rule.email_domain.domain.toLowerCase())) return true;
+    }
+    return false;
+}
+
 async function loadSetupCfZones() {
     const errEl = document.getElementById('setup-cf-error');
     try {
@@ -269,6 +284,7 @@ async function loadSetupCfZones() {
             });
             policies = pData.policies || [];
         } catch (e) { /* policies are optional */ }
+        setupCf._policies = policies;
 
         const zoneOptions = data.zones.map(z =>
             `<option value="${esc(z.id)}" data-name="${esc(z.name)}">${esc(z.name)}</option>`
@@ -280,37 +296,52 @@ async function loadSetupCfZones() {
 
         document.getElementById('setup-cf-steps').innerHTML = `
             <div class="form-group">
+                <label>Admin Email</label>
+                <input type="email" id="setup-cf-admin-email" placeholder="you@company.com" autocomplete="off">
+                <div class="label-hint" style="margin-top:4px">Used for Zero Trust access. Must be covered by the Access policy.</div>
+            </div>
+            <div class="form-group">
                 <label>Domain</label>
                 <select id="setup-cf-zone">${zoneOptions}</select>
             </div>
             <div class="form-group">
-                <label>Access Policy <span class="label-hint">(optional)</span></label>
+                <label>Access Policy</label>
                 <select id="setup-cf-policy">
                     <option value="">None — skip Access protection</option>
                     ${policyOptions}
-                    <option value="__create__">Create new policy...</option>
+                    <option value="__create__">Create new policy for my email</option>
                 </select>
             </div>
-            <div id="setup-cf-new-policy" style="display:none">
-                <div class="form-group">
-                    <label>Policy Name</label>
-                    <input type="text" id="setup-cf-policy-name" placeholder="e.g. Allow company" autocomplete="off">
-                </div>
-                <div class="form-group">
-                    <label>Allow Email Domain</label>
-                    <input type="text" id="setup-cf-policy-domain" placeholder="${esc(data.zones[0].name)}" value="${esc(data.zones[0].name)}" autocomplete="off">
-                </div>
-            </div>
+            <div class="form-error" id="setup-cf-policy-warning"></div>
             <div class="form-actions">
                 <button class="btn primary" onclick="finishSetupCf()">Continue</button>
             </div>`;
 
-        document.getElementById('setup-cf-policy').addEventListener('change', (e) => {
-            document.getElementById('setup-cf-new-policy').style.display =
-                e.target.value === '__create__' ? '' : 'none';
+        // Warn if selected policy doesn't cover admin email
+        document.getElementById('setup-cf-policy').addEventListener('change', () => {
+            _checkSetupPolicyCoverage();
+        });
+        document.getElementById('setup-cf-admin-email').addEventListener('input', () => {
+            _checkSetupPolicyCoverage();
         });
     } catch (e) {
         errEl.textContent = e.message;
+    }
+}
+
+function _checkSetupPolicyCoverage() {
+    const warnEl = document.getElementById('setup-cf-policy-warning');
+    if (!warnEl) return;
+    warnEl.textContent = '';
+
+    const email = (document.getElementById('setup-cf-admin-email').value || '').trim();
+    const policyId = (document.getElementById('setup-cf-policy').value || '');
+
+    if (!email || !policyId || policyId === '__create__' || policyId === '') return;
+
+    const policy = (setupCf._policies || []).find(p => p.id === policyId);
+    if (policy && !_policyCoversEmail(policy, email)) {
+        warnEl.textContent = `Warning: "${policy.name}" does not include ${email}. You may be locked out.`;
     }
 }
 
@@ -318,28 +349,37 @@ async function finishSetupCf() {
     const errEl = document.getElementById('setup-cf-error');
     errEl.textContent = '';
 
+    const email = (document.getElementById('setup-cf-admin-email').value || '').trim();
+    if (!email || !email.includes('@')) {
+        errEl.textContent = 'A valid admin email is required.';
+        return;
+    }
+    setupCf.admin_email = email;
+
     const zoneSel = document.getElementById('setup-cf-zone');
     setupCf.zone_id = zoneSel.value;
     setupCf.zone_name = zoneSel.options[zoneSel.selectedIndex].dataset.name;
 
     let policyId = document.getElementById('setup-cf-policy').value;
 
-    // Create policy if requested
     if (policyId === '__create__') {
-        const policyName = document.getElementById('setup-cf-policy-name').value.trim();
-        const policyDomain = document.getElementById('setup-cf-policy-domain').value.trim();
-        if (!policyName || !policyDomain) {
-            errEl.textContent = 'Policy name and email domain are required.';
-            return;
-        }
+        // Create a simple policy allowing this admin email
         try {
             const data = await api('POST', '/api/cf/setup/create-policy', {
                 token: setupCf.token, account_id: setupCf.account_id,
-                name: policyName, email_domain: policyDomain,
+                name: 'inframatik admin',
+                email_domain: email.split('@')[1],
             });
             policyId = data.id;
         } catch (e) {
             errEl.textContent = 'Failed to create policy: ' + e.message;
+            return;
+        }
+    } else if (policyId) {
+        // Check coverage one more time
+        const policy = (setupCf._policies || []).find(p => p.id === policyId);
+        if (policy && !_policyCoversEmail(policy, email)) {
+            errEl.textContent = `"${policy.name}" does not cover ${email}. Choose a different policy or create a new one.`;
             return;
         }
     }

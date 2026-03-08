@@ -522,7 +522,12 @@ async def cf_setup_policies(body: ListPoliciesBody):
     if not data.get("success"):
         return {"policies": []}
     policies = [
-        {"id": p["id"], "name": p.get("name", ""), "decision": p.get("decision", "")}
+        {
+            "id": p["id"],
+            "name": p.get("name", ""),
+            "decision": p.get("decision", ""),
+            "include": p.get("include", []),
+        }
         for p in data.get("result", [])
     ]
     return {"policies": policies}
