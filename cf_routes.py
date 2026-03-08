@@ -363,6 +363,21 @@ async def api_cf_service_update(body: UpdateCloudflaredBody = None):
     return {"status": "updated", "cloudflared": result}
 
 
+@cf_router.post("/api/cf/service/install")
+async def api_cf_service_install():
+    """Download and install cloudflared binary (no tunnel setup)."""
+    from ws_routes import send_progress
+    _task = "cloudflared-install"
+    try:
+        await send_progress(_task, "downloading", "Downloading cloudflared...", done=False)
+        result = await update_cloudflared_user_binary()
+        await send_progress(_task, "complete", f"cloudflared {result.get('version_after', '')} installed", done=True)
+        return {"status": "installed", "cloudflared": result}
+    except Exception as e:
+        await send_progress(_task, "error", str(e), done=True, error=True)
+        raise HTTPException(500, str(e))
+
+
 @cf_router.get("/api/internal/cf/service/status")
 async def api_internal_cf_service_status(request: Request):
     _require_internal_api_key(request)

@@ -515,19 +515,27 @@
             </div>
         </div>
 
-        <!-- Step 2b: cloudflared consent -->
+        <!-- Step 2b: cloudflared install -->
         <div id="setup-cf-consent" style="display:none">
             <h3>Install cloudflared</h3>
-            <p class="settings-desc">Cloudflare tunnels require <strong>cloudflared</strong>, a small open-source connector that runs on this machine and creates a secure outbound connection to Cloudflare's edge.</p>
-            <p class="settings-desc">inframatik will:</p>
-            <ul class="settings-desc" style="margin:8px 0 16px 20px;line-height:1.8">
-                <li>Download cloudflared to <code>~/.local/bin/</code></li>
-                <li>Verify its checksum before installing</li>
-                <li>Run it as a user service (no root required)</li>
-            </ul>
+            <p class="settings-desc">Cloudflare tunnels require <strong>cloudflared</strong>, a small open-source connector that creates a secure outbound connection to Cloudflare's edge.</p>
+            <div id="setup-cf-install-info">
+                <ul class="settings-desc" style="margin:8px 0 16px 20px;line-height:1.8">
+                    <li>Downloads to <code>~/.local/bin/</code></li>
+                    <li>Verifies integrity before installing</li>
+                    <li>Runs as a user service — no root required</li>
+                </ul>
+            </div>
+            <div id="setup-cf-install-progress" style="display:none">
+                <div class="settings-desc" id="setup-cf-install-status" style="margin-bottom:8px">Downloading cloudflared...</div>
+                <div class="progress-bar" style="height:6px;margin-bottom:12px">
+                    <div class="progress-fill green" id="setup-cf-install-bar" style="width:0%;transition:width 0.3s ease"></div>
+                </div>
+            </div>
+            <div class="form-error" id="setup-cf-install-error"></div>
             <div class="form-actions">
-                <button class="btn" onclick="showSetupCfPrompt()">Back</button>
-                <button class="btn primary" onclick="showSetupCfTokenStep()">Continue</button>
+                <button class="btn" id="setup-cf-install-back" onclick="showSetupCfPrompt()">Back</button>
+                <button class="btn primary" id="setup-cf-install-btn" onclick="installCloudflared()">Install &amp; Continue</button>
             </div>
         </div>
 

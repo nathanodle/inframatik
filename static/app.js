@@ -219,6 +219,66 @@ function showSetupCfToken() {
 function showSetupCfConsent() {
     _hideAllSetupSteps();
     document.getElementById('setup-cf-consent').style.display = '';
+    // Reset to initial state
+    document.getElementById('setup-cf-install-info').style.display = '';
+    document.getElementById('setup-cf-install-progress').style.display = 'none';
+    document.getElementById('setup-cf-install-error').textContent = '';
+    const btn = document.getElementById('setup-cf-install-btn');
+    btn.disabled = false;
+    btn.innerHTML = 'Install &amp; Continue';
+    document.getElementById('setup-cf-install-back').disabled = false;
+}
+
+async function installCloudflared() {
+    const btn = document.getElementById('setup-cf-install-btn');
+    const backBtn = document.getElementById('setup-cf-install-back');
+    const errEl = document.getElementById('setup-cf-install-error');
+    const statusEl = document.getElementById('setup-cf-install-status');
+    const barEl = document.getElementById('setup-cf-install-bar');
+    errEl.textContent = '';
+
+    // Switch to progress view
+    document.getElementById('setup-cf-install-info').style.display = 'none';
+    document.getElementById('setup-cf-install-progress').style.display = '';
+    btn.disabled = true;
+    btn.textContent = 'Installing...';
+    backBtn.disabled = true;
+
+    // Animate progress bar (indeterminate-ish since we don't know exact progress)
+    let progress = 0;
+    const progressTimer = setInterval(() => {
+        progress = Math.min(progress + (90 - progress) * 0.08, 90);
+        barEl.style.width = progress + '%';
+    }, 200);
+
+    // Listen for WebSocket progress
+    onWsProgress('cloudflared-install', (msg) => {
+        statusEl.textContent = msg.message;
+        if (msg.done && !msg.error) {
+            clearInterval(progressTimer);
+            barEl.style.width = '100%';
+        }
+    });
+
+    try {
+        await api('POST', '/api/cf/service/install');
+        delete wsProgressCallbacks['cloudflared-install'];
+        clearInterval(progressTimer);
+        barEl.style.width = '100%';
+        statusEl.textContent = 'Installed!';
+        await new Promise(r => setTimeout(r, 600));
+        showSetupCfTokenStep();
+    } catch (e) {
+        delete wsProgressCallbacks['cloudflared-install'];
+        clearInterval(progressTimer);
+        barEl.style.width = '0%';
+        document.getElementById('setup-cf-install-progress').style.display = 'none';
+        document.getElementById('setup-cf-install-info').style.display = '';
+        errEl.textContent = e.message;
+        btn.disabled = false;
+        btn.innerHTML = 'Install &amp; Continue';
+        backBtn.disabled = false;
+    }
 }
 
 function showSetupCfTokenStep() {
