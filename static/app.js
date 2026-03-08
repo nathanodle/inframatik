@@ -428,7 +428,10 @@ async function submitSetupFinal() {
                 const hostname = `${name}.${domain}`;
                 await api('POST', '/api/config/dashboard-access', { hostname });
             } catch (cfErr) {
-                // CF failed but role is configured — continue
+                // CF failed but role is configured — show error but don't block
+                errEl.textContent = 'Note: Cloudflare setup failed (' + cfErr.message + '). You can configure it in Settings.';
+                // Wait a moment so user can see the message
+                await new Promise(r => setTimeout(r, 3000));
             }
         }
 
