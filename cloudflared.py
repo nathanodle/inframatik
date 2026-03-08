@@ -1,10 +1,13 @@
 import asyncio
 import hashlib
+import logging
 import os
 import platform
 import re
 import tempfile
 from pathlib import Path
+
+logger = logging.getLogger("inframatik.cloudflared")
 
 CLOUDFLARED_BINARY_PATH = Path.home() / ".local" / "bin" / "cloudflared"
 CLOUDFLARED_TOKEN_PATH = Path.home() / ".config" / "inframatik" / "cf-tunnel-token"
