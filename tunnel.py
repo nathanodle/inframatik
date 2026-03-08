@@ -464,9 +464,9 @@ async def list_tunnels() -> list[dict]:
 
 
 async def create_tunnel(name: str) -> dict:
-    """Create a new CF tunnel. Returns {id, name}."""
+    """Create a new CF tunnel, or reuse existing one with the same name. Returns {id, name}."""
     cfg = _require_cf_config()
-    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/cfd_tunnel"
+    base_url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/cfd_tunnel"
     tunnel_secret = base64.b64encode(secrets.token_bytes(32)).decode()
     payload = {
         "name": name,
@@ -474,14 +474,31 @@ async def create_tunnel(name: str) -> dict:
     }
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(url, headers=_cf_headers(cfg["token"]), json=payload)
+            resp = await client.post(base_url, headers=_cf_headers(cfg["token"]), json=payload)
             data = resp.json()
+
+            if data.get("success"):
+                result = data["result"]
+                return {"id": result["id"], "name": result["name"]}
+
+            # If tunnel with same name already exists, find and reuse it
+            errors = data.get("errors", [])
+            is_duplicate = any("already" in str(e.get("message", "")).lower() for e in errors)
+            if is_duplicate:
+                logger.info("Tunnel '%s' already exists, reusing", name)
+                list_resp = await client.get(
+                    base_url,
+                    headers=_cf_headers(cfg["token"]),
+                    params={"name": name, "is_deleted": "false"},
+                )
+                list_data = list_resp.json()
+                if list_data.get("success") and list_data.get("result"):
+                    existing = list_data["result"][0]
+                    return {"id": existing["id"], "name": existing["name"]}
+
+            raise ValueError(f"Failed to create tunnel: {errors}")
     except httpx.HTTPError as e:
         raise ValueError(f"CF API error: {e}")
-    if not data.get("success"):
-        raise ValueError(f"Failed to create tunnel: {data.get('errors')}")
-    result = data["result"]
-    return {"id": result["id"], "name": result["name"]}
 
 
 async def get_tunnel_token(tunnel_id: str) -> str:
