@@ -9,18 +9,16 @@ A system dashboard and service manager for Linux machines. Monitor CPU, memory, 
 ```bash
 git clone https://github.com/nathanodle/inframatik.git
 cd inframatik
-python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
-./venv/bin/uvicorn main:app --host 0.0.0.0 --port 9000
+./setup
 ```
 
-Open `http://localhost:9000` (must be localhost for first-time password setup):
-1. Set an admin password (minimum 8 characters)
-2. Log in
-3. Choose a node role: **Standalone**, **Master**, or **Worker**
-4. Dashboard loads with live system metrics
+The setup script will:
+1. Prompt you for an admin password
+2. Install Python dependencies
+3. Create and start a systemd user service
+4. Install the `inframatik` CLI
 
-> **Remote access:** The first password must be set from localhost for security. After that, you can access the dashboard from any machine on the network.
+Then open the URL it prints, log in, and choose a role: **Standalone**, **Master**, or **Worker**.
 
 ## Features
 
