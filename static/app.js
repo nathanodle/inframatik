@@ -240,6 +240,10 @@ async function validateSetupCfToken() {
     errEl.textContent = '';
     if (!token) { errEl.textContent = 'API token is required.'; return; }
 
+    // Loading state
+    const validateBtn = document.querySelector('#setup-cf-config .btn.primary');
+    if (validateBtn) { validateBtn.disabled = true; validateBtn.textContent = 'Validating...'; }
+
     try {
         const data = await api('POST', '/api/cf/setup/validate-token', { token });
         setupCf.token = token;
@@ -272,6 +276,7 @@ async function validateSetupCfToken() {
         await loadSetupCfZones();
     } catch (e) {
         errEl.textContent = e.message;
+        if (validateBtn) { validateBtn.disabled = false; validateBtn.textContent = 'Validate'; }
     }
 }
 
@@ -455,11 +460,7 @@ function showSetupNameStep() {
 }
 
 function setupNameBack() {
-    if (setupCf.enabled) {
-        showSetupCfPrompt();
-    } else {
-        showSetupCfPrompt();
-    }
+    showSetupCfPrompt();
 }
 
 async function submitSetupFinal() {
@@ -526,6 +527,9 @@ async function submitSetupFinal() {
             }
         }
 
+        progressEl.style.display = '';
+        progressEl.textContent = 'Done! Redirecting to dashboard...';
+        await new Promise(r => setTimeout(r, 1000));
         location.reload();
     } catch (e) {
         submitBtn.disabled = false;
@@ -542,6 +546,9 @@ async function submitSetupWorker() {
     const errEl = document.getElementById('setup-worker-error');
     errEl.textContent = '';
     if (!name || !master_url || !token) { errEl.textContent = 'All fields are required.'; return; }
+
+    const regBtn = document.querySelector('#setup-worker .btn.primary');
+    if (regBtn) { regBtn.disabled = true; regBtn.textContent = 'Registering...'; }
 
     try {
         // Determine our address for the master
@@ -569,6 +576,7 @@ async function submitSetupWorker() {
         location.reload();
     } catch (e) {
         errEl.textContent = e.message;
+        if (regBtn) { regBtn.disabled = false; regBtn.textContent = 'Register'; }
     }
 }
 
