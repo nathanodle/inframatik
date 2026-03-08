@@ -1,12 +1,13 @@
 import asyncio
 import logging
+import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from system import get_system_metrics
@@ -55,6 +56,26 @@ app.include_router(cf_router)
 app.include_router(mcp_router)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Cache buster: git commit hash at startup, falls back to file mtime
+def _get_asset_version() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=3,
+            cwd=Path(__file__).parent,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    # Fallback: use app.js mtime
+    try:
+        return str(int((STATIC_DIR / "app.js").stat().st_mtime))
+    except Exception:
+        return "0"
+
+_ASSET_VERSION = _get_asset_version()
 
 # Paths that don't require session auth
 _PUBLIC_PATHS = {
@@ -147,7 +168,9 @@ class ServiceCreate(BaseModel):
 
 @app.get("/")
 async def dashboard():
-    return FileResponse(STATIC_DIR / "index.html")
+    html = (STATIC_DIR / "index.html").read_text()
+    html = html.replace("__ASSET_VERSION__", _ASSET_VERSION)
+    return HTMLResponse(html)
 
 
 # --- System ---
