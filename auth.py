@@ -233,12 +233,17 @@ async def _fetch_cf_keys(team_domain: str) -> list:
 
 def _validate_cf_jwt_sync(token: str, keys: list, audience: str, issuer: Optional[str] = None) -> bool:
     """Validate a CF Access JWT against public keys."""
+    from cryptography.x509 import load_pem_x509_certificate
+
     for key_data in keys:
         try:
-            cert = key_data.get("cert", "")
-            if not cert:
+            cert_pem = key_data.get("cert", "")
+            if not cert_pem:
                 continue
-            public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data) if "n" in key_data else cert
+            # CF returns X.509 certificates — extract the public key
+            cert = load_pem_x509_certificate(cert_pem.encode())
+            public_key = cert.public_key()
+
             decode_kwargs = {
                 "algorithms": ["RS256"],
                 "audience": audience,
