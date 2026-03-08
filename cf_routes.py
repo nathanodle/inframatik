@@ -436,6 +436,41 @@ async def cf_setup_validate_token(body: ValidateTokenBody):
 
             if not accounts:
                 raise HTTPException(400, "No accounts accessible with this token")
+
+            # Probe permissions on the first account
+            acct_id = accounts[0]["id"]
+            missing_perms = []
+
+            # Check Tunnel permission
+            tunnel_resp = await client.get(
+                f"https://api.cloudflare.com/client/v4/accounts/{acct_id}/cfd_tunnel",
+                headers=_cf_headers(body.token),
+                params={"per_page": 1},
+            )
+            if not tunnel_resp.json().get("success"):
+                missing_perms.append("Cloudflare Tunnel: Edit")
+
+            # Check DNS permission (via zones)
+            zone_check = await client.get(
+                "https://api.cloudflare.com/client/v4/zones",
+                headers=_cf_headers(body.token),
+                params={"per_page": 1, "status": "active"},
+            )
+            if not zone_check.json().get("success"):
+                missing_perms.append("Zone DNS: Edit")
+
+            # Check Access permission
+            access_resp = await client.get(
+                f"https://api.cloudflare.com/client/v4/accounts/{acct_id}/access/policies",
+                headers=_cf_headers(body.token),
+            )
+            if not access_resp.json().get("success"):
+                missing_perms.append("Access: Apps and Policies: Edit")
+
+            if missing_perms:
+                raise HTTPException(400,
+                    f"Token is missing permissions: {', '.join(missing_perms)}")
+
             return {"accounts": accounts}
     except HTTPException:
         raise
