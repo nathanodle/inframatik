@@ -4,6 +4,34 @@ let prevNet = null;
 let prevNetTime = null;
 let authToken = null;
 
+// ---- WebSocket ----
+let ws = null;
+let wsProgressCallbacks = {};
+
+function connectWs() {
+    if (ws) return;
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws`);
+    ws.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'progress' && wsProgressCallbacks[msg.task]) {
+                wsProgressCallbacks[msg.task](msg);
+            }
+        } catch (e) {}
+    };
+    ws.onclose = () => {
+        ws = null;
+        // Reconnect after a short delay
+        setTimeout(() => { if (authToken || document.cookie.includes('inframatik_session')) connectWs(); }, 3000);
+    };
+    ws.onerror = () => {};
+}
+
+function onWsProgress(task, callback) {
+    wsProgressCallbacks[task] = callback;
+}
+
 // ---- Cluster state ----
 let isMaster = false;
 let selfNodeId = null;
@@ -117,6 +145,7 @@ async function initCluster() {
         if (info.role === 'unconfigured') {
             // First run — show setup modal
             document.getElementById('setup-modal').classList.add('active');
+            connectWs();
             return false;
         }
         if (info.role === 'master') {
@@ -450,6 +479,14 @@ async function submitSetupFinal() {
         ? '/api/config/init-master'
         : '/api/config/init-standalone';
 
+    // Disable submit button
+    const submitBtn = document.getElementById('setup-submit-btn');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Setting up...';
+
+    // Show progress area
+    const progressEl = document.getElementById('setup-progress');
+
     try {
         // 1. Create role
         await api('POST', endpoint, { name });
@@ -457,6 +494,9 @@ async function submitSetupFinal() {
         // 2. If CF enabled, save CF config + enable dashboard access
         if (setupCf.enabled) {
             try {
+                progressEl.style.display = '';
+                progressEl.textContent = 'Saving Cloudflare configuration...';
+
                 await api('POST', '/api/cf/setup/save', {
                     token: setupCf.token,
                     account_id: setupCf.account_id,
@@ -466,17 +506,31 @@ async function submitSetupFinal() {
 
                 const domain = document.getElementById('setup-domain-select').value;
                 const hostname = `${name}.${domain}`;
+
+                // Listen for progress via WebSocket
+                let cfDone = false;
+                onWsProgress('dashboard-access', (msg) => {
+                    progressEl.textContent = msg.message;
+                    if (msg.done) cfDone = true;
+                });
+
+                progressEl.textContent = 'Setting up dashboard access...';
                 await api('POST', '/api/config/dashboard-access', { hostname });
+                // API returns when done, but WS may have already shown progress
+                delete wsProgressCallbacks['dashboard-access'];
             } catch (cfErr) {
-                // CF failed but role is configured — show error but don't block
+                delete wsProgressCallbacks['dashboard-access'];
+                progressEl.style.display = 'none';
                 errEl.textContent = 'Note: Cloudflare setup failed (' + cfErr.message + '). You can configure it in Settings.';
-                // Wait a moment so user can see the message
                 await new Promise(r => setTimeout(r, 3000));
             }
         }
 
         location.reload();
     } catch (e) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Get Started';
+        progressEl.style.display = 'none';
         errEl.textContent = e.message;
     }
 }
@@ -1965,6 +2019,7 @@ function showLogin() {
 function showDashboard() {
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('dashboard-content').style.display = '';
+    connectWs();
 }
 
 async function checkAuthAndInit() {

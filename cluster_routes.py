@@ -440,23 +440,29 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
     if not (hostname == zone_name or hostname.endswith(f".{zone_name}")):
         raise HTTPException(400, f"Hostname must be under selected domain '{zone_name}'")
 
+    from ws_routes import send_progress
+    _task = "dashboard-access"
+
     try:
-        # Create tunnel if this node doesn't have one yet
         tid = config.get("tunnel_id")
         if not tid:
+            await send_progress(_task, "creating_tunnel", "Creating Cloudflare tunnel...")
             tunnel_result = await create_tunnel(config["node_name"])
             tid = tunnel_result["id"]
             await init_tunnel_config(tid)
             set_tunnel_id(tid)
 
-            # Start cloudflared with the tunnel token
+            await send_progress(_task, "getting_token", "Getting tunnel connector token...")
             token = await get_tunnel_token(tid)
-            await setup_cloudflared_user_service(token)
 
-        # Add ingress route for the dashboard
+            await send_progress(_task, "installing_cloudflared", "Installing and starting cloudflared...")
+            await setup_cloudflared_user_service(token)
+            await send_progress(_task, "cloudflared_ready", "cloudflared is running")
+
+        await send_progress(_task, "adding_route", "Adding tunnel route for dashboard...")
         await add_tunnel_route(hostname, "http://localhost:9000", tunnel_id=tid)
 
-        # Create DNS record
+        await send_progress(_task, "creating_dns", f"Creating DNS record for {hostname}...")
         await create_dns_record(
             hostname,
             tunnel_id=tid,
@@ -464,12 +470,14 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
             zone_name=zone_name,
         )
 
-        # Create Access app if default policy is configured
         policy_id = cf_cfg.get("default_policy_id")
         if policy_id:
+            await send_progress(_task, "creating_access", "Creating Cloudflare Access app...")
             await create_access_app("inframatik dashboard", hostname, policy_id)
 
         set_dashboard_hostname(hostname, zone_id=selected_zone_id, zone_name=zone_name)
+
+        await send_progress(_task, "complete", f"Dashboard access enabled at {hostname}", done=True)
 
         return {
             "status": "enabled",
@@ -479,8 +487,10 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
             "tunnel_id": tid,
         }
     except ValueError as e:
+        await send_progress(_task, "error", str(e), done=True, error=True)
         raise HTTPException(400, str(e))
     except RuntimeError as e:
+        await send_progress(_task, "error", str(e), done=True, error=True)
         raise HTTPException(500, str(e))
 
 

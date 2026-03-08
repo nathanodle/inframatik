@@ -26,6 +26,7 @@ from node_config import get_node_config, service_token_capability_allows
 from cluster_routes import cluster_router
 from cf_routes import cf_router
 from mcp_routes import mcp_router
+from ws_routes import ws_router
 from nodes import stale_checker_loop, heartbeat_sender_loop
 
 logger = logging.getLogger("inframatik.main")
@@ -54,6 +55,7 @@ app = FastAPI(title="inframatik", lifespan=lifespan)
 app.include_router(cluster_router)
 app.include_router(cf_router)
 app.include_router(mcp_router)
+app.include_router(ws_router)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
