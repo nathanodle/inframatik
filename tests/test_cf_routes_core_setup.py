@@ -529,14 +529,22 @@ def test_api_setup_worker_tunnel_maps_runtime_error():
 
 def test_cf_setup_validate_token_success():
     def on_get(url, headers=None, params=None):
-        assert "accounts" in url
-        assert params["per_page"] == 50
-        return _Resp(
-            {
-                "success": True,
-                "result": [{"id": "a1", "name": "Acct One"}],
-            }
-        )
+        if url.endswith("/accounts"):
+            return _Resp(
+                {
+                    "success": True,
+                    "result": [{"id": "a1", "name": "Acct One"}],
+                }
+            )
+        if "/cfd_tunnel" in url:
+            return _Resp({"success": True, "result": []})
+        if url.endswith("/zones") and params and params.get("per_page") == 1:
+            return _Resp({"success": True, "result": [{"id": "zone-1"}]})
+        if "/dns_records" in url:
+            return _Resp({"success": True, "result": []})
+        if "/access/policies" in url:
+            return _Resp({"success": True, "result": []})
+        raise AssertionError(f"Unexpected URL: {url}")
 
     with _Patch([(cf_routes.httpx, "AsyncClient", _async_client_factory(on_get=on_get))]):
         result = _run(cf_routes.cf_setup_validate_token(cf_routes.ValidateTokenBody(token="tok")))
@@ -647,7 +655,9 @@ def test_cf_setup_policies_success():
         result = _run(
             cf_routes.cf_setup_policies(cf_routes.ListPoliciesBody(token="tok", account_id="acc"))
         )
-    assert result == {"policies": [{"id": "p1", "name": "Default", "decision": "allow"}]}
+    assert result == {
+        "policies": [{"id": "p1", "name": "Default", "decision": "allow", "include": []}]
+    }
 
 
 def test_cf_setup_create_policy_success():
@@ -712,12 +722,32 @@ def test_cf_setup_save_requires_existing_node_config():
 def test_cf_setup_save_persists_values():
     seen = {}
 
-    def fake_save(token, account_id, zone_id, default_policy_id):
-        seen["args"] = (token, account_id, zone_id, default_policy_id)
+    def fake_save(
+        token,
+        account_id,
+        zone_id,
+        default_policy_id,
+        team_domain=None,
+        access_issuer=None,
+    ):
+        seen["args"] = (
+            token,
+            account_id,
+            zone_id,
+            default_policy_id,
+            team_domain,
+            access_issuer,
+        )
+
+    async def fake_discover(token, account_id):
+        assert token == "tok"
+        assert account_id == "acc"
+        return "team-one"
 
     with _Patch(
         [
             (cf_routes, "get_node_config", lambda: {"role": "master"}),
+            (cf_routes, "discover_access_team_domain", fake_discover),
             (cf_routes, "save_cf_config", fake_save),
         ]
     ):
@@ -730,7 +760,33 @@ def test_cf_setup_save_persists_values():
         result = _run(cf_routes.cf_setup_save(body))
 
     assert result == {"status": "saved"}
-    assert seen["args"] == ("tok", "acc", "zone", "p-default")
+    assert seen["args"] == (
+        "tok",
+        "acc",
+        "zone",
+        "p-default",
+        "team-one",
+        "https://team-one.cloudflareaccess.com",
+    )
+
+
+def test_cf_setup_save_maps_team_domain_discovery_error():
+    async def fake_discover(_token, _account_id):
+        raise ValueError("missing Access Organizations read permission")
+
+    with _Patch(
+        [
+            (cf_routes, "get_node_config", lambda: {"role": "master"}),
+            (cf_routes, "discover_access_team_domain", fake_discover),
+        ]
+    ):
+        exc = _assert_raises_async(
+            HTTPException,
+            cf_routes.cf_setup_save,
+            cf_routes.SaveCfConfigBody(token="tok", account_id="acc", zone_id="zone", default_policy_id=None),
+        )
+    assert exc.status_code == 400
+    assert "missing Access Organizations read permission" in str(exc.detail)
 
 
 def test_cf_setup_clear_calls_clear_cf_config():

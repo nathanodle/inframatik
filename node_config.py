@@ -665,7 +665,14 @@ def set_tunnel_id(tunnel_id: str):
     save_node_config(config)
 
 
-def save_cf_config(token: str, account_id: str, zone_id: str, default_policy_id: Optional[str] = None):
+def save_cf_config(
+    token: str,
+    account_id: str,
+    zone_id: str,
+    default_policy_id: Optional[str] = None,
+    team_domain: Optional[str] = None,
+    access_issuer: Optional[str] = None,
+):
     """Store Cloudflare credentials in node config."""
     config = get_node_config()
     if not config:
@@ -674,6 +681,13 @@ def save_cf_config(token: str, account_id: str, zone_id: str, default_policy_id:
     config["cf_account_id"] = account_id
     config["cf_zone_id"] = zone_id
     config["cf_default_policy_id"] = default_policy_id
+    normalized_team_domain = (team_domain or "").strip().lower()
+    if normalized_team_domain:
+        if normalized_team_domain.endswith(".cloudflareaccess.com"):
+            normalized_team_domain = normalized_team_domain[: -len(".cloudflareaccess.com")]
+        config["cf_team_domain"] = normalized_team_domain
+    if access_issuer:
+        config["cf_access_issuer"] = access_issuer.strip()
     save_node_config(config)
 
 
@@ -682,7 +696,15 @@ def clear_cf_config():
     config = get_node_config()
     if not config:
         return
-    for key in ("cf_token", "cf_account_id", "cf_zone_id", "cf_default_policy_id"):
+    for key in (
+        "cf_token",
+        "cf_account_id",
+        "cf_zone_id",
+        "cf_default_policy_id",
+        "cf_team_domain",
+        "cf_access_issuer",
+        "cf_access_aud",
+    ):
         config.pop(key, None)
     save_node_config(config)
 

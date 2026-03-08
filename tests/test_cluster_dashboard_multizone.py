@@ -53,7 +53,7 @@ def test_enable_dashboard_access_with_subdomain_and_selected_zone():
 
     async def fake_access(name, hostname, policy_id):
         seen["access"] = (name, hostname, policy_id)
-        return "app-1"
+        return {"id": "app-1", "aud": ""}
 
     async def fake_zones():
         return [
@@ -63,7 +63,16 @@ def test_enable_dashboard_access_with_subdomain_and_selected_zone():
 
     with _Patch(
         [
-            (cluster_routes, "get_node_config", lambda: {"node_name": "node-1", "tunnel_id": "tid-1"}),
+            (
+                cluster_routes,
+                "get_node_config",
+                lambda: {
+                    "node_name": "node-1",
+                    "tunnel_id": "tid-1",
+                    "cf_team_domain": "team-one",
+                    "cf_access_issuer": "https://team-one.cloudflareaccess.com",
+                },
+            ),
             (cluster_routes, "set_dashboard_hostname", lambda h, zone_id=None, zone_name=None: seen.setdefault("saved", (h, zone_id, zone_name))),
             (tunnel, "_load_cf_config", lambda: {"token": "tok", "account_id": "acct", "zone_id": "z1", "default_policy_id": "pol-1"}),
             (tunnel, "list_available_zones", fake_zones),

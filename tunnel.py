@@ -37,6 +37,70 @@ def _cf_headers(token: str) -> dict:
     }
 
 
+def _normalize_cf_team_domain(team_domain: str) -> str:
+    team_domain = (team_domain or "").strip().lower()
+    if team_domain.startswith("https://"):
+        team_domain = team_domain[len("https://"):]
+    elif team_domain.startswith("http://"):
+        team_domain = team_domain[len("http://"):]
+    team_domain = team_domain.split("/", 1)[0]
+    if team_domain.endswith(".cloudflareaccess.com"):
+        team_domain = team_domain[: -len(".cloudflareaccess.com")]
+    return team_domain
+
+
+async def discover_access_team_domain(token: str, account_id: str) -> str:
+    """Discover the Cloudflare Access team domain from account metadata."""
+    token = (token or "").strip()
+    account_id = (account_id or "").strip()
+    if not token or not account_id:
+        raise ValueError("Cloudflare token/account_id required to discover Access organization")
+
+    urls = [
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/access/organizations",
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/access/organization",
+    ]
+    last_errors = []
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            for url in urls:
+                try:
+                    resp = await client.get(url, headers=_cf_headers(token))
+                    data = resp.json()
+                except (httpx.HTTPError, ValueError, TypeError) as e:
+                    last_errors.append(str(e))
+                    continue
+                if not data.get("success"):
+                    last_errors.append(str(data.get("errors")))
+                    continue
+
+                result = data.get("result")
+                orgs = []
+                if isinstance(result, dict):
+                    orgs = [result]
+                elif isinstance(result, list):
+                    orgs = result
+
+                for org in orgs:
+                    auth_domain = org.get("auth_domain", "")
+                    team_domain = _normalize_cf_team_domain(auth_domain)
+                    if team_domain:
+                        return team_domain
+                    domain_candidate = org.get("domain", "")
+                    team_domain = _normalize_cf_team_domain(domain_candidate)
+                    if team_domain:
+                        return team_domain
+    except httpx.HTTPError as e:
+        raise ValueError(f"Failed to query Cloudflare Access organizations: {e}")
+
+    error_detail = "; ".join(last_errors) if last_errors else "no organization data returned"
+    raise ValueError(
+        "Unable to discover Cloudflare Access team domain. "
+        "Ensure token has 'Access: Organizations, Identity Providers, and Groups: Read'. "
+        f"Detail: {error_detail}"
+    )
+
+
 def _get_tunnel_id(tunnel_id: Optional[str] = None) -> str:
     """Resolve tunnel_id from argument or node config. Raises ValueError if not found."""
     if tunnel_id:

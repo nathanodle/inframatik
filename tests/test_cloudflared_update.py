@@ -82,24 +82,39 @@ def test_extract_sha256_rejects_missing_hash():
     _assert_raises(RuntimeError, cloudflared._extract_sha256, "no hash here")
 
 
-def test_download_expected_sha_primary_path():
-    async def fake_download(url: str, max_bytes: int = cloudflared.MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:
-        if url.endswith(".sha256"):
-            return b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cloudflared\n"
-        raise AssertionError(f"Unexpected URL: {url}")
+def test_download_expected_sha_uses_release_metadata_digest():
+    async def fake_download_json(url: str, max_bytes: int = cloudflared.MAX_GITHUB_RELEASE_JSON_BYTES) -> dict:
+        assert "/releases/tags/2025.2.1" in url
+        return {
+            "assets": [
+                {
+                    "name": "cloudflared-linux-amd64",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                }
+            ]
+        }
 
-    original = cloudflared._download_bytes
+    async def fake_download(_url: str, max_bytes: int = cloudflared.MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:
+        raise AssertionError("sidecar checksum should not be used when digest exists")
+
+    original_json = cloudflared._download_json
+    original_bytes = cloudflared._download_bytes
+    cloudflared._download_json = fake_download_json
     cloudflared._download_bytes = fake_download
     try:
-        sha = asyncio.run(cloudflared._download_expected_sha("https://example/release", "amd64"))
+        sha = asyncio.run(cloudflared._download_expected_sha("2025.2.1", "amd64"))
     finally:
-        cloudflared._download_bytes = original
+        cloudflared._download_json = original_json
+        cloudflared._download_bytes = original_bytes
 
     assert sha == "a" * 64
 
 
-def test_download_expected_sha_falls_back_to_sha256sum():
+def test_download_expected_sha_falls_back_to_sidecar_checksum():
     seen = []
+
+    async def fake_download_json(url: str, max_bytes: int = cloudflared.MAX_GITHUB_RELEASE_JSON_BYTES) -> dict:
+        raise RuntimeError(f"metadata failed: {url}")
 
     async def fake_download(url: str, max_bytes: int = cloudflared.MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:
         seen.append(url)
@@ -109,12 +124,15 @@ def test_download_expected_sha_falls_back_to_sha256sum():
             return b"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  cloudflared\n"
         raise AssertionError(f"Unexpected URL: {url}")
 
-    original = cloudflared._download_bytes
+    original_json = cloudflared._download_json
+    original_bytes = cloudflared._download_bytes
+    cloudflared._download_json = fake_download_json
     cloudflared._download_bytes = fake_download
     try:
-        sha = asyncio.run(cloudflared._download_expected_sha("https://example/release", "amd64"))
+        sha = asyncio.run(cloudflared._download_expected_sha("2025.2.1", "amd64"))
     finally:
-        cloudflared._download_bytes = original
+        cloudflared._download_json = original_json
+        cloudflared._download_bytes = original_bytes
 
     assert seen[0].endswith(".sha256")
     assert seen[1].endswith(".sha256sum")
@@ -122,22 +140,29 @@ def test_download_expected_sha_falls_back_to_sha256sum():
 
 
 def test_download_expected_sha_raises_when_all_sources_fail():
+    async def fake_download_json(url: str, max_bytes: int = cloudflared.MAX_GITHUB_RELEASE_JSON_BYTES) -> dict:
+        raise RuntimeError(f"metadata failed: {url}")
+
     async def fake_download(url: str, max_bytes: int = cloudflared.MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:
         raise RuntimeError(f"failed: {url}")
 
-    original = cloudflared._download_bytes
+    original_json = cloudflared._download_json
+    original_bytes = cloudflared._download_bytes
+    cloudflared._download_json = fake_download_json
     cloudflared._download_bytes = fake_download
     try:
         exc = _assert_raises_async(
             RuntimeError,
             cloudflared._download_expected_sha,
-            "https://example/release",
+            "2025.2.1",
             "amd64",
         )
     finally:
-        cloudflared._download_bytes = original
+        cloudflared._download_json = original_json
+        cloudflared._download_bytes = original_bytes
 
     assert "failed:" in str(exc)
+    assert "metadata failed:" in str(exc)
 
 
 @_run_with_temp_paths
@@ -145,7 +170,7 @@ def test_update_cloudflared_writes_binary_without_restart(_tmp_home: Path):
     sample = b"binary-data-v1"
     expected_sha = hashlib.sha256(sample).hexdigest()
 
-    async def fake_expected_sha(_base_url: str, _arch: str) -> str:
+    async def fake_expected_sha(_version: str, _arch: str) -> str:
         return expected_sha
 
     async def fake_download(_url: str, max_bytes: int = cloudflared.MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:
@@ -194,7 +219,7 @@ def test_update_cloudflared_restarts_when_unit_exists(_tmp_home: Path):
     expected_sha = hashlib.sha256(sample).hexdigest()
     restart_calls = []
 
-    async def fake_expected_sha(_base_url: str, _arch: str) -> str:
+    async def fake_expected_sha(_version: str, _arch: str) -> str:
         return expected_sha
 
     async def fake_download(_url: str, max_bytes: int = cloudflared.MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:
@@ -231,7 +256,7 @@ def test_update_cloudflared_restarts_when_unit_exists(_tmp_home: Path):
 
 @_run_with_temp_paths
 def test_update_cloudflared_rejects_checksum_mismatch(_tmp_home: Path):
-    async def fake_expected_sha(_base_url: str, _arch: str) -> str:
+    async def fake_expected_sha(_version: str, _arch: str) -> str:
         return "0" * 64
 
     async def fake_download(_url: str, max_bytes: int = cloudflared.MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:
@@ -255,8 +280,81 @@ def test_update_cloudflared_rejects_checksum_mismatch(_tmp_home: Path):
 
 
 @_run_with_temp_paths
+def test_update_cloudflared_rejects_missing_checksum_by_default(_tmp_home: Path):
+    async def fake_expected_sha(_version: str, _arch: str) -> str:
+        raise RuntimeError("checksum not published")
+
+    async def fake_download(_url: str, max_bytes: int = cloudflared.MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:
+        return b"actual-bytes"
+
+    original_expected_sha = cloudflared._download_expected_sha
+    original_download = cloudflared._download_bytes
+    original_arch = cloudflared._cloudflared_arch
+    original_flag = os.environ.pop("INFRAMATIK_ALLOW_UNSIGNED_CLOUDFLARED", None)
+    cloudflared._download_expected_sha = fake_expected_sha
+    cloudflared._download_bytes = fake_download
+    cloudflared._cloudflared_arch = lambda: "amd64"
+    try:
+        exc = _assert_raises_async(RuntimeError, cloudflared.update_cloudflared_user_binary, "2025.2.1")
+    finally:
+        cloudflared._download_expected_sha = original_expected_sha
+        cloudflared._download_bytes = original_download
+        cloudflared._cloudflared_arch = original_arch
+        if original_flag is None:
+            os.environ.pop("INFRAMATIK_ALLOW_UNSIGNED_CLOUDFLARED", None)
+        else:
+            os.environ["INFRAMATIK_ALLOW_UNSIGNED_CLOUDFLARED"] = original_flag
+
+    assert "refusing unverified install" in str(exc)
+    assert not cloudflared.CLOUDFLARED_BINARY_PATH.exists()
+
+
+@_run_with_temp_paths
+def test_update_cloudflared_allows_missing_checksum_with_opt_in(_tmp_home: Path):
+    sample = b"binary-data-no-checksum"
+    expected_sha = hashlib.sha256(sample).hexdigest()
+
+    async def fake_expected_sha(_version: str, _arch: str) -> str:
+        raise RuntimeError("checksum not published")
+
+    async def fake_download(_url: str, max_bytes: int = cloudflared.MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:
+        return sample
+
+    versions = iter(["2025.1.0", "2025.2.1"])
+
+    async def fake_version() -> str:
+        return next(versions, "2025.2.1")
+
+    original_expected_sha = cloudflared._download_expected_sha
+    original_download = cloudflared._download_bytes
+    original_arch = cloudflared._cloudflared_arch
+    original_version = cloudflared.get_cloudflared_binary_version
+    original_flag = os.environ.get("INFRAMATIK_ALLOW_UNSIGNED_CLOUDFLARED")
+    cloudflared._download_expected_sha = fake_expected_sha
+    cloudflared._download_bytes = fake_download
+    cloudflared._cloudflared_arch = lambda: "amd64"
+    cloudflared.get_cloudflared_binary_version = fake_version
+    os.environ["INFRAMATIK_ALLOW_UNSIGNED_CLOUDFLARED"] = "1"
+    try:
+        result = asyncio.run(cloudflared.update_cloudflared_user_binary("2025.2.1"))
+    finally:
+        cloudflared._download_expected_sha = original_expected_sha
+        cloudflared._download_bytes = original_download
+        cloudflared._cloudflared_arch = original_arch
+        cloudflared.get_cloudflared_binary_version = original_version
+        if original_flag is None:
+            os.environ.pop("INFRAMATIK_ALLOW_UNSIGNED_CLOUDFLARED", None)
+        else:
+            os.environ["INFRAMATIK_ALLOW_UNSIGNED_CLOUDFLARED"] = original_flag
+
+    assert cloudflared.CLOUDFLARED_BINARY_PATH.read_bytes() == sample
+    assert result["sha256"] == expected_sha
+    assert result["version_requested"] == "2025.2.1"
+
+
+@_run_with_temp_paths
 def test_update_cloudflared_propagates_download_errors(_tmp_home: Path):
-    async def fake_expected_sha(_base_url: str, _arch: str) -> str:
+    async def fake_expected_sha(_version: str, _arch: str) -> str:
         return "a" * 64
 
     async def fake_download(_url: str, max_bytes: int = cloudflared.MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:

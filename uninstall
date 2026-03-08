@@ -2,6 +2,9 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVICES_FILE="$HOME/.config/inframatik/services.json"
+BASHRC_PORTS_START="# >>> inframatik ports >>>"
+BASHRC_PORTS_END="# <<< inframatik ports <<<"
 
 echo ""
 echo "  inframatik uninstall"
@@ -34,17 +37,48 @@ except Exception:
 fi
 
 # --- Stop and remove managed services ---
-MANAGED=$(systemctl --user list-units --type=service --no-legend 2>/dev/null | grep 'infra-' | awk '{print $1}' || true)
-if [ -n "$MANAGED" ]; then
+MANAGED_UNITS=()
+while IFS= read -r unit; do
+    [ -n "$unit" ] && MANAGED_UNITS+=("$unit")
+done < <(
+    python3 -c "
+import json, pathlib, re
+path = pathlib.Path('$SERVICES_FILE')
+if not path.exists():
+    raise SystemExit(0)
+try:
+    data = json.loads(path.read_text())
+except Exception:
+    raise SystemExit(0)
+if not isinstance(data, dict):
+    raise SystemExit(0)
+for name in data.keys():
+    if isinstance(name, str) and re.fullmatch(r'[a-z0-9][a-z0-9_-]*', name):
+        print(f'infra-{name}.service')
+" 2>/dev/null || true
+)
+
+# Fallback for older installs: only pick infra-* units with inframatik Description signature.
+if [ ${#MANAGED_UNITS[@]} -eq 0 ]; then
+    for f in ~/.config/systemd/user/infra-*.service; do
+        [ -f "$f" ] || continue
+        if grep -q '^Description=infra: ' "$f"; then
+            MANAGED_UNITS+=("$(basename "$f")")
+        fi
+    done
+fi
+
+if [ ${#MANAGED_UNITS[@]} -gt 0 ]; then
     echo "==> Stopping managed services..."
-    for svc in $MANAGED; do
+    for svc in "${MANAGED_UNITS[@]}"; do
         systemctl --user disable --now "$svc" 2>/dev/null || true
         echo "    Stopped $svc"
     done
 fi
 
 # --- Remove managed service unit files ---
-for f in ~/.config/systemd/user/infra-*.service; do
+for svc in "${MANAGED_UNITS[@]}"; do
+    f="$HOME/.config/systemd/user/$svc"
     [ -f "$f" ] && rm -f "$f" && echo "    Removed $(basename "$f")"
 done
 
@@ -85,9 +119,12 @@ if [ -L ~/.local/bin/inframatik ]; then
 fi
 
 # --- Clean .bashrc ---
-if grep -q 'inframatik' ~/.bashrc 2>/dev/null; then
+if [ -f ~/.bashrc ]; then
     echo "==> Cleaning .bashrc..."
-    sed -i '/inframatik/d' ~/.bashrc
+    sed -i "/^${BASHRC_PORTS_START}$/,/^${BASHRC_PORTS_END}$/{d;}" ~/.bashrc
+    # Legacy cleanup from pre-marker setup script.
+    sed -i '/^# inframatik service ports$/d' ~/.bashrc
+    sed -i '/^\[ -f ~\/\.config\/inframatik\/ports\.env \] && source ~\/\.config\/inframatik\/ports\.env$/d' ~/.bashrc
     sed -i '/^$/N;/^\n$/d' ~/.bashrc
 fi
 

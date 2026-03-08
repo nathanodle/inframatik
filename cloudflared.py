@@ -17,6 +17,13 @@ MAX_LOG_LINES = 500
 MAX_CLOUDFLARED_DOWNLOAD_BYTES = 100 * 1024 * 1024
 DEFAULT_CLOUDFLARED_VERSION = os.getenv("INFRAMATIK_CLOUDFLARED_VERSION", "2026.2.0")
 _VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+GITHUB_RELEASE_API_URL = "https://api.github.com/repos/cloudflare/cloudflared/releases/tags/{version}"
+MAX_GITHUB_RELEASE_JSON_BYTES = 2 * 1024 * 1024
+
+
+def _allow_unsigned_cloudflared_update() -> bool:
+    return os.getenv("INFRAMATIK_ALLOW_UNSIGNED_CLOUDFLARED", "").lower() in ("1", "true", "yes")
+
 
 _UNIT_TEMPLATE = """\
 [Unit]
@@ -130,6 +137,35 @@ async def _download_bytes(url: str, max_bytes: int = MAX_CLOUDFLARED_DOWNLOAD_BY
     return data
 
 
+async def _download_json(url: str, max_bytes: int = MAX_GITHUB_RELEASE_JSON_BYTES) -> dict:
+    try:
+        import httpx as _httpx
+    except ModuleNotFoundError:
+        raise RuntimeError("cloudflared update requires the 'httpx' package")
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "inframatik-cloudflared-updater",
+    }
+    try:
+        async with _httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as client:
+            resp = await client.get(url)
+    except _httpx.HTTPError as e:
+        raise RuntimeError(f"Failed to download {url}: {e}")
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to download {url}: HTTP {resp.status_code}")
+    raw = resp.content
+    if len(raw) > max_bytes:
+        raise RuntimeError(f"Downloaded payload from {url} exceeds size limit")
+    try:
+        payload = resp.json()
+    except ValueError:
+        raise RuntimeError(f"Failed to parse JSON from {url}")
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Unexpected JSON payload from {url}")
+    return payload
+
+
 def _extract_sha256(checksum_text: str) -> str:
     match = re.search(r"\b[a-fA-F0-9]{64}\b", checksum_text)
     if not match:
@@ -137,7 +173,7 @@ def _extract_sha256(checksum_text: str) -> str:
     return match.group(0).lower()
 
 
-async def _download_expected_sha(base_url: str, arch: str) -> str:
+async def _download_expected_sha_from_sidecar(base_url: str, arch: str) -> str:
     checksum_urls = [
         f"{base_url}/cloudflared-linux-{arch}.sha256",
         f"{base_url}/cloudflared-linux-{arch}.sha256sum",
@@ -152,6 +188,45 @@ async def _download_expected_sha(base_url: str, arch: str) -> str:
     if last_error is not None:
         raise RuntimeError(str(last_error))
     raise RuntimeError("Failed to download cloudflared checksum")
+
+
+async def _download_expected_sha_from_release_metadata(version: str, arch: str) -> str:
+    release_url = GITHUB_RELEASE_API_URL.format(version=version)
+    release = await _download_json(release_url)
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise RuntimeError("GitHub release metadata does not contain assets list")
+
+    asset_name = f"cloudflared-linux-{arch}"
+    target_asset = None
+    for asset in assets:
+        if isinstance(asset, dict) and asset.get("name") == asset_name:
+            target_asset = asset
+            break
+    if target_asset is None:
+        raise RuntimeError(f"GitHub release metadata missing asset {asset_name}")
+
+    digest = str(target_asset.get("digest") or "").strip()
+    if not digest:
+        raise RuntimeError(f"GitHub release metadata missing digest for asset {asset_name}")
+    return _extract_sha256(digest)
+
+
+async def _download_expected_sha(version: str, arch: str) -> str:
+    base_url = f"https://github.com/cloudflare/cloudflared/releases/download/{version}"
+    errors = []
+
+    try:
+        return await _download_expected_sha_from_release_metadata(version, arch)
+    except RuntimeError as e:
+        errors.append(f"release metadata digest unavailable: {e}")
+
+    try:
+        return await _download_expected_sha_from_sidecar(base_url, arch)
+    except RuntimeError as e:
+        errors.append(f"checksum file unavailable: {e}")
+
+    raise RuntimeError("; ".join(errors))
 
 
 async def get_cloudflared_binary_version() -> str:
@@ -307,16 +382,26 @@ async def update_cloudflared_user_binary(version: str | None = None) -> dict:
     binary_data = await _download_bytes(binary_url)
     actual_sha = hashlib.sha256(binary_data).hexdigest()
 
-    # Verify checksum if available (cloudflare doesn't always publish them)
+    allow_unsigned = _allow_unsigned_cloudflared_update()
+    # Verify checksum/digest; only allow missing verification data with explicit opt-in.
     try:
-        expected_sha = await _download_expected_sha(base_url, arch)
+        expected_sha = await _download_expected_sha(target_version, arch)
         if actual_sha != expected_sha:
             raise RuntimeError("cloudflared checksum verification failed")
     except RuntimeError as e:
         if "checksum verification failed" in str(e):
             raise
-        # No checksum file available — log and continue (HTTPS provides transport integrity)
-        logger.info("cloudflared checksum file not available for %s/%s, skipping verification", target_version, arch)
+        if not allow_unsigned:
+            raise RuntimeError(
+                "cloudflared digest/checksum unavailable; refusing unverified install. "
+                "Set INFRAMATIK_ALLOW_UNSIGNED_CLOUDFLARED=1 to override."
+            )
+        logger.warning(
+            "cloudflared digest/checksum unavailable for %s/%s; proceeding due to "
+            "INFRAMATIK_ALLOW_UNSIGNED_CLOUDFLARED=1",
+            target_version,
+            arch,
+        )
 
     previous_version = await get_cloudflared_binary_version()
     _secure_write_bytes(CLOUDFLARED_BINARY_PATH, binary_data, mode=0o755)

@@ -231,8 +231,13 @@ async def _fetch_cf_keys(team_domain: str) -> list:
         return []
 
 
-def _validate_cf_jwt_sync(token: str, keys: list, audience: str, issuer: Optional[str] = None) -> bool:
-    """Validate a CF Access JWT against public keys."""
+def _validate_cf_jwt_claims_sync(
+    token: str,
+    keys: list,
+    audience: str,
+    issuer: Optional[str] = None,
+) -> Optional[dict]:
+    """Validate a CF Access JWT against public keys and return verified claims."""
     from cryptography.x509 import load_pem_x509_certificate
 
     for key_data in keys:
@@ -250,49 +255,26 @@ def _validate_cf_jwt_sync(token: str, keys: list, audience: str, issuer: Optiona
             }
             if issuer:
                 decode_kwargs["issuer"] = issuer
-            jwt.decode(
+            claims = jwt.decode(
                 token,
                 public_key,
                 **decode_kwargs,
             )
-            return True
+            if isinstance(claims, dict):
+                return claims
+            return {}
         except (jwt.InvalidTokenError, ValueError, TypeError, KeyError):
             continue
-    return False
+    return None
 
 
-async def validate_cf_access(token: str, config: dict) -> bool:
-    """Validate CF Access JWT. Auto-discovers team domain from JWT issuer if not configured."""
+async def validate_cf_access_claims(token: str, config: dict) -> Optional[dict]:
+    """Validate CF Access JWT using pinned config and return verified claims."""
     aud = config.get("cf_access_aud")
     team_domain = _normalize_cf_team_domain(config.get("cf_team_domain", ""))
-
-    # Auto-discover team domain from JWT issuer claim if not configured
-    if not team_domain:
-        try:
-            # Decode WITHOUT verification just to peek at issuer
-            unverified = jwt.decode(token, options={"verify_signature": False, "verify_aud": False})
-            iss = unverified.get("iss", "")
-            logger.debug("CF JWT auto-discovery: iss=%s, aud_from_jwt=%s", iss, unverified.get("aud"))
-            # iss must be https://<team>.cloudflareaccess.com — reject anything else
-            if iss.endswith(".cloudflareaccess.com") or ".cloudflareaccess.com/" in iss:
-                team_domain = iss.split("//")[-1].split(".cloudflareaccess.com")[0]
-                if not team_domain or "/" in team_domain or "." in team_domain:
-                    logger.debug("CF JWT: rejected suspicious team_domain=%s", team_domain)
-                    team_domain = ""  # reject suspicious values
-                else:
-                    logger.debug("CF JWT: discovered team_domain=%s", team_domain)
-                # Also auto-discover AUD if not set
-                if not aud:
-                    aud = unverified.get("aud", [None])[0] if isinstance(unverified.get("aud"), list) else unverified.get("aud")
-            else:
-                logger.debug("CF JWT: issuer '%s' is not cloudflareaccess.com", iss)
-        except Exception as e:
-            logger.debug("CF JWT: failed to peek at unverified claims: %s", e)
-            pass
-
     if not team_domain or not aud:
-        logger.debug("CF JWT: missing team_domain=%s or aud=%s", team_domain, bool(aud))
-        return False
+        logger.debug("CF JWT auth disabled: missing pinned team_domain/aud in config")
+        return None
 
     issuer = config.get("cf_access_issuer")
     if not issuer:
@@ -301,24 +283,16 @@ async def validate_cf_access(token: str, config: dict) -> bool:
     keys = await _fetch_cf_keys(team_domain)
     if not keys:
         logger.debug("CF JWT: no keys returned from CF")
-        return False
+        return None
     logger.debug("CF JWT: got %d keys, validating...", len(keys))
-    valid = _validate_cf_jwt_sync(token, keys, aud, issuer=issuer)
-    logger.debug("CF JWT: validation result=%s", valid)
+    claims = _validate_cf_jwt_claims_sync(token, keys, aud, issuer=issuer)
+    logger.debug("CF JWT: validation result=%s", claims is not None)
+    return claims
 
-    # Auto-store discovered values for future use
-    if valid and not config.get("cf_team_domain"):
-        try:
-            from node_config import save_node_config
-            config["cf_team_domain"] = team_domain
-            if not config.get("cf_access_aud"):
-                config["cf_access_aud"] = aud
-            save_node_config(config)
-            logger.info("Auto-discovered CF team domain: %s", team_domain)
-        except Exception:
-            pass
 
-    return valid
+async def validate_cf_access(token: str, config: dict) -> bool:
+    """Validate CF Access JWT with pinned config values."""
+    return (await validate_cf_access_claims(token, config)) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -339,15 +313,11 @@ async def check_auth(request) -> bool:
     cf_jwt = request.headers.get("Cf-Access-Jwt-Assertion") or request.cookies.get("CF_Authorization")
     if cf_jwt and config:
         try:
-            result = await validate_cf_access(cf_jwt, config)
-            if result:
+            claims = await validate_cf_access_claims(cf_jwt, config)
+            if claims is not None:
                 logger.debug("CF JWT validation succeeded")
-                # Extract email from JWT for display
-                try:
-                    claims = jwt.decode(cf_jwt, options={"verify_signature": False, "verify_aud": False})
+                if isinstance(claims, dict):
                     request.state.user_email = claims.get("email", "")
-                except Exception:
-                    pass
                 return True
             else:
                 logger.debug("CF JWT validation returned False")

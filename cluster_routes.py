@@ -411,7 +411,7 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
     from tunnel import (
         _load_cf_config, create_tunnel, get_tunnel_token,
         init_tunnel_config, add_tunnel_route, create_dns_record,
-        create_access_app, list_available_zones,
+        create_access_app, list_available_zones, discover_access_team_domain,
     )
     config = get_node_config()
     if not config:
@@ -451,6 +451,25 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
     _task = "dashboard-access"
 
     try:
+        policy_id = cf_cfg.get("default_policy_id")
+        if policy_id:
+            pinned_team_domain = (config.get("cf_team_domain") or "").strip().lower()
+            if not pinned_team_domain:
+                await send_progress(_task, "discovering_access_org", "Discovering Cloudflare Access organization...")
+                team_domain = await discover_access_team_domain(cf_cfg.get("token", ""), cf_cfg.get("account_id", ""))
+                cfg_mut = get_node_config()
+                if cfg_mut:
+                    cfg_mut["cf_team_domain"] = team_domain
+                    cfg_mut.setdefault("cf_access_issuer", f"https://{team_domain}.cloudflareaccess.com")
+                    from node_config import save_node_config
+                    save_node_config(cfg_mut)
+            elif not config.get("cf_access_issuer"):
+                cfg_mut = get_node_config()
+                if cfg_mut:
+                    cfg_mut["cf_access_issuer"] = f"https://{pinned_team_domain}.cloudflareaccess.com"
+                    from node_config import save_node_config
+                    save_node_config(cfg_mut)
+
         tid = config.get("tunnel_id")
         if not tid:
             await send_progress(_task, "creating_tunnel", "Creating Cloudflare tunnel...")
@@ -481,7 +500,6 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
             zone_name=zone_name,
         )
 
-        policy_id = cf_cfg.get("default_policy_id")
         if policy_id:
             await send_progress(_task, "creating_access", "Creating Cloudflare Access app...")
             app_result = await create_access_app("inframatik dashboard", hostname, policy_id)

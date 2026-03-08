@@ -55,12 +55,10 @@ async def send_progress(task: str, step: str, message: str, done: bool = False, 
 async def websocket_endpoint(websocket: WebSocket):
     """Authenticated WebSocket endpoint.
 
-    Auth via session cookie (auto-sent by browser) or ?token= query param.
+    Auth via session cookie (auto-sent by browser).
     """
     # Authenticate before accepting
-    session_cookie = websocket.cookies.get("inframatik_session")
-    query_token = websocket.query_params.get("token")
-    token = session_cookie or query_token
+    token = websocket.cookies.get("inframatik_session")
 
     if not token or not validate_session(token):
         await websocket.close(code=4001, reason="Authentication required")

@@ -22,6 +22,7 @@ from node_config import (
 from tunnel import (
     _load_cf_config,
     _cf_headers,
+    discover_access_team_domain,
     list_available_zones,
     list_tunnels,
     create_tunnel,
@@ -207,8 +208,13 @@ class CreateAccessAppBody(BaseModel):
 async def api_create_access_app(body: CreateAccessAppBody):
     _require_cf_config()
     try:
-        app_id = await create_access_app(body.name, body.hostname, body.policy_id)
-        return {"id": app_id, "status": "created"}
+        app_result = await create_access_app(body.name, body.hostname, body.policy_id)
+        if isinstance(app_result, dict):
+            response = {"id": app_result.get("id"), "status": "created"}
+            if app_result.get("aud"):
+                response["aud"] = app_result["aud"]
+            return response
+        return {"id": app_result, "status": "created"}
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -602,7 +608,20 @@ async def cf_setup_save(body: SaveCfConfigBody):
     config = get_node_config()
     if not config:
         raise HTTPException(400, "Node not configured")
-    save_cf_config(body.token, body.account_id, body.zone_id, body.default_policy_id)
+    try:
+        team_domain = await discover_access_team_domain(body.token, body.account_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    access_issuer = f"https://{team_domain}.cloudflareaccess.com"
+    save_cf_config(
+        body.token,
+        body.account_id,
+        body.zone_id,
+        body.default_policy_id,
+        team_domain=team_domain,
+        access_issuer=access_issuer,
+    )
     return {"status": "saved"}
 
 

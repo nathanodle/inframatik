@@ -3,6 +3,8 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_NAME="inframatik"
+BASHRC_PORTS_START="# >>> inframatik ports >>>"
+BASHRC_PORTS_END="# <<< inframatik ports <<<"
 
 echo ""
 echo "  inframatik setup"
@@ -20,6 +22,11 @@ if [ "$(id -u)" -eq 0 ]; then
     echo "ERROR: Do not run as root. Run as a regular user with sudo access."
     exit 1
 fi
+if [[ "$REPO_DIR" =~ [[:space:]] ]]; then
+    echo "ERROR: Repository path cannot contain whitespace for systemd service generation."
+    exit 1
+fi
+REPO_DIR_ESCAPED="${REPO_DIR//%/%%}"
 
 # --- Admin password ---
 ADMIN_PW=""
@@ -61,8 +68,8 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=${REPO_DIR}
-ExecStart=${REPO_DIR}/venv/bin/uvicorn main:app --host 0.0.0.0 --port 9000
+WorkingDirectory=${REPO_DIR_ESCAPED}
+ExecStart=${REPO_DIR_ESCAPED}/venv/bin/uvicorn main:app --host 0.0.0.0 --port 9000
 Restart=on-failure
 RestartSec=5s
 
@@ -146,10 +153,13 @@ if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
 fi
 
 # --- Ports env sourcing ---
-if ! grep -q 'inframatik/ports.env' "$HOME/.bashrc" 2>/dev/null; then
-    echo '' >> "$HOME/.bashrc"
-    echo '# inframatik service ports' >> "$HOME/.bashrc"
-    echo '[ -f ~/.config/inframatik/ports.env ] && source ~/.config/inframatik/ports.env' >> "$HOME/.bashrc"
+if ! grep -Fq "$BASHRC_PORTS_START" "$HOME/.bashrc" 2>/dev/null; then
+    cat >> "$HOME/.bashrc" << EOF
+
+$BASHRC_PORTS_START
+[ -f ~/.config/inframatik/ports.env ] && source ~/.config/inframatik/ports.env
+$BASHRC_PORTS_END
+EOF
 fi
 
 # --- Done ---

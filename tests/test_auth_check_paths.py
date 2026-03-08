@@ -34,19 +34,22 @@ def test_check_auth_accepts_valid_x_api_key():
 
 def test_check_auth_accepts_valid_cf_jwt():
     original_get_node_config = auth.get_node_config
-    original_validate_cf_access = auth.validate_cf_access
+    original_validate_cf_access_claims = auth.validate_cf_access_claims
     auth.get_node_config = lambda: {"cf_team_domain": "team", "cf_access_aud": "aud"}
 
-    async def fake_validate_cf_access(token: str, config: dict) -> bool:
-        return token == "jwt-ok" and config.get("cf_access_aud") == "aud"
+    async def fake_validate_cf_access_claims(token: str, config: dict):
+        if token == "jwt-ok" and config.get("cf_access_aud") == "aud":
+            return {"email": "ops@example.com"}
+        return None
 
-    auth.validate_cf_access = fake_validate_cf_access
+    auth.validate_cf_access_claims = fake_validate_cf_access_claims
     try:
         req = _DummyRequest(headers={"Cf-Access-Jwt-Assertion": "jwt-ok"})
         assert _run(auth.check_auth(req))
+        assert req.state.user_email == "ops@example.com"
     finally:
         auth.get_node_config = original_get_node_config
-        auth.validate_cf_access = original_validate_cf_access
+        auth.validate_cf_access_claims = original_validate_cf_access_claims
 
 
 def test_check_auth_accepts_valid_session_cookie():
@@ -151,21 +154,21 @@ def test_check_auth_rejects_invalid_bearer_token():
 def test_check_auth_rejects_when_no_auth_paths_match():
     original_get_node_config = auth.get_node_config
     original_validate_session = auth.validate_session
-    original_validate_cf_access = auth.validate_cf_access
+    original_validate_cf_access_claims = auth.validate_cf_access_claims
     auth.get_node_config = lambda: {"api_key": "api-123", "cf_team_domain": "team", "cf_access_aud": "aud"}
     auth.validate_session = lambda _token: False
 
-    async def fake_validate_cf_access(_token: str, _config: dict) -> bool:
-        return False
+    async def fake_validate_cf_access_claims(_token: str, _config: dict):
+        return None
 
-    auth.validate_cf_access = fake_validate_cf_access
+    auth.validate_cf_access_claims = fake_validate_cf_access_claims
     try:
         req = _DummyRequest(headers={"X-Api-Key": "wrong"})
         assert not _run(auth.check_auth(req))
     finally:
         auth.get_node_config = original_get_node_config
         auth.validate_session = original_validate_session
-        auth.validate_cf_access = original_validate_cf_access
+        auth.validate_cf_access_claims = original_validate_cf_access_claims
 
 
 def run_tests():
