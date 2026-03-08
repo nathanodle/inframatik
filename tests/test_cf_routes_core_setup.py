@@ -123,6 +123,34 @@ def test_api_list_tunnels_maps_value_error():
     assert exc.status_code == 502
 
 
+def test_api_list_zones_success():
+    async def fake_list():
+        return [{"id": "z1", "name": "example.com"}]
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "list_available_zones", fake_list),
+        ]
+    ):
+        result = _run(cf_routes.api_list_zones())
+    assert result == {"zones": [{"id": "z1", "name": "example.com"}]}
+
+
+def test_api_list_zones_maps_value_error():
+    async def fake_list():
+        raise ValueError("zones failed")
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "list_available_zones", fake_list),
+        ]
+    ):
+        exc = _assert_raises_async(HTTPException, cf_routes.api_list_zones)
+    assert exc.status_code == 502
+
+
 def test_api_create_tunnel_success_calls_init():
     seen = {}
 

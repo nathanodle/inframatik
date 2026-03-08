@@ -76,7 +76,11 @@ def test_public_node_info_bypasses_auth_check():
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {"role": "unconfigured", "node_name": None, "node_id": None}
+    payload = resp.json()
+    assert payload["role"] == "unconfigured"
+    assert payload["node_name"] is None
+    assert payload["node_id"] is None
+    assert "machine_hostname" in payload
     assert called == []
 
 

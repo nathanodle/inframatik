@@ -13,6 +13,7 @@ let sidebarInterval = null;
 let currentTunnelId = null;
 let cfPolicies = [];
 let cfSectionLoaded = false;
+let machineHostname = window.location.hostname || '';
 
 // ---- Helpers ----
 
@@ -110,6 +111,9 @@ document.addEventListener('click', (e) => {
 async function initCluster() {
     try {
         const info = await api('GET', '/api/node/info');
+        if (info.machine_hostname && typeof info.machine_hostname === 'string') {
+            machineHostname = info.machine_hostname.trim();
+        }
         if (info.role === 'unconfigured') {
             // First run — show setup modal
             document.getElementById('setup-modal').classList.add('active');
@@ -161,7 +165,8 @@ function showSetupForm(role) {
     } else {
         document.getElementById('setup-name').style.display = '';
         document.getElementById('setup-node-name').value = '';
-        document.getElementById('setup-dashboard-hostname').value = '';
+        document.getElementById('setup-dashboard-hostname').value =
+            role === 'master' ? machineHostname : '';
         document.getElementById('setup-hostname-group').style.display =
             role === 'master' ? '' : 'none';
         document.getElementById('setup-name-title').textContent =
@@ -667,7 +672,14 @@ async function loadSettingsView() {
             renderEnrollmentTokens(config.enrollment_tokens || []);
             renderCfSetup('master-cf-setup', config.cf_configured);
             renderServiceTokens('master-service-tokens', config.service_tokens || []);
-            renderDashboardAccess('master-dashboard-access', config.dashboard_hostname);
+            await renderDashboardAccess(
+                'master-dashboard-access',
+                config.dashboard_hostname,
+                config.dashboard_zone_id,
+                config.dashboard_zone_name,
+                config.cf_configured,
+                config.cf_zone_id,
+            );
             loadDeployInfo();
         } else if (config.role === 'worker') {
             document.getElementById('settings-worker-key').style.display = 'block';
@@ -679,7 +691,14 @@ async function loadSettingsView() {
             document.getElementById('standalone-info-name').textContent = config.node_name;
             renderCfSetup('standalone-cf-setup', config.cf_configured);
             renderServiceTokens('standalone-service-tokens', config.service_tokens || []);
-            renderDashboardAccess('standalone-dashboard-access', config.dashboard_hostname);
+            await renderDashboardAccess(
+                'standalone-dashboard-access',
+                config.dashboard_hostname,
+                config.dashboard_zone_id,
+                config.dashboard_zone_name,
+                config.cf_configured,
+                config.cf_zone_id,
+            );
         } else {
             document.getElementById('settings-unconfigured').style.display = 'block';
         }
@@ -893,40 +912,128 @@ async function clearCfSetup(containerId) {
     }
 }
 
-function renderDashboardAccess(containerId, hostname) {
+function sanitizeSubdomain(raw) {
+    const normalized = (raw || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .replace(/-{2,}/g, '-');
+    if (!normalized) return '';
+    return normalized.slice(0, 63);
+}
+
+function updateDashboardHostnamePreview() {
+    const previewEl = document.getElementById('dashboard-access-preview');
+    const subdomainEl = document.getElementById('dashboard-access-subdomain');
+    const zoneEl = document.getElementById('dashboard-access-zone');
+    if (!previewEl || !subdomainEl || !zoneEl) return;
+    const subdomain = subdomainEl.value.trim().toLowerCase();
+    const zoneName = zoneEl.options[zoneEl.selectedIndex]?.dataset.name || '';
+    previewEl.textContent = subdomain && zoneName
+        ? `${subdomain}.${zoneName}`
+        : '--';
+}
+
+async function loadDashboardZoneOptions(defaultZoneId, defaultZoneName) {
+    const errEl = document.getElementById('dashboard-access-error');
+    const zoneEl = document.getElementById('dashboard-access-zone');
+    if (!zoneEl) return;
+    try {
+        const data = await api('GET', '/api/cf/zones');
+        const zones = data.zones || [];
+        if (zones.length === 0) {
+            throw new Error('No active Cloudflare domains found.');
+        }
+        zoneEl.innerHTML = zones.map(z =>
+            `<option value="${esc(z.id)}" data-name="${esc(z.name)}">${esc(z.name)}</option>`
+        ).join('');
+
+        let preferred = defaultZoneId || '';
+        if (preferred && zones.some(z => z.id === preferred)) {
+            zoneEl.value = preferred;
+        } else if (defaultZoneName) {
+            const match = zones.find(z => z.name === defaultZoneName);
+            if (match) zoneEl.value = match.id;
+        }
+        if (!zoneEl.value && zones.length > 0) {
+            zoneEl.value = zones[0].id;
+        }
+        updateDashboardHostnamePreview();
+    } catch (e) {
+        if (errEl) errEl.textContent = e.message;
+        zoneEl.innerHTML = '<option value="">Unavailable</option>';
+    }
+}
+
+async function renderDashboardAccess(
+    containerId,
+    hostname,
+    dashboardZoneId,
+    dashboardZoneName,
+    cfConfigured,
+    defaultCfZoneId,
+) {
     const el = document.getElementById(containerId);
     if (!el) return;
     if (hostname) {
+        const zoneDetail = dashboardZoneName
+            ? `<div><span class="settings-info-label">Domain:</span> ${esc(dashboardZoneName)}</div>`
+            : '';
         el.innerHTML = `
             <div class="settings-subsection-header">Dashboard Access</div>
             <div class="settings-info">
                 <div><span class="settings-info-label">Hostname:</span> <a href="https://${esc(hostname)}" target="_blank">${esc(hostname)}</a></div>
+                ${zoneDetail}
             </div>
             <div class="form-actions">
                 <button class="btn danger" onclick="disableDashboardAccess()">Remove</button>
             </div>`;
     } else {
+        if (!cfConfigured) {
+            el.innerHTML = `
+                <div class="settings-subsection-header">Dashboard Access</div>
+                <p class="settings-desc">Configure Cloudflare first to enable dashboard access.</p>`;
+            return;
+        }
+        const defaultSubdomain = esc(sanitizeSubdomain(machineHostname) || 'dashboard');
         el.innerHTML = `
             <div class="settings-subsection-header">Dashboard Access</div>
-            <p class="settings-desc">Make this dashboard accessible via Cloudflare Access.</p>
+            <p class="settings-desc">Choose a subdomain and Cloudflare domain for dashboard access.</p>
             <div class="form-group">
-                <label>Dashboard Hostname</label>
-                <input type="text" id="dashboard-access-hostname" placeholder="dashboard.example.com" autocomplete="off">
+                <label>Subdomain</label>
+                <input type="text" id="dashboard-access-subdomain" placeholder="dash" value="${defaultSubdomain}" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Domain</label>
+                <select id="dashboard-access-zone"><option value="">Loading domains...</option></select>
+                <div class="label-hint" id="dashboard-access-preview-wrap">Preview: <code id="dashboard-access-preview">--</code></div>
             </div>
             <div class="form-error" id="dashboard-access-error"></div>
             <div class="form-actions">
                 <button class="btn primary" onclick="enableDashboardAccess()">Enable</button>
             </div>`;
+
+        const subdomainEl = document.getElementById('dashboard-access-subdomain');
+        const zoneEl = document.getElementById('dashboard-access-zone');
+        subdomainEl.addEventListener('input', updateDashboardHostnamePreview);
+        zoneEl.addEventListener('change', updateDashboardHostnamePreview);
+        await loadDashboardZoneOptions(defaultCfZoneId || dashboardZoneId, dashboardZoneName);
     }
 }
 
 async function enableDashboardAccess() {
-    const hostname = document.getElementById('dashboard-access-hostname').value.trim();
+    const subdomainEl = document.getElementById('dashboard-access-subdomain');
+    const zoneEl = document.getElementById('dashboard-access-zone');
     const errEl = document.getElementById('dashboard-access-error');
+    if (!subdomainEl || !zoneEl || !errEl) return;
+    const subdomain = subdomainEl.value.trim().toLowerCase();
+    const zoneId = zoneEl.value;
     errEl.textContent = '';
-    if (!hostname) { errEl.textContent = 'Hostname is required.'; return; }
+    if (!subdomain) { errEl.textContent = 'Subdomain is required.'; return; }
+    if (subdomain.includes('.')) { errEl.textContent = 'Subdomain must be a single DNS label.'; return; }
+    if (!zoneId) { errEl.textContent = 'Domain selection is required.'; return; }
     try {
-        await api('POST', '/api/config/dashboard-access', { hostname });
+        await api('POST', '/api/config/dashboard-access', { subdomain, zone_id: zoneId });
         await loadSettingsView();
     } catch (e) {
         errEl.textContent = e.message;

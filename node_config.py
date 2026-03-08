@@ -695,12 +695,29 @@ def get_dashboard_hostname() -> Optional[str]:
     return config.get("dashboard_hostname")
 
 
-def set_dashboard_hostname(hostname: Optional[str]):
-    """Set/clear the dashboard_hostname for this node."""
+def set_dashboard_hostname(
+    hostname: Optional[str],
+    zone_id: Optional[str] = None,
+    zone_name: Optional[str] = None,
+):
+    """Set/clear dashboard Cloudflare hostname metadata for this node."""
     config = get_node_config()
     if not config:
         raise ValueError("Node not configured")
-    config["dashboard_hostname"] = hostname
+    if hostname:
+        config["dashboard_hostname"] = hostname
+        if zone_id:
+            config["dashboard_zone_id"] = zone_id
+        else:
+            config.pop("dashboard_zone_id", None)
+        if zone_name:
+            config["dashboard_zone_name"] = zone_name
+        else:
+            config.pop("dashboard_zone_name", None)
+    else:
+        config.pop("dashboard_hostname", None)
+        config.pop("dashboard_zone_id", None)
+        config.pop("dashboard_zone_name", None)
     save_node_config(config)
 
 

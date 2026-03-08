@@ -2,6 +2,8 @@ import asyncio
 import ipaddress
 import logging
 import os
+import platform
+import re
 import tarfile
 from pathlib import Path
 from typing import Optional
@@ -60,6 +62,7 @@ from cloudflared import setup_cloudflared_user_service
 cluster_router = APIRouter()
 logger = logging.getLogger("inframatik.cluster")
 _NODE_ROLES = {"standalone", "master", "worker"}
+_DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 def _configured_role(config: Optional[dict]) -> Optional[str]:
@@ -69,6 +72,28 @@ def _configured_role(config: Optional[dict]) -> Optional[str]:
     if role in _NODE_ROLES:
         return role
     return None
+
+
+def _normalize_dashboard_subdomain(raw: str) -> str:
+    subdomain = (raw or "").strip().lower().strip(".")
+    if not subdomain:
+        raise HTTPException(400, "Subdomain is required")
+    if "." in subdomain:
+        raise HTTPException(400, "Subdomain must be a single DNS label")
+    if not _DNS_LABEL_RE.fullmatch(subdomain):
+        raise HTTPException(400, "Subdomain must be a valid DNS label")
+    return subdomain
+
+
+def _normalize_dashboard_hostname(raw: str) -> str:
+    hostname = (raw or "").strip().lower().strip(".")
+    if not hostname:
+        raise HTTPException(400, "Hostname is required")
+    if "/" in hostname or " " in hostname:
+        raise HTTPException(400, "Hostname must be a valid domain name")
+    if "." not in hostname:
+        raise HTTPException(400, "Hostname must include a domain (e.g. dash.example.com)")
+    return hostname
 
 
 # ---------------------------------------------------------------------------
@@ -208,14 +233,23 @@ async def auth_set_password(body: SetPasswordBody, request: Request):
 
 @cluster_router.get("/api/node/info")
 async def node_info():
+    machine_hostname = (platform.node() or "").strip()
+    if machine_hostname:
+        machine_hostname = machine_hostname.split(".", 1)[0]
     config = get_node_config()
     role = _configured_role(config)
     if not role:
-        return {"role": "unconfigured", "node_name": None, "node_id": None}
+        return {
+            "role": "unconfigured",
+            "node_name": None,
+            "node_id": None,
+            "machine_hostname": machine_hostname or None,
+        }
     return {
         "role": role,
         "node_name": config.get("node_name"),
         "node_id": config.get("node_id"),
+        "machine_hostname": machine_hostname or None,
     }
 
 
@@ -317,7 +351,10 @@ async def config_get():
     }
     result["tunnel_id"] = config.get("tunnel_id")
     result["dashboard_hostname"] = config.get("dashboard_hostname")
+    result["dashboard_zone_id"] = config.get("dashboard_zone_id")
+    result["dashboard_zone_name"] = config.get("dashboard_zone_name")
     result["cf_configured"] = bool(config.get("cf_token") and config.get("cf_account_id"))
+    result["cf_zone_id"] = config.get("cf_zone_id")
     if role == "worker":
         result["api_key"] = config.get("api_key")
         result["master_url"] = config.get("master_url")
@@ -356,7 +393,9 @@ async def config_get():
 # --- Dashboard CF Access ---
 
 class DashboardAccessBody(BaseModel):
-    hostname: str
+    hostname: Optional[str] = None
+    subdomain: Optional[str] = None
+    zone_id: Optional[str] = None
 
 
 @cluster_router.post("/api/config/dashboard-access")
@@ -365,7 +404,7 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
     from tunnel import (
         _load_cf_config, create_tunnel, get_tunnel_token,
         init_tunnel_config, add_tunnel_route, create_dns_record,
-        create_access_app,
+        create_access_app, list_available_zones,
     )
     config = get_node_config()
     if not config:
@@ -374,6 +413,32 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
     cf_cfg = _load_cf_config()
     if not cf_cfg:
         raise HTTPException(400, "Cloudflare not configured. Set up in Settings → Cloudflare.")
+
+    try:
+        zones = await list_available_zones()
+    except ValueError as e:
+        raise HTTPException(502, str(e))
+    if not zones:
+        raise HTTPException(400, "No active Cloudflare domains found in this account")
+
+    selected_zone_id = body.zone_id or cf_cfg.get("zone_id")
+    if not selected_zone_id:
+        raise HTTPException(400, "No Cloudflare domain selected")
+    zone = next((z for z in zones if z.get("id") == selected_zone_id), None)
+    if not zone:
+        raise HTTPException(400, "Selected Cloudflare domain is not available")
+
+    zone_name = zone["name"]
+    if body.subdomain:
+        subdomain = _normalize_dashboard_subdomain(body.subdomain)
+        hostname = f"{subdomain}.{zone_name}"
+    elif body.hostname:
+        hostname = _normalize_dashboard_hostname(body.hostname)
+    else:
+        raise HTTPException(400, "Hostname or subdomain is required")
+
+    if not (hostname == zone_name or hostname.endswith(f".{zone_name}")):
+        raise HTTPException(400, f"Hostname must be under selected domain '{zone_name}'")
 
     try:
         # Create tunnel if this node doesn't have one yet
@@ -389,19 +454,30 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
             await setup_cloudflared_user_service(token)
 
         # Add ingress route for the dashboard
-        await add_tunnel_route(body.hostname, "http://localhost:9000", tunnel_id=tid)
+        await add_tunnel_route(hostname, "http://localhost:9000", tunnel_id=tid)
 
         # Create DNS record
-        await create_dns_record(body.hostname, tunnel_id=tid)
+        await create_dns_record(
+            hostname,
+            tunnel_id=tid,
+            zone_id=selected_zone_id,
+            zone_name=zone_name,
+        )
 
         # Create Access app if default policy is configured
         policy_id = cf_cfg.get("default_policy_id")
         if policy_id:
-            await create_access_app("inframatik dashboard", body.hostname, policy_id)
+            await create_access_app("inframatik dashboard", hostname, policy_id)
 
-        set_dashboard_hostname(body.hostname)
+        set_dashboard_hostname(hostname, zone_id=selected_zone_id, zone_name=zone_name)
 
-        return {"status": "enabled", "hostname": body.hostname, "tunnel_id": tid}
+        return {
+            "status": "enabled",
+            "hostname": hostname,
+            "zone_id": selected_zone_id,
+            "zone_name": zone_name,
+            "tunnel_id": tid,
+        }
     except ValueError as e:
         raise HTTPException(400, str(e))
     except RuntimeError as e:
@@ -420,6 +496,7 @@ async def config_disable_dashboard_access():
     hostname = config.get("dashboard_hostname")
     if not hostname:
         raise HTTPException(404, "Dashboard access not configured")
+    zone_id = config.get("dashboard_zone_id")
 
     warnings: list[str] = []
     try:
@@ -428,7 +505,7 @@ async def config_disable_dashboard_access():
         warnings.append(f"Failed to remove tunnel route: {e}")
         logger.warning("Dashboard access cleanup failed (route %s): %s", hostname, e)
     try:
-        await delete_dns_record(hostname)
+        await delete_dns_record(hostname, zone_id=zone_id)
     except (ValueError, RuntimeError) as e:
         warnings.append(f"Failed to delete DNS record: {e}")
         logger.warning("Dashboard access cleanup failed (dns %s): %s", hostname, e)

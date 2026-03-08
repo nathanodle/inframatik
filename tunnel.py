@@ -55,6 +55,28 @@ def _require_cf_config():
     return cfg
 
 
+def _dns_record_name_for_hostname(hostname: str, zone_name: Optional[str]) -> str:
+    """Return Cloudflare DNS record name for a hostname relative to a zone."""
+    hostname = (hostname or "").strip().lower().rstrip(".")
+    if not hostname:
+        raise ValueError("Hostname is required")
+    if not zone_name:
+        # Backward-compatible fallback when zone name is unknown.
+        return hostname.split(".")[0]
+    zone = zone_name.strip().lower().rstrip(".")
+    if not zone:
+        return hostname.split(".")[0]
+    if hostname == zone:
+        return "@"
+    suffix = f".{zone}"
+    if not hostname.endswith(suffix):
+        raise ValueError(f"Hostname '{hostname}' is not under zone '{zone}'")
+    rel = hostname[: -len(suffix)]
+    if not rel:
+        return "@"
+    return rel
+
+
 # ---------------------------------------------------------------------------
 # Tunnel status (local metrics)
 # ---------------------------------------------------------------------------
@@ -115,6 +137,27 @@ async def get_tunnel_routes(tunnel_id: Optional[str] = None) -> list[dict]:
         raise ValueError(f"Failed to read tunnel config: {data.get('errors')}")
     ingress = data.get("result", {}).get("config", {}).get("ingress", [])
     return [r for r in ingress if r.get("hostname")]
+
+
+async def list_available_zones() -> list[dict]:
+    """List active zones in the configured Cloudflare account."""
+    cfg = _require_cf_config()
+    url = "https://api.cloudflare.com/client/v4/zones"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                url,
+                headers=_cf_headers(cfg["token"]),
+                params={"account.id": cfg["account_id"], "per_page": 100, "status": "active"},
+            )
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to fetch zones from Cloudflare: %s", e)
+        raise ValueError("Failed to list zones from Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected zones list request: %s", data.get("errors"))
+        raise ValueError(f"Failed to list zones: {data.get('errors')}")
+    return [{"id": z["id"], "name": z["name"]} for z in data.get("result", [])]
 
 
 async def add_tunnel_route(hostname: str, service, tunnel_id: Optional[str] = None) -> bool:
@@ -195,17 +238,23 @@ async def remove_tunnel_route(hostname: str, tunnel_id: Optional[str] = None) ->
 # DNS records
 # ---------------------------------------------------------------------------
 
-async def create_dns_record(hostname: str, tunnel_id: Optional[str] = None) -> str:
+async def create_dns_record(
+    hostname: str,
+    tunnel_id: Optional[str] = None,
+    zone_id: Optional[str] = None,
+    zone_name: Optional[str] = None,
+) -> str:
     """Create a proxied CNAME record pointing to the tunnel. Returns record ID."""
     cfg = _require_cf_config()
-    if not cfg.get("zone_id"):
+    effective_zone_id = zone_id or cfg.get("zone_id")
+    if not effective_zone_id:
         raise ValueError("CF API missing zone_id")
     tid = _get_tunnel_id(tunnel_id)
-    url = f"https://api.cloudflare.com/client/v4/zones/{cfg['zone_id']}/dns_records"
-    subdomain = hostname.split(".")[0]
+    url = f"https://api.cloudflare.com/client/v4/zones/{effective_zone_id}/dns_records"
+    record_name = _dns_record_name_for_hostname(hostname, zone_name)
     payload = {
         "type": "CNAME",
-        "name": subdomain,
+        "name": record_name,
         "content": f"{tid}.cfargotunnel.com",
         "proxied": True,
     }
@@ -220,12 +269,13 @@ async def create_dns_record(hostname: str, tunnel_id: Optional[str] = None) -> s
         raise ValueError(f"CF API error: {e}")
 
 
-async def delete_dns_record(hostname: str) -> bool:
+async def delete_dns_record(hostname: str, zone_id: Optional[str] = None) -> bool:
     """Find and delete the DNS record matching a hostname."""
     cfg = _require_cf_config()
-    if not cfg.get("zone_id"):
+    effective_zone_id = zone_id or cfg.get("zone_id")
+    if not effective_zone_id:
         raise ValueError("CF API missing zone_id")
-    base_url = f"https://api.cloudflare.com/client/v4/zones/{cfg['zone_id']}/dns_records"
+    base_url = f"https://api.cloudflare.com/client/v4/zones/{effective_zone_id}/dns_records"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(

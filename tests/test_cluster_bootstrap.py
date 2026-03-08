@@ -35,7 +35,10 @@ def test_node_info_handles_password_only_bootstrap_config():
         return
     node_config.save_node_config({"admin_password_hash": "hash"})
     info = asyncio.run(cluster_routes.node_info())
-    assert info == {"role": "unconfigured", "node_name": None, "node_id": None}
+    assert info["role"] == "unconfigured"
+    assert info["node_name"] is None
+    assert info["node_id"] is None
+    assert "machine_hostname" in info
 
 
 @_run_with_temp_config

@@ -22,6 +22,7 @@ from node_config import (
 from tunnel import (
     _load_cf_config,
     _cf_headers,
+    list_available_zones,
     list_tunnels,
     create_tunnel,
     get_tunnel_token,
@@ -67,6 +68,16 @@ async def api_list_tunnels():
         return await list_tunnels()
     except ValueError as e:
         raise HTTPException(502, str(e))
+
+
+@cf_router.get("/api/cf/zones")
+async def api_list_zones():
+    _require_cf_config()
+    try:
+        zones = await list_available_zones()
+    except ValueError as e:
+        raise HTTPException(502, str(e))
+    return {"zones": zones}
 
 
 class CreateTunnelBody(BaseModel):
