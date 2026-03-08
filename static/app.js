@@ -147,7 +147,7 @@ let setupRole = null;
 let setupCf = { enabled: false, token: null, account_id: null, zone_id: null, zone_name: null, zones: [], default_policy_id: null };
 
 function _hideAllSetupSteps() {
-    for (const id of ['setup-choose', 'setup-cf-prompt', 'setup-cf-config', 'setup-name', 'setup-worker']) {
+    for (const id of ['setup-choose', 'setup-cf-prompt', 'setup-cf-consent', 'setup-cf-config', 'setup-name', 'setup-worker']) {
         document.getElementById(id).style.display = 'none';
     }
 }
@@ -182,6 +182,17 @@ function showSetupCfPrompt() {
 }
 
 function showSetupCfToken() {
+    // "Connect Cloudflare" clicked — show consent first
+    _hideAllSetupSteps();
+    document.getElementById('setup-cf-consent').style.display = '';
+}
+
+function showSetupCfConsent() {
+    _hideAllSetupSteps();
+    document.getElementById('setup-cf-consent').style.display = '';
+}
+
+function showSetupCfTokenStep() {
     _hideAllSetupSteps();
     document.getElementById('setup-cf-config').style.display = '';
     document.getElementById('setup-cf-token').value = '';
