@@ -450,14 +450,24 @@ async def cf_setup_validate_token(body: ValidateTokenBody):
             if not tunnel_resp.json().get("success"):
                 missing_perms.append("Cloudflare Tunnel: Edit")
 
-            # Check DNS permission (via zones)
-            zone_check = await client.get(
+            # Check DNS permission (probe actual DNS records endpoint on first zone)
+            zone_list = await client.get(
                 "https://api.cloudflare.com/client/v4/zones",
                 headers=_cf_headers(body.token),
                 params={"per_page": 1, "status": "active"},
             )
-            if not zone_check.json().get("success"):
+            zone_data = zone_list.json()
+            if not zone_data.get("success") or not zone_data.get("result"):
                 missing_perms.append("Zone DNS: Edit")
+            else:
+                first_zone_id = zone_data["result"][0]["id"]
+                dns_check = await client.get(
+                    f"https://api.cloudflare.com/client/v4/zones/{first_zone_id}/dns_records",
+                    headers=_cf_headers(body.token),
+                    params={"per_page": 1},
+                )
+                if not dns_check.json().get("success"):
+                    missing_perms.append("Zone DNS: Edit")
 
             # Check Access permission
             access_resp = await client.get(
