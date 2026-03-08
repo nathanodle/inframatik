@@ -343,8 +343,8 @@ async def list_dns_records() -> list[dict]:
 # Access applications
 # ---------------------------------------------------------------------------
 
-async def create_access_app(name: str, hostname: str, policy_id: str) -> str:
-    """Create a CF Access Application with specified policy. Returns app ID."""
+async def create_access_app(name: str, hostname: str, policy_id: str) -> dict:
+    """Create a CF Access Application with specified policy. Returns {id, aud}."""
     cfg = _require_cf_config()
     url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/apps"
     payload = {
@@ -361,7 +361,8 @@ async def create_access_app(name: str, hostname: str, policy_id: str) -> str:
             data = resp.json()
             if not data.get("success"):
                 raise ValueError(f"Failed to create Access app: {data.get('errors')}")
-            return data["result"]["id"]
+            result = data["result"]
+            return {"id": result["id"], "aud": result.get("aud", "")}
     except httpx.HTTPError as e:
         raise ValueError(f"CF API error: {e}")
 

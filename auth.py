@@ -257,18 +257,51 @@ def _validate_cf_jwt_sync(token: str, keys: list, audience: str, issuer: Optiona
 
 
 async def validate_cf_access(token: str, config: dict) -> bool:
-    """Validate CF Access JWT. Returns True if valid."""
-    team_domain = _normalize_cf_team_domain(config.get("cf_team_domain", ""))
+    """Validate CF Access JWT. Auto-discovers team domain from JWT issuer if not configured."""
     aud = config.get("cf_access_aud")
+    team_domain = _normalize_cf_team_domain(config.get("cf_team_domain", ""))
+
+    # Auto-discover team domain from JWT issuer claim if not configured
+    if not team_domain:
+        try:
+            # Decode WITHOUT verification just to peek at issuer
+            unverified = jwt.decode(token, options={"verify_signature": False, "verify_aud": False})
+            iss = unverified.get("iss", "")
+            # iss must be https://<team>.cloudflareaccess.com — reject anything else
+            if iss.endswith(".cloudflareaccess.com") or ".cloudflareaccess.com/" in iss:
+                team_domain = iss.split("//")[-1].split(".cloudflareaccess.com")[0]
+                if not team_domain or "/" in team_domain or "." in team_domain:
+                    team_domain = ""  # reject suspicious values
+                # Also auto-discover AUD if not set
+                if not aud:
+                    aud = unverified.get("aud", [None])[0] if isinstance(unverified.get("aud"), list) else unverified.get("aud")
+        except Exception:
+            pass
+
     if not team_domain or not aud:
         return False
+
     issuer = config.get("cf_access_issuer")
     if not issuer:
         issuer = f"https://{team_domain}.cloudflareaccess.com"
     keys = await _fetch_cf_keys(team_domain)
     if not keys:
         return False
-    return _validate_cf_jwt_sync(token, keys, aud, issuer=issuer)
+    valid = _validate_cf_jwt_sync(token, keys, aud, issuer=issuer)
+
+    # Auto-store discovered values for future use
+    if valid and not config.get("cf_team_domain"):
+        try:
+            from node_config import save_node_config
+            config["cf_team_domain"] = team_domain
+            if not config.get("cf_access_aud"):
+                config["cf_access_aud"] = aud
+            save_node_config(config)
+            logger.info("Auto-discovered CF team domain: %s", team_domain)
+        except Exception:
+            pass
+
+    return valid
 
 
 # ---------------------------------------------------------------------------

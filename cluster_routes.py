@@ -473,7 +473,14 @@ async def config_enable_dashboard_access(body: DashboardAccessBody):
         policy_id = cf_cfg.get("default_policy_id")
         if policy_id:
             await send_progress(_task, "creating_access", "Creating Cloudflare Access app...")
-            await create_access_app("inframatik dashboard", hostname, policy_id)
+            app_result = await create_access_app("inframatik dashboard", hostname, policy_id)
+            # Store the Access app AUD for CF JWT validation
+            if app_result.get("aud"):
+                config = get_node_config()
+                if config:
+                    config["cf_access_aud"] = app_result["aud"]
+                    from node_config import save_node_config
+                    save_node_config(config)
 
         set_dashboard_hostname(hostname, zone_id=selected_zone_id, zone_name=zone_name)
 
