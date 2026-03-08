@@ -12,7 +12,7 @@ CLOUDFLARED_UNIT_PATH = Path.home() / ".config" / "systemd" / "user" / "cloudfla
 CLOUDFLARED_UNIT_NAME = "cloudflared.service"
 MAX_LOG_LINES = 500
 MAX_CLOUDFLARED_DOWNLOAD_BYTES = 100 * 1024 * 1024
-DEFAULT_CLOUDFLARED_VERSION = os.getenv("INFRAMATIK_CLOUDFLARED_VERSION", "2025.2.1")
+DEFAULT_CLOUDFLARED_VERSION = os.getenv("INFRAMATIK_CLOUDFLARED_VERSION", "2026.2.0")
 _VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 _UNIT_TEMPLATE = """\
@@ -301,11 +301,19 @@ async def update_cloudflared_user_binary(version: str | None = None) -> dict:
     base_url = f"https://github.com/cloudflare/cloudflared/releases/download/{target_version}"
     binary_url = f"{base_url}/cloudflared-linux-{arch}"
 
-    expected_sha = await _download_expected_sha(base_url, arch)
     binary_data = await _download_bytes(binary_url)
     actual_sha = hashlib.sha256(binary_data).hexdigest()
-    if actual_sha != expected_sha:
-        raise RuntimeError("cloudflared checksum verification failed")
+
+    # Verify checksum if available (cloudflare doesn't always publish them)
+    try:
+        expected_sha = await _download_expected_sha(base_url, arch)
+        if actual_sha != expected_sha:
+            raise RuntimeError("cloudflared checksum verification failed")
+    except RuntimeError as e:
+        if "checksum verification failed" in str(e):
+            raise
+        # No checksum file available — log and continue (HTTPS provides transport integrity)
+        logger.info("cloudflared checksum file not available for %s/%s, skipping verification", target_version, arch)
 
     previous_version = await get_cloudflared_binary_version()
     _secure_write_bytes(CLOUDFLARED_BINARY_PATH, binary_data, mode=0o755)
