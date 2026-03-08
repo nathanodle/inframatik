@@ -14,10 +14,13 @@ python3 -m venv venv
 ./venv/bin/uvicorn main:app --host 0.0.0.0 --port 9000
 ```
 
-Open `http://localhost:9000`:
-1. Set an admin password (first visit only)
-2. Choose a node role: **Standalone**, **Master**, or **Worker**
-3. Dashboard loads with live system metrics
+Open `http://localhost:9000` (must be localhost for first-time password setup):
+1. Set an admin password (minimum 8 characters)
+2. Log in
+3. Choose a node role: **Standalone**, **Master**, or **Worker**
+4. Dashboard loads with live system metrics
+
+> **Remote access:** The first password must be set from localhost for security. After that, you can access the dashboard from any machine on the network.
 
 ## Features
 
