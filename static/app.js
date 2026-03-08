@@ -144,58 +144,283 @@ async function initCluster() {
 // ---- First-run setup modal ----
 
 let setupRole = null;
+let setupCf = { enabled: false, token: null, account_id: null, zone_id: null, zone_name: null, zones: [], default_policy_id: null };
+
+function _hideAllSetupSteps() {
+    for (const id of ['setup-choose', 'setup-cf-prompt', 'setup-cf-config', 'setup-name', 'setup-worker']) {
+        document.getElementById(id).style.display = 'none';
+    }
+}
 
 function showSetupChoose() {
+    _hideAllSetupSteps();
     document.getElementById('setup-choose').style.display = '';
-    document.getElementById('setup-name').style.display = 'none';
-    document.getElementById('setup-worker').style.display = 'none';
+    setupCf = { enabled: false, token: null, account_id: null, zone_id: null, zone_name: null, zones: [], default_policy_id: null };
 }
 
 function showSetupForm(role) {
     setupRole = role;
-    document.getElementById('setup-choose').style.display = 'none';
-    document.getElementById('setup-error').textContent = '';
-    document.getElementById('setup-worker-error').textContent = '';
+    _hideAllSetupSteps();
 
     if (role === 'worker') {
         document.getElementById('setup-worker').style.display = '';
         document.getElementById('setup-worker-name').value = '';
         document.getElementById('setup-worker-master').value = '';
         document.getElementById('setup-worker-token').value = '';
+        document.getElementById('setup-worker-error').textContent = '';
     } else {
-        document.getElementById('setup-name').style.display = '';
-        document.getElementById('setup-node-name').value = '';
-        document.getElementById('setup-dashboard-hostname').value =
-            role === 'master' ? machineHostname : '';
-        document.getElementById('setup-hostname-group').style.display =
-            role === 'master' ? '' : 'none';
-        document.getElementById('setup-name-title').textContent =
-            role === 'master' ? 'Set as Master' : 'Standalone Setup';
-        document.getElementById('setup-submit-btn').textContent =
-            role === 'master' ? 'Set as Master' : 'Get Started';
+        // Standalone or Master → CF prompt
+        const title = role === 'master' ? 'Set as Master' : 'Standalone Setup';
+        document.getElementById('setup-cf-title').textContent = title;
+        document.getElementById('setup-cf-prompt').style.display = '';
     }
 }
 
-async function submitSetup() {
-    const name = document.getElementById('setup-node-name').value.trim();
-    const hostname = document.getElementById('setup-dashboard-hostname').value.trim();
+function showSetupCfPrompt() {
+    _hideAllSetupSteps();
+    document.getElementById('setup-cf-prompt').style.display = '';
+}
+
+function showSetupCfToken() {
+    _hideAllSetupSteps();
+    document.getElementById('setup-cf-config').style.display = '';
+    document.getElementById('setup-cf-token').value = '';
+    document.getElementById('setup-cf-error').textContent = '';
+    document.getElementById('setup-cf-steps').innerHTML = '';
+}
+
+function skipSetupCf() {
+    setupCf.enabled = false;
+    showSetupNameStep();
+}
+
+async function validateSetupCfToken() {
+    const token = document.getElementById('setup-cf-token').value.trim();
+    const errEl = document.getElementById('setup-cf-error');
+    errEl.textContent = '';
+    if (!token) { errEl.textContent = 'API token is required.'; return; }
+
+    try {
+        const data = await api('POST', '/api/cf/setup/validate-token', { token });
+        setupCf.token = token;
+
+        // Auto-select account if only one
+        let account_id, account_name;
+        if (data.accounts.length === 1) {
+            account_id = data.accounts[0].id;
+            account_name = data.accounts[0].name;
+        } else {
+            // Show account picker
+            document.getElementById('setup-cf-steps').innerHTML = `
+                <div class="form-group">
+                    <label>Account</label>
+                    <select id="setup-cf-account">
+                        ${data.accounts.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button class="btn primary" onclick="selectSetupCfAccount()">Next</button>
+                </div>`;
+            return;
+        }
+
+        setupCf.account_id = account_id;
+        await loadSetupCfZones();
+    } catch (e) {
+        errEl.textContent = e.message;
+    }
+}
+
+async function selectSetupCfAccount() {
+    const sel = document.getElementById('setup-cf-account');
+    setupCf.account_id = sel.value;
+    await loadSetupCfZones();
+}
+
+async function loadSetupCfZones() {
+    const errEl = document.getElementById('setup-cf-error');
+    try {
+        const data = await api('POST', '/api/cf/setup/zones', {
+            token: setupCf.token, account_id: setupCf.account_id,
+        });
+
+        if (data.zones.length === 0) {
+            errEl.textContent = 'No domains found. Add a domain in Cloudflare first.';
+            return;
+        }
+        setupCf.zones = data.zones;
+
+        // Load policies too
+        let policies = [];
+        try {
+            const pData = await api('POST', '/api/cf/setup/policies', {
+                token: setupCf.token, account_id: setupCf.account_id,
+            });
+            policies = pData.policies || [];
+        } catch (e) { /* policies are optional */ }
+
+        const zoneOptions = data.zones.map(z =>
+            `<option value="${esc(z.id)}" data-name="${esc(z.name)}">${esc(z.name)}</option>`
+        ).join('');
+
+        const policyOptions = policies.map(p =>
+            `<option value="${esc(p.id)}">${esc(p.name)}</option>`
+        ).join('');
+
+        document.getElementById('setup-cf-steps').innerHTML = `
+            <div class="form-group">
+                <label>Domain</label>
+                <select id="setup-cf-zone">${zoneOptions}</select>
+            </div>
+            <div class="form-group">
+                <label>Access Policy <span class="label-hint">(optional)</span></label>
+                <select id="setup-cf-policy">
+                    <option value="">None — skip Access protection</option>
+                    ${policyOptions}
+                    <option value="__create__">Create new policy...</option>
+                </select>
+            </div>
+            <div id="setup-cf-new-policy" style="display:none">
+                <div class="form-group">
+                    <label>Policy Name</label>
+                    <input type="text" id="setup-cf-policy-name" placeholder="e.g. Allow company" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label>Allow Email Domain</label>
+                    <input type="text" id="setup-cf-policy-domain" placeholder="${esc(data.zones[0].name)}" value="${esc(data.zones[0].name)}" autocomplete="off">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button class="btn primary" onclick="finishSetupCf()">Continue</button>
+            </div>`;
+
+        document.getElementById('setup-cf-policy').addEventListener('change', (e) => {
+            document.getElementById('setup-cf-new-policy').style.display =
+                e.target.value === '__create__' ? '' : 'none';
+        });
+    } catch (e) {
+        errEl.textContent = e.message;
+    }
+}
+
+async function finishSetupCf() {
+    const errEl = document.getElementById('setup-cf-error');
+    errEl.textContent = '';
+
+    const zoneSel = document.getElementById('setup-cf-zone');
+    setupCf.zone_id = zoneSel.value;
+    setupCf.zone_name = zoneSel.options[zoneSel.selectedIndex].dataset.name;
+
+    let policyId = document.getElementById('setup-cf-policy').value;
+
+    // Create policy if requested
+    if (policyId === '__create__') {
+        const policyName = document.getElementById('setup-cf-policy-name').value.trim();
+        const policyDomain = document.getElementById('setup-cf-policy-domain').value.trim();
+        if (!policyName || !policyDomain) {
+            errEl.textContent = 'Policy name and email domain are required.';
+            return;
+        }
+        try {
+            const data = await api('POST', '/api/cf/setup/create-policy', {
+                token: setupCf.token, account_id: setupCf.account_id,
+                name: policyName, email_domain: policyDomain,
+            });
+            policyId = data.id;
+        } catch (e) {
+            errEl.textContent = 'Failed to create policy: ' + e.message;
+            return;
+        }
+    }
+
+    setupCf.default_policy_id = policyId || null;
+    setupCf.enabled = true;
+    showSetupNameStep();
+}
+
+function showSetupNameStep() {
+    _hideAllSetupSteps();
+    document.getElementById('setup-name').style.display = '';
+    document.getElementById('setup-error').textContent = '';
+
+    const title = setupRole === 'master' ? 'Set as Master' : 'Standalone Setup';
+    document.getElementById('setup-name-title').textContent = title;
+
+    if (setupCf.enabled && setupCf.zones.length > 0) {
+        // Show name + domain picker
+        document.getElementById('setup-name-with-domain').style.display = '';
+        document.getElementById('setup-name-plain').style.display = 'none';
+        document.getElementById('setup-node-name').value = '';
+
+        const domainSel = document.getElementById('setup-domain-select');
+        domainSel.innerHTML = setupCf.zones.map(z =>
+            `<option value="${esc(z.name)}" ${z.id === setupCf.zone_id ? 'selected' : ''}>${esc(z.name)}</option>`
+        ).join('');
+
+        // Live preview
+        const updatePreview = () => {
+            const name = document.getElementById('setup-node-name').value.trim();
+            const domain = domainSel.value;
+            const preview = document.getElementById('setup-hostname-preview');
+            preview.textContent = name ? `Dashboard: ${name}.${domain}` : '';
+        };
+        document.getElementById('setup-node-name').addEventListener('input', updatePreview);
+        domainSel.addEventListener('change', updatePreview);
+    } else {
+        // Plain name, no domain
+        document.getElementById('setup-name-with-domain').style.display = 'none';
+        document.getElementById('setup-name-plain').style.display = '';
+        document.getElementById('setup-node-name-plain').value = '';
+    }
+}
+
+function setupNameBack() {
+    if (setupCf.enabled) {
+        showSetupCfPrompt();
+    } else {
+        showSetupCfPrompt();
+    }
+}
+
+async function submitSetupFinal() {
     const errEl = document.getElementById('setup-error');
     errEl.textContent = '';
+
+    // Get node name
+    let name;
+    if (setupCf.enabled && setupCf.zones.length > 0) {
+        name = document.getElementById('setup-node-name').value.trim();
+    } else {
+        name = document.getElementById('setup-node-name-plain').value.trim();
+    }
     if (!name) { errEl.textContent = 'Node name is required.'; return; }
 
     const endpoint = setupRole === 'master'
         ? '/api/config/init-master'
         : '/api/config/init-standalone';
+
     try {
+        // 1. Create role
         await api('POST', endpoint, { name });
-        // Optionally enable dashboard CF access
-        if (hostname) {
+
+        // 2. If CF enabled, save CF config + enable dashboard access
+        if (setupCf.enabled) {
             try {
+                await api('POST', '/api/cf/setup/save', {
+                    token: setupCf.token,
+                    account_id: setupCf.account_id,
+                    zone_id: setupCf.zone_id,
+                    default_policy_id: setupCf.default_policy_id,
+                });
+
+                const domain = document.getElementById('setup-domain-select').value;
+                const hostname = `${name}.${domain}`;
                 await api('POST', '/api/config/dashboard-access', { hostname });
             } catch (cfErr) {
-                // Node is configured but CF failed — still reload, show error in settings later
+                // CF failed but role is configured — continue
             }
         }
+
         location.reload();
     } catch (e) {
         errEl.textContent = e.message;
