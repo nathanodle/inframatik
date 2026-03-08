@@ -1145,6 +1145,42 @@ body {
     max-height: 220px;
 }
 
+/* ---- Permission check list ---- */
+.perm-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.perm-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+}
+
+.perm-item.pass {
+    color: var(--green);
+}
+
+.perm-item.fail {
+    color: var(--red);
+}
+
+.perm-item.pending {
+    color: var(--text-muted);
+}
+
+.perm-icon {
+    font-size: 16px;
+    width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
 /* ---- Worker tunnel badge ---- */
 .worker-cf-badge {
     font-size: 10px;

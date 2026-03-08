@@ -531,25 +531,44 @@
             </div>
         </div>
 
-        <!-- Step 2c: CF token + zone + policy -->
+        <!-- Step 2c: CF token validation -->
         <div id="setup-cf-config" style="display:none">
-            <h3>Cloudflare Setup</h3>
-            <p class="settings-desc">Create an API token in the <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" style="color:var(--accent)">Cloudflare dashboard</a> → Create Token → Custom Token with these permissions:</p>
-            <ul class="settings-desc" style="margin:4px 0 16px 20px;line-height:1.8">
-                <li><strong>Account</strong> → Cloudflare Tunnel → Edit</li>
-                <li><strong>Account</strong> → Access: Apps and Policies → Edit</li>
-                <li><strong>Zone</strong> → DNS → Edit</li>
-            </ul>
+            <h3>Cloudflare API Token</h3>
+            <p class="settings-desc">Create a token in the <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" style="color:var(--accent)">Cloudflare dashboard</a> → Create Token → Custom Token.</p>
             <div class="form-group">
                 <label>API Token</label>
                 <input type="password" id="setup-cf-token" placeholder="Paste your token here" autocomplete="off">
             </div>
+            <div id="setup-cf-perms" style="margin:12px 0"></div>
+            <div class="form-error" id="setup-cf-error"></div>
             <div class="form-actions">
                 <button class="btn" onclick="showSetupCfConsent()">Back</button>
-                <button class="btn primary" onclick="validateSetupCfToken()">Validate</button>
+                <button class="btn primary" id="setup-cf-validate-btn" onclick="validateSetupCfToken()">Validate</button>
             </div>
-            <div class="form-error" id="setup-cf-error"></div>
-            <div id="setup-cf-steps"></div>
+        </div>
+
+        <!-- Step 2d: Domain + Policy + Admin email -->
+        <div id="setup-cf-details" style="display:none">
+            <h3>Cloudflare Configuration</h3>
+            <div class="form-group">
+                <label>Admin Email</label>
+                <input type="email" id="setup-cf-admin-email" placeholder="you@company.com" autocomplete="off">
+                <div class="label-hint" style="margin-top:4px">Used for Zero Trust access to the dashboard.</div>
+            </div>
+            <div class="form-group">
+                <label>Domain</label>
+                <select id="setup-cf-zone"></select>
+            </div>
+            <div class="form-group">
+                <label>Access Policy</label>
+                <select id="setup-cf-policy"></select>
+            </div>
+            <div class="form-error" id="setup-cf-details-warning"></div>
+            <div class="form-error" id="setup-cf-details-error"></div>
+            <div class="form-actions">
+                <button class="btn" onclick="showSetupCfTokenStep()">Back</button>
+                <button class="btn primary" onclick="finishSetupCf()">Continue</button>
+            </div>
         </div>
 
         <!-- Step 3: Node name (with optional domain picker) -->

@@ -176,7 +176,7 @@ let setupRole = null;
 let setupCf = { enabled: false, token: null, account_id: null, zone_id: null, zone_name: null, zones: [], default_policy_id: null };
 
 function _hideAllSetupSteps() {
-    for (const id of ['setup-choose', 'setup-cf-prompt', 'setup-cf-consent', 'setup-cf-config', 'setup-name', 'setup-worker']) {
+    for (const id of ['setup-choose', 'setup-cf-prompt', 'setup-cf-consent', 'setup-cf-config', 'setup-cf-details', 'setup-name', 'setup-worker']) {
         document.getElementById(id).style.display = 'none';
     }
 }
@@ -225,8 +225,12 @@ function showSetupCfTokenStep() {
     _hideAllSetupSteps();
     document.getElementById('setup-cf-config').style.display = '';
     document.getElementById('setup-cf-token').value = '';
+    document.getElementById('setup-cf-token').disabled = false;
     document.getElementById('setup-cf-error').textContent = '';
-    document.getElementById('setup-cf-steps').innerHTML = '';
+    document.getElementById('setup-cf-perms').innerHTML = '';
+    const btn = document.getElementById('setup-cf-validate-btn');
+    btn.disabled = false;
+    btn.textContent = 'Validate';
 }
 
 function skipSetupCf() {
@@ -234,56 +238,141 @@ function skipSetupCf() {
     showSetupNameStep();
 }
 
+function _renderPermCheck(permsEl, name, status) {
+    // status: 'pending', 'pass', 'fail'
+    const icon = status === 'pass' ? '✓' : status === 'fail' ? '✗' : '·';
+    const existing = permsEl.querySelector(`[data-perm="${name}"]`);
+    const html = `<div class="perm-item ${status}" data-perm="${name}"><span class="perm-icon">${icon}</span>${esc(name)}</div>`;
+    if (existing) {
+        existing.outerHTML = html;
+    } else {
+        permsEl.insertAdjacentHTML('beforeend', html);
+    }
+}
+
 async function validateSetupCfToken() {
     const token = document.getElementById('setup-cf-token').value.trim();
     const errEl = document.getElementById('setup-cf-error');
+    const permsEl = document.getElementById('setup-cf-perms');
+    const btn = document.getElementById('setup-cf-validate-btn');
     errEl.textContent = '';
+
     if (!token) { errEl.textContent = 'API token is required.'; return; }
 
-    // Loading state
-    const validateBtn = document.querySelector('#setup-cf-config .btn.primary');
-    if (validateBtn) { validateBtn.disabled = true; validateBtn.textContent = 'Validating...'; }
+    btn.disabled = true;
+    btn.textContent = 'Validating...';
+    document.getElementById('setup-cf-token').disabled = true;
+
+    // Show pending permission checks
+    permsEl.innerHTML = '<div class="perm-list"></div>';
+    const listEl = permsEl.querySelector('.perm-list');
+    _renderPermCheck(listEl, 'Cloudflare Tunnel: Edit', 'pending');
+    _renderPermCheck(listEl, 'Zone DNS: Edit', 'pending');
+    _renderPermCheck(listEl, 'Access: Apps and Policies: Edit', 'pending');
 
     try {
         const data = await api('POST', '/api/cf/setup/validate-token', { token });
+
+        // All permissions passed (validate-token checks all three)
+        _renderPermCheck(listEl, 'Cloudflare Tunnel: Edit', 'pass');
+        _renderPermCheck(listEl, 'Zone DNS: Edit', 'pass');
+        _renderPermCheck(listEl, 'Access: Apps and Policies: Edit', 'pass');
+
         setupCf.token = token;
 
-        // Hide token input + validate button, show success
-        document.getElementById('setup-cf-token').disabled = true;
-        // Replace validate button with checkmark
-        const btns = document.getElementById('setup-cf-config').querySelectorAll('.form-actions')[0];
-        if (btns) btns.innerHTML = '<button class="btn" onclick="showSetupCfConsent()">Back</button> <span style="color:var(--green)">✓ Token valid</span>';
-
         // Auto-select account if only one
-        let account_id;
         if (data.accounts.length === 1) {
-            account_id = data.accounts[0].id;
+            setupCf.account_id = data.accounts[0].id;
         } else {
-            document.getElementById('setup-cf-steps').innerHTML = `
-                <div class="form-group">
+            // Multiple accounts — let user pick, then advance
+            setupCf._accounts = data.accounts;
+            permsEl.insertAdjacentHTML('beforeend', `
+                <div class="form-group" style="margin-top:12px">
                     <label>Account</label>
                     <select id="setup-cf-account">
                         ${data.accounts.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}
                     </select>
-                </div>
-                <div class="form-actions">
-                    <button class="btn primary" onclick="selectSetupCfAccount()">Next</button>
-                </div>`;
+                </div>`);
+            btn.textContent = 'Continue';
+            btn.disabled = false;
+            btn.onclick = () => {
+                setupCf.account_id = document.getElementById('setup-cf-account').value;
+                showSetupCfDetails();
+            };
             return;
         }
 
-        setupCf.account_id = account_id;
-        await loadSetupCfZones();
+        // Auto-advance after short delay so user sees the green checks
+        btn.textContent = 'Continuing...';
+        await new Promise(r => setTimeout(r, 800));
+        await showSetupCfDetails();
     } catch (e) {
-        errEl.textContent = e.message;
-        if (validateBtn) { validateBtn.disabled = false; validateBtn.textContent = 'Validate'; }
+        // Parse permission failures from error message
+        const msg = e.message || '';
+        if (msg.includes('missing permissions')) {
+            const missing = msg.split('missing permissions: ')[1] || '';
+            const missingList = missing.split(', ');
+            for (const perm of ['Cloudflare Tunnel: Edit', 'Zone DNS: Edit', 'Access: Apps and Policies: Edit']) {
+                const failed = missingList.some(m => perm.toLowerCase().includes(m.toLowerCase()) || m.toLowerCase().includes(perm.toLowerCase()));
+                _renderPermCheck(listEl, perm, failed ? 'fail' : 'pass');
+            }
+            errEl.textContent = 'Token is missing required permissions. Update it in the Cloudflare dashboard and try again.';
+        } else {
+            _renderPermCheck(listEl, 'Cloudflare Tunnel: Edit', 'fail');
+            _renderPermCheck(listEl, 'Zone DNS: Edit', 'fail');
+            _renderPermCheck(listEl, 'Access: Apps and Policies: Edit', 'fail');
+            errEl.textContent = e.message;
+        }
+        document.getElementById('setup-cf-token').disabled = false;
+        btn.disabled = false;
+        btn.textContent = 'Validate';
     }
 }
 
-async function selectSetupCfAccount() {
-    const sel = document.getElementById('setup-cf-account');
-    setupCf.account_id = sel.value;
-    await loadSetupCfZones();
+async function showSetupCfDetails() {
+    _hideAllSetupSteps();
+    document.getElementById('setup-cf-details').style.display = '';
+    document.getElementById('setup-cf-details-error').textContent = '';
+    document.getElementById('setup-cf-details-warning').textContent = '';
+    document.getElementById('setup-cf-admin-email').value = '';
+
+    const zoneEl = document.getElementById('setup-cf-zone');
+    const policyEl = document.getElementById('setup-cf-policy');
+    zoneEl.innerHTML = '<option>Loading...</option>';
+    policyEl.innerHTML = '<option>Loading...</option>';
+
+    try {
+        const data = await api('POST', '/api/cf/setup/zones', {
+            token: setupCf.token, account_id: setupCf.account_id,
+        });
+        if (!data.zones || data.zones.length === 0) {
+            document.getElementById('setup-cf-details-error').textContent = 'No domains found. Add a domain in Cloudflare first.';
+            return;
+        }
+        setupCf.zones = data.zones;
+        zoneEl.innerHTML = data.zones.map(z =>
+            `<option value="${esc(z.id)}" data-name="${esc(z.name)}">${esc(z.name)}</option>`
+        ).join('');
+
+        let policies = [];
+        try {
+            const pData = await api('POST', '/api/cf/setup/policies', {
+                token: setupCf.token, account_id: setupCf.account_id,
+            });
+            policies = pData.policies || [];
+        } catch (e) { /* optional */ }
+        setupCf._policies = policies;
+
+        policyEl.innerHTML = '<option value="">None — skip Access protection</option>' +
+            policies.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('') +
+            '<option value="__create__">Create new policy for my email</option>';
+
+        // Live policy coverage check
+        policyEl.addEventListener('change', _checkSetupPolicyCoverage);
+        document.getElementById('setup-cf-admin-email').addEventListener('input', _checkSetupPolicyCoverage);
+    } catch (e) {
+        document.getElementById('setup-cf-details-error').textContent = e.message;
+    }
 }
 
 function _policyCoversEmail(policy, email) {
@@ -297,74 +386,10 @@ function _policyCoversEmail(policy, email) {
     return false;
 }
 
-async function loadSetupCfZones() {
-    const errEl = document.getElementById('setup-cf-error');
-    try {
-        const data = await api('POST', '/api/cf/setup/zones', {
-            token: setupCf.token, account_id: setupCf.account_id,
-        });
-
-        if (data.zones.length === 0) {
-            errEl.textContent = 'No domains found. Add a domain in Cloudflare first.';
-            return;
-        }
-        setupCf.zones = data.zones;
-
-        // Load policies too
-        let policies = [];
-        try {
-            const pData = await api('POST', '/api/cf/setup/policies', {
-                token: setupCf.token, account_id: setupCf.account_id,
-            });
-            policies = pData.policies || [];
-        } catch (e) { /* policies are optional */ }
-        setupCf._policies = policies;
-
-        const zoneOptions = data.zones.map(z =>
-            `<option value="${esc(z.id)}" data-name="${esc(z.name)}">${esc(z.name)}</option>`
-        ).join('');
-
-        const policyOptions = policies.map(p =>
-            `<option value="${esc(p.id)}">${esc(p.name)}</option>`
-        ).join('');
-
-        document.getElementById('setup-cf-steps').innerHTML = `
-            <div class="form-group">
-                <label>Admin Email</label>
-                <input type="email" id="setup-cf-admin-email" placeholder="you@company.com" autocomplete="off">
-                <div class="label-hint" style="margin-top:4px">Used for Zero Trust access. Must be covered by the Access policy.</div>
-            </div>
-            <div class="form-group">
-                <label>Domain</label>
-                <select id="setup-cf-zone">${zoneOptions}</select>
-            </div>
-            <div class="form-group">
-                <label>Access Policy</label>
-                <select id="setup-cf-policy">
-                    <option value="">None — skip Access protection</option>
-                    ${policyOptions}
-                    <option value="__create__">Create new policy for my email</option>
-                </select>
-            </div>
-            <div class="form-error" id="setup-cf-policy-warning"></div>
-            <div class="form-actions">
-                <button class="btn primary" onclick="finishSetupCf()">Continue</button>
-            </div>`;
-
-        // Warn if selected policy doesn't cover admin email
-        document.getElementById('setup-cf-policy').addEventListener('change', () => {
-            _checkSetupPolicyCoverage();
-        });
-        document.getElementById('setup-cf-admin-email').addEventListener('input', () => {
-            _checkSetupPolicyCoverage();
-        });
-    } catch (e) {
-        errEl.textContent = e.message;
-    }
-}
+// loadSetupCfZones removed — replaced by showSetupCfDetails()
 
 function _checkSetupPolicyCoverage() {
-    const warnEl = document.getElementById('setup-cf-policy-warning');
+    const warnEl = document.getElementById('setup-cf-details-warning');
     if (!warnEl) return;
     warnEl.textContent = '';
 
@@ -380,7 +405,7 @@ function _checkSetupPolicyCoverage() {
 }
 
 async function finishSetupCf() {
-    const errEl = document.getElementById('setup-cf-error');
+    const errEl = document.getElementById('setup-cf-details-error');
     errEl.textContent = '';
 
     const email = (document.getElementById('setup-cf-admin-email').value || '').trim();
