@@ -396,12 +396,11 @@ async function showSetupCfDetails() {
     document.getElementById('setup-cf-details-warning').textContent = '';
     document.getElementById('setup-cf-admin-email').value = '';
 
-    const zoneEl = document.getElementById('setup-cf-zone');
     const policyEl = document.getElementById('setup-cf-policy');
-    zoneEl.innerHTML = '<option>Loading...</option>';
     policyEl.innerHTML = '<option>Loading...</option>';
 
     try {
+        // Fetch zones (needed for later hostname step)
         const data = await api('POST', '/api/cf/setup/zones', {
             token: setupCf.token, account_id: setupCf.account_id,
         });
@@ -410,10 +409,11 @@ async function showSetupCfDetails() {
             return;
         }
         setupCf.zones = data.zones;
-        zoneEl.innerHTML = data.zones.map(z =>
-            `<option value="${esc(z.id)}" data-name="${esc(z.name)}">${esc(z.name)}</option>`
-        ).join('');
+        // Auto-select first zone (user picks specific domain in the node name step)
+        setupCf.zone_id = data.zones[0].id;
+        setupCf.zone_name = data.zones[0].name;
 
+        // Fetch policies
         let policies = [];
         try {
             const pData = await api('POST', '/api/cf/setup/policies', {
@@ -423,9 +423,10 @@ async function showSetupCfDetails() {
         } catch (e) { /* optional */ }
         setupCf._policies = policies;
 
-        policyEl.innerHTML = '<option value="">None — skip Access protection</option>' +
-            policies.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('') +
-            '<option value="__create__">Create new policy for my email</option>';
+        // Default to "Create new" — always require Access protection
+        policyEl.innerHTML =
+            '<option value="__create__">Create new policy for my email</option>' +
+            policies.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
 
         // Live policy coverage check
         policyEl.addEventListener('change', _checkSetupPolicyCoverage);
@@ -475,10 +476,7 @@ async function finishSetupCf() {
     }
     setupCf.admin_email = email;
 
-    const zoneSel = document.getElementById('setup-cf-zone');
-    setupCf.zone_id = zoneSel.value;
-    setupCf.zone_name = zoneSel.options[zoneSel.selectedIndex].dataset.name;
-
+    // zone_id and zone_name already set by showSetupCfDetails()
     let policyId = document.getElementById('setup-cf-policy').value;
 
     if (policyId === '__create__') {
@@ -520,7 +518,10 @@ function showSetupNameStep() {
         // Show name + domain picker
         document.getElementById('setup-name-with-domain').style.display = '';
         document.getElementById('setup-name-plain').style.display = 'none';
-        document.getElementById('setup-node-name').value = '';
+
+        // Prefill with machine hostname
+        const defaultName = (machineHostname || '').split('.')[0].toLowerCase().replace(/[^a-z0-9-]/g, '') || '';
+        document.getElementById('setup-node-name').value = defaultName;
 
         const domainSel = document.getElementById('setup-domain-select');
         domainSel.innerHTML = setupCf.zones.map(z =>
@@ -536,6 +537,7 @@ function showSetupNameStep() {
         };
         document.getElementById('setup-node-name').addEventListener('input', updatePreview);
         domainSel.addEventListener('change', updatePreview);
+        updatePreview(); // Show preview immediately with prefilled value
     } else {
         // Plain name, no domain
         document.getElementById('setup-name-with-domain').style.display = 'none';
