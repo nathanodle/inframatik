@@ -84,7 +84,7 @@ def test_protocol_tools_list_includes_register_for_deploy_capability():
     payload = _response_json(resp)
     tool_names = {t["name"] for t in payload["result"]["tools"]}
     assert "register" in tool_names
-    assert "deploy" in tool_names
+    assert "deploy" not in tool_names
     assert "restart" in tool_names
     assert "stop" in tool_names
     assert "logs" in tool_names
@@ -127,7 +127,7 @@ def test_tool_call_capability_denied():
             4,
             "svc-a",
             "read",
-            {"name": "deploy", "arguments": {"command": "echo hi", "working_dir": "/tmp"}},
+            {"name": "register", "arguments": {"command": "echo hi", "working_dir": "/tmp"}},
         )
     )
     payload = _response_json(resp)
@@ -150,8 +150,9 @@ def test_tool_call_register_success():
         assert lan is True
         return {"name": name, "port": 8123, "status": "inactive"}
 
-    async def fake_start_service(_name):
-        raise AssertionError("register tool must not start the service")
+    async def fake_start_service(name):
+        assert name == "svc-a"
+        return "active"
 
     mcp_routes.list_services = fake_list_services
     mcp_routes.register_service = fake_register_service
@@ -182,8 +183,22 @@ def test_tool_call_register_success():
     assert payload["result"]["content"][0]["type"] == "text"
     text = payload["result"]["content"][0]["text"]
     assert "registered on port 8123" in text
-    assert "bind host 0.0.0.0" in text
+    assert "started. Status: active" in text
     assert "https://app.example.com" in text
+
+
+def test_tool_call_deploy_is_unknown_after_rename():
+    resp = asyncio.run(
+        mcp_routes._handle_mcp_tool_call(
+            6,
+            "svc-a",
+            "deploy",
+            {"name": "deploy", "arguments": {"command": "python app.py", "working_dir": "/tmp"}},
+        )
+    )
+    payload = _response_json(resp)
+    assert payload["error"]["code"] == -32602
+    assert "Unknown tool: deploy" in payload["error"]["message"]
 
 
 def test_tool_call_success_result_shape():

@@ -257,7 +257,7 @@ def test_mcp_tools_list_includes_register_for_deploy_capability():
     assert resp.status_code == 200
     tools = {t["name"] for t in resp.json()["result"]["tools"]}
     assert "register" in tools
-    assert "deploy" in tools
+    assert "deploy" not in tools
 
 
 def test_mcp_tools_call_invalid_params_shape():
