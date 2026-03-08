@@ -27,7 +27,8 @@ async def broadcast(message: dict):
             await ws.send_json(message)
         except Exception:
             dead.add(ws)
-    _connections -= dead
+    for ws in dead:
+        _connections.discard(ws)
 
 
 async def send_progress(task: str, step: str, message: str, done: bool = False, error: bool = False):
