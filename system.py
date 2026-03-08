@@ -1,9 +1,12 @@
 import json
+import logging
 import platform
 import subprocess
 import time
 
 import psutil
+
+logger = logging.getLogger("inframatik.system")
 
 
 def _get_cpu_model() -> str:
@@ -12,8 +15,8 @@ def _get_cpu_model() -> str:
             for line in f:
                 if "model name" in line:
                     return line.split(":")[1].strip()
-    except Exception:
-        pass
+    except (OSError, ValueError, IndexError) as e:
+        logger.debug("Failed to read CPU model from /proc/cpuinfo: %s", e)
     return platform.processor() or "Unknown"
 
 
@@ -29,8 +32,8 @@ def _get_temperatures() -> dict:
         # NVMe temp
         if "nvme" in temps and temps["nvme"]:
             result["nvme"] = temps["nvme"][0].current
-    except Exception:
-        pass
+    except (AttributeError, OSError, NotImplementedError, psutil.Error) as e:
+        logger.debug("Failed to read temperature sensors: %s", e)
     return result
 
 
@@ -64,7 +67,8 @@ def _get_gpus_nvidia() -> list[dict]:
         return gpus
     except FileNotFoundError:
         return []
-    except Exception:
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError) as e:
+        logger.debug("Failed to collect NVIDIA GPU metrics: %s", e)
         return []
 
 
@@ -98,7 +102,8 @@ def _get_gpus_amd() -> list[dict]:
         return gpus
     except FileNotFoundError:
         return []
-    except Exception:
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, subprocess.SubprocessError) as e:
+        logger.debug("Failed to collect AMD GPU metrics: %s", e)
         return []
 
 

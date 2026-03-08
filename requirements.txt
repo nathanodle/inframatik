@@ -1,7 +1,7 @@
-fastapi
-uvicorn[standard]
-psutil
-httpx
-bcrypt
-PyJWT
-cryptography
+fastapi==0.110.3
+uvicorn[standard]==0.29.0
+psutil==5.9.8
+httpx==0.27.0
+bcrypt==4.1.2
+PyJWT==2.8.0
+cryptography==42.0.7

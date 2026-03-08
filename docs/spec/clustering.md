@@ -271,7 +271,6 @@ Served by the master at `GET /api/install.sh` with `__MASTER_URL__` placeholder 
 |------|-------------|
 | `--enroll <token>` | Enrollment token for automatic worker registration |
 | `--name <name>` | Node name (defaults to `hostname -s` if enrolling) |
-| `--password <pw>` | Admin password to set (prompted interactively if omitted) |
 
 ### Script Steps
 
@@ -280,7 +279,7 @@ Served by the master at `GET /api/install.sh` with `__MASTER_URL__` placeholder 
 3. Download and extract code package from master
 4. Create Python venv, install pip dependencies
 5. Create config directory (`~/.config/inframatik/`)
-6. Optional: install `cloudflared` binary + `infra-cf-setup` helper + sudoers entry
+6. Optional: install `cloudflared` binary to `~/.local/bin/cloudflared` (checksum-verified, no sudo)
 7. Add `ports.env` sourcing to `.bashrc`
 8. Create systemd user service for inframatik (port 9000)
 9. Enable linger for boot persistence

@@ -89,7 +89,7 @@ Optional: Cloudflare tunnel → ingress routes → services
 ### Process Management
 - inframatik itself: `systemctl --user` service (created by installer)
 - Managed services: `systemctl --user` units with `infra-` prefix
-- cloudflared: system-level service at `/etc/systemd/system/cloudflared.service`
+- cloudflared: user-level service at `~/.config/systemd/user/cloudflared.service`
 - User linger enabled for boot persistence
 
 ---
@@ -105,8 +105,8 @@ Optional: Cloudflare tunnel → ingress routes → services
 
 ### cloudflared binary (optional)
 - Local metrics at `http://127.0.0.1:20241/metrics` (Prometheus format)
-- Connector token stored at `/etc/cloudflared/token`
-- Managed by `infra-cf-setup` helper script (requires sudo)
+- Connector token stored at `~/.config/inframatik/cf-tunnel-token` (mode 600)
+- Managed directly by inframatik via `systemctl --user` (no runtime sudo)
 
 ---
 

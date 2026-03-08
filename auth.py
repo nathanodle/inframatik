@@ -1,5 +1,7 @@
 import secrets
 import time
+import logging
+import os
 from typing import Optional
 
 import bcrypt
@@ -10,10 +12,17 @@ from node_config import get_node_config
 
 # In-memory session store: token -> {expires_at}
 _sessions: dict[str, dict] = {}
+_login_failures: dict[str, dict] = {}
 
 # CF public key cache
-_cf_keys_cache: dict = {"keys": [], "fetched_at": 0}
+_cf_keys_cache: dict[str, dict] = {}
 CF_KEYS_TTL = 3600  # 1 hour
+CF_KEYS_MAX_STALE = 86400  # 24 hours
+
+SESSION_COOKIE_NAME = "inframatik_session"
+SESSION_COOKIE_SECURE = os.getenv("INFRAMATIK_SESSION_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+
+logger = logging.getLogger("inframatik.auth")
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +42,11 @@ def verify_password(password: str, hashed: str) -> bool:
 # ---------------------------------------------------------------------------
 
 MAX_SESSIONS = 100
+LOGIN_WINDOW_SECONDS = 300
+LOGIN_MAX_ATTEMPTS = 6
+LOGIN_BASE_BACKOFF_SECONDS = 2
+LOGIN_MAX_BACKOFF_SECONDS = 300
+MAX_LOGIN_TRACKED_CLIENTS = 2000
 
 
 def create_session(duration_hours: int = 24) -> tuple[str, int]:
@@ -61,6 +75,11 @@ def invalidate_session(token: str):
     _sessions.pop(token, None)
 
 
+def clear_all_sessions():
+    _sessions.clear()
+    _login_failures.clear()
+
+
 def _cleanup_sessions():
     now = time.time()
     expired = [t for t, s in _sessions.items() if now > s["expires_at"]]
@@ -68,29 +87,151 @@ def _cleanup_sessions():
         del _sessions[t]
 
 
+def _cleanup_login_failures(now: float):
+    stale = []
+    for client_id, state in _login_failures.items():
+        attempts = [t for t in state.get("attempts", []) if (now - t) <= LOGIN_WINDOW_SECONDS]
+        state["attempts"] = attempts
+        blocked_until = float(state.get("blocked_until", 0))
+        if attempts:
+            continue
+        if blocked_until > now:
+            continue
+        stale.append(client_id)
+    for client_id in stale:
+        _login_failures.pop(client_id, None)
+
+
+def _ensure_login_state(client_id: str, now: float) -> dict:
+    state = _login_failures.setdefault(client_id, {"attempts": [], "blocked_until": 0.0, "last_seen": now})
+    state["last_seen"] = now
+    return state
+
+
+def _evict_login_clients():
+    if len(_login_failures) <= MAX_LOGIN_TRACKED_CLIENTS:
+        return
+    oldest = sorted(
+        _login_failures.items(),
+        key=lambda item: item[1].get("last_seen", 0),
+    )
+    to_remove = len(_login_failures) - MAX_LOGIN_TRACKED_CLIENTS
+    for i in range(to_remove):
+        _login_failures.pop(oldest[i][0], None)
+
+
+def login_is_allowed(client_id: str) -> tuple[bool, int]:
+    """Return (allowed, retry_after_seconds) for a login attempt from client_id."""
+    now = time.time()
+    _cleanup_login_failures(now)
+    state = _login_failures.get(client_id)
+    if not state:
+        return True, 0
+
+    blocked_until = float(state.get("blocked_until", 0))
+    if blocked_until > now:
+        return False, max(1, int(blocked_until - now))
+
+    attempts = state.get("attempts", [])
+    if len(attempts) >= LOGIN_MAX_ATTEMPTS:
+        overflow = len(attempts) - LOGIN_MAX_ATTEMPTS
+        delay = min(LOGIN_BASE_BACKOFF_SECONDS * (2 ** overflow), LOGIN_MAX_BACKOFF_SECONDS)
+        state["blocked_until"] = now + delay
+        logger.warning(
+            "Login throttle triggered for %s after %d failures in %ds",
+            client_id,
+            len(attempts),
+            LOGIN_WINDOW_SECONDS,
+        )
+        return False, int(delay)
+    return True, 0
+
+
+def record_failed_login(client_id: str) -> int:
+    """Record a failed login attempt and return any imposed backoff in seconds."""
+    now = time.time()
+    _cleanup_login_failures(now)
+    state = _ensure_login_state(client_id, now)
+
+    attempts = state.get("attempts", [])
+    attempts.append(now)
+    state["attempts"] = [t for t in attempts if (now - t) <= LOGIN_WINDOW_SECONDS]
+
+    failures = len(state["attempts"])
+    if failures >= LOGIN_MAX_ATTEMPTS:
+        overflow = failures - LOGIN_MAX_ATTEMPTS
+        delay = min(LOGIN_BASE_BACKOFF_SECONDS * (2 ** overflow), LOGIN_MAX_BACKOFF_SECONDS)
+        state["blocked_until"] = max(float(state.get("blocked_until", 0)), now + delay)
+        logger.warning(
+            "Repeated login failures from %s: failures=%d window=%ds backoff=%ds",
+            client_id,
+            failures,
+            LOGIN_WINDOW_SECONDS,
+            delay,
+        )
+    _evict_login_clients()
+
+    blocked_until = float(state.get("blocked_until", 0))
+    if blocked_until > now:
+        return max(1, int(blocked_until - now))
+    return 0
+
+
+def record_successful_login(client_id: str):
+    _login_failures.pop(client_id, None)
+
+
 # ---------------------------------------------------------------------------
 # CF Access JWT validation
 # ---------------------------------------------------------------------------
 
+def _normalize_cf_team_domain(team_domain: str) -> str:
+    team_domain = team_domain.strip().lower()
+    if team_domain.startswith("https://"):
+        team_domain = team_domain[len("https://"):]
+    elif team_domain.startswith("http://"):
+        team_domain = team_domain[len("http://"):]
+    team_domain = team_domain.split("/", 1)[0]
+    if team_domain.endswith(".cloudflareaccess.com"):
+        team_domain = team_domain[: -len(".cloudflareaccess.com")]
+    return team_domain
+
+
 async def _fetch_cf_keys(team_domain: str) -> list:
-    """Fetch CF Access public keys (cached for 1 hour)."""
+    """Fetch CF Access public keys (domain-scoped cache with bounded stale fallback)."""
+    team_domain = _normalize_cf_team_domain(team_domain)
+
+    if not team_domain:
+        return []
+
     now = time.time()
-    if _cf_keys_cache["keys"] and (now - _cf_keys_cache["fetched_at"]) < CF_KEYS_TTL:
-        return _cf_keys_cache["keys"]
+    entry = _cf_keys_cache.get(team_domain, {"keys": [], "fetched_at": 0, "last_success_at": 0})
+    if entry["keys"] and (now - entry["fetched_at"]) < CF_KEYS_TTL:
+        return entry["keys"]
+
     try:
         url = f"https://{team_domain}.cloudflareaccess.com/cdn-cgi/access/certs"
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(url)
             data = resp.json()
         keys = data.get("public_certs", []) or data.get("keys", [])
-        _cf_keys_cache["keys"] = keys
-        _cf_keys_cache["fetched_at"] = now
+        if not keys:
+            raise ValueError("No CF Access certs returned")
+        _cf_keys_cache[team_domain] = {
+            "keys": keys,
+            "fetched_at": now,
+            "last_success_at": now,
+        }
         return keys
-    except Exception:
-        return _cf_keys_cache["keys"]  # Return stale cache on failure
+    except (httpx.HTTPError, ValueError, TypeError, KeyError):
+        if entry["keys"] and (now - entry.get("last_success_at", 0)) <= CF_KEYS_MAX_STALE:
+            entry["fetched_at"] = now
+            _cf_keys_cache[team_domain] = entry
+            return entry["keys"]
+        return []
 
 
-def _validate_cf_jwt_sync(token: str, keys: list, audience: str) -> bool:
+def _validate_cf_jwt_sync(token: str, keys: list, audience: str, issuer: Optional[str] = None) -> bool:
     """Validate a CF Access JWT against public keys."""
     for key_data in keys:
         try:
@@ -98,28 +239,36 @@ def _validate_cf_jwt_sync(token: str, keys: list, audience: str) -> bool:
             if not cert:
                 continue
             public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data) if "n" in key_data else cert
+            decode_kwargs = {
+                "algorithms": ["RS256"],
+                "audience": audience,
+            }
+            if issuer:
+                decode_kwargs["issuer"] = issuer
             jwt.decode(
                 token,
                 public_key,
-                algorithms=["RS256"],
-                audience=audience,
+                **decode_kwargs,
             )
             return True
-        except (jwt.InvalidTokenError, Exception):
+        except (jwt.InvalidTokenError, ValueError, TypeError, KeyError):
             continue
     return False
 
 
 async def validate_cf_access(token: str, config: dict) -> bool:
     """Validate CF Access JWT. Returns True if valid."""
-    team_domain = config.get("cf_team_domain")
+    team_domain = _normalize_cf_team_domain(config.get("cf_team_domain", ""))
     aud = config.get("cf_access_aud")
     if not team_domain or not aud:
         return False
+    issuer = config.get("cf_access_issuer")
+    if not issuer:
+        issuer = f"https://{team_domain}.cloudflareaccess.com"
     keys = await _fetch_cf_keys(team_domain)
     if not keys:
         return False
-    return _validate_cf_jwt_sync(token, keys, aud)
+    return _validate_cf_jwt_sync(token, keys, aud, issuer=issuer)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +277,7 @@ async def validate_cf_access(token: str, config: dict) -> bool:
 
 async def check_auth(request) -> bool:
     """Check if request is authenticated via any method. Returns True if auth passes.
-    Sets request.state.service_scope if using a scoped service token."""
+    Sets request.state.service_scope/service_capability if using a scoped service token."""
     config = get_node_config()
 
     # Path 1: X-Api-Key (worker-to-master)
@@ -142,7 +291,12 @@ async def check_auth(request) -> bool:
         if await validate_cf_access(cf_jwt, config):
             return True
 
-    # Path 3: Session token or service token
+    # Path 3: Session cookie
+    session_cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
+    if session_cookie and validate_session(session_cookie):
+        return True
+
+    # Path 4: Session token or service token via Authorization header
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
@@ -151,10 +305,11 @@ async def check_auth(request) -> bool:
             return True
         # Check scoped service tokens
         if token.startswith("svc_"):
-            from node_config import get_service_token_scope
-            scope = get_service_token_scope(token)
-            if scope:
-                request.state.service_scope = scope
+            from node_config import get_service_token_auth
+            token_auth = get_service_token_auth(token)
+            if token_auth and token_auth.get("service"):
+                request.state.service_scope = token_auth["service"]
+                request.state.service_capability = token_auth["capability"]
                 return True
 
     return False

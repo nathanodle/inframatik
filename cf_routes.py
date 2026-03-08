@@ -8,6 +8,7 @@ from cloudflared import (
     get_cloudflared_user_service_status,
     get_cloudflared_user_service_logs,
     restart_cloudflared_user_service,
+    update_cloudflared_user_binary,
 )
 
 from node_config import (
@@ -335,6 +336,22 @@ async def api_cf_service_restart():
     return {"status": "restarted", "service": service}
 
 
+class UpdateCloudflaredBody(BaseModel):
+    version: Optional[str] = None
+
+
+@cf_router.post("/api/cf/service/update")
+async def api_cf_service_update(body: UpdateCloudflaredBody = None):
+    version = body.version if body else None
+    try:
+        result = await update_cloudflared_user_binary(version=version)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return {"status": "updated", "cloudflared": result}
+
+
 @cf_router.get("/api/internal/cf/service/status")
 async def api_internal_cf_service_status(request: Request):
     _require_internal_api_key(request)
@@ -351,6 +368,12 @@ async def api_internal_cf_service_logs(request: Request, lines: int = 80):
 async def api_internal_cf_service_restart(request: Request):
     _require_internal_api_key(request)
     return await api_cf_service_restart()
+
+
+@cf_router.post("/api/internal/cf/service/update")
+async def api_internal_cf_service_update(request: Request, body: UpdateCloudflaredBody = None):
+    _require_internal_api_key(request)
+    return await api_cf_service_update(body=body)
 
 
 # ---------------------------------------------------------------------------

@@ -69,6 +69,7 @@ Worker nodes may still be trying to heartbeat to the old master. After teardown:
 
 If the old sysdashboard had CF tunnels configured:
 - The tunnel still exists in your CF account (not deleted by teardown)
-- cloudflared may still be running as a system service: `sudo systemctl status cloudflared`
-- You can stop it: `sudo systemctl disable --now cloudflared`
+- cloudflared may still be running as a user service: `systemctl --user status cloudflared`
+- You can stop it: `systemctl --user disable --now cloudflared`
+- Legacy installs may still have a system service: `sudo systemctl disable --now cloudflared`
 - Or leave it running — inframatik will reconfigure it when you set up CF through the new wizard

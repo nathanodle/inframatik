@@ -255,7 +255,7 @@ async def register_service(
             if policy_id:
                 await create_access_app(name, hostname, policy_id)
             cf_route_added = True
-        except Exception as e:
+        except (ValueError, RuntimeError, ImportError, OSError) as e:
             logger.debug("CF setup skipped for %s: %s", name, e)
 
     return {**svc, "name": name, "status": "inactive", "unit": _unit_name(name), "cf_route_added": cf_route_added}
@@ -282,7 +282,7 @@ async def deregister_service(name: str):
             await remove_tunnel_route(svc["hostname"])
             await delete_dns_record(svc["hostname"])
             await delete_access_app(svc["hostname"])
-        except Exception as e:
+        except (ValueError, RuntimeError, ImportError, OSError) as e:
             logger.debug("CF cleanup skipped for %s: %s", name, e)
 
     _save_registry(registry)

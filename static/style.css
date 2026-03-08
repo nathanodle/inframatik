@@ -1119,7 +1119,25 @@ body {
 .cf-service-actions {
     margin-top: 12px;
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
+}
+
+.cf-service-actions input {
+    min-width: 180px;
+    padding: 8px 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color var(--transition);
+}
+
+.cf-service-actions input:focus {
+    border-color: var(--accent);
 }
 
 .cf-service-logs {

@@ -1,10 +1,12 @@
 import base64
+import logging
 import secrets
 from typing import Optional
 
 import httpx
 
 METRICS_URL = "http://127.0.0.1:20241/metrics"
+logger = logging.getLogger("inframatik.tunnel")
 
 
 # ---------------------------------------------------------------------------
@@ -72,13 +74,13 @@ async def get_tunnel_status() -> dict:
             try:
                 connections = int(float(line.split()[-1]))
             except (ValueError, IndexError):
-                pass
+                continue
         if line.startswith("cloudflared_tunnel_server_locations{") and line.endswith(" 1"):
             try:
                 loc = line.split('edge_location="')[1].split('"')[0]
                 locations.append(loc)
-            except (IndexError, KeyError):
-                pass
+            except IndexError:
+                continue
 
     return {
         "connected": connections > 0,
@@ -105,11 +107,13 @@ async def get_tunnel_routes(tunnel_id: Optional[str] = None) -> list[dict]:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url, headers=_cf_headers(cfg["token"]))
             data = resp.json()
-    except Exception:
-        return []
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to fetch tunnel routes for %s: %s", tid, e)
+        raise ValueError("Failed to fetch tunnel routes from Cloudflare")
     if not data.get("success"):
-        return []
-    ingress = data["result"]["config"].get("ingress", [])
+        logger.warning("Cloudflare rejected tunnel route list for %s: %s", tid, data.get("errors"))
+        raise ValueError(f"Failed to read tunnel config: {data.get('errors')}")
+    ingress = data.get("result", {}).get("config", {}).get("ingress", [])
     return [r for r in ingress if r.get("hostname")]
 
 
@@ -261,14 +265,18 @@ async def list_dns_records() -> list[dict]:
                                         params={"page": page, "per_page": 100})
                 data = resp.json()
                 if not data.get("success"):
-                    break
+                    logger.warning("Cloudflare rejected DNS list request: %s", data.get("errors"))
+                    raise ValueError(f"Failed to list DNS records: {data.get('errors')}")
                 records.extend(data.get("result", []))
                 info = data.get("result_info", {})
                 if page >= info.get("total_pages", 1):
                     break
                 page += 1
-    except Exception:
-        pass
+    except ValueError:
+        raise
+    except (httpx.HTTPError, TypeError) as e:
+        logger.warning("Failed to fetch DNS records from Cloudflare: %s", e)
+        raise ValueError("Failed to list DNS records from Cloudflare")
     return [
         {
             "id": r["id"],
@@ -341,10 +349,12 @@ async def list_access_apps() -> list[dict]:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url, headers=_cf_headers(cfg["token"]))
             data = resp.json()
-    except Exception:
-        return []
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to fetch Access apps from Cloudflare: %s", e)
+        raise ValueError("Failed to fetch Access apps from Cloudflare")
     if not data.get("success"):
-        return []
+        logger.warning("Cloudflare rejected Access app list request: %s", data.get("errors"))
+        raise ValueError(f"Failed to list Access apps: {data.get('errors')}")
     return [
         {
             "id": a["id"],
@@ -387,10 +397,12 @@ async def list_tunnels() -> list[dict]:
             resp = await client.get(url, headers=_cf_headers(cfg["token"]),
                                     params={"is_deleted": "false"})
             data = resp.json()
-    except Exception:
-        return []
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to fetch tunnels from Cloudflare: %s", e)
+        raise ValueError("Failed to list tunnels from Cloudflare")
     if not data.get("success"):
-        return []
+        logger.warning("Cloudflare rejected tunnel list request: %s", data.get("errors"))
+        raise ValueError(f"Failed to list tunnels: {data.get('errors')}")
     return [
         {
             "id": t["id"],

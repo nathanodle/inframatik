@@ -28,7 +28,7 @@ inframatik integrates with the Cloudflare API to provide secure public access to
 5. **Automatic service exposure** -- When a service is registered with a hostname, create tunnel route + DNS CNAME + Access app.
 6. **Dashboard protection** -- Dashboard itself can be placed behind CF Access via a dedicated endpoint.
 7. **Worker tunnel setup** -- Master can create a tunnel for a worker and push the connector token remotely.
-8. **cloudflared managed by systemd** -- System-level service at `/etc/systemd/system/cloudflared.service`, controlled via `infra-cf-setup` helper script (requires sudo).
+8. **cloudflared managed in userland** -- User-level service at `~/.config/systemd/user/cloudflared.service`, started and managed without sudo.
 
 ---
 
@@ -258,10 +258,10 @@ Master-initiated flow to create and configure a tunnel for a remote worker:
 
 1. Validate `X-Api-Key` header
 2. Store `tunnel_id` in worker's node.json
-3. Run `sudo /usr/local/bin/infra-cf-setup {token}` to:
-   - Write token to `/etc/cloudflared/token`
-   - Create/update systemd service for cloudflared
-   - Reload daemon and restart cloudflared
+3. Call local setup helper to:
+   - Write token to `~/.config/inframatik/cf-tunnel-token` (mode 600)
+   - Create/update `~/.config/systemd/user/cloudflared.service`
+   - Run `systemctl --user daemon-reload` and `systemctl --user enable --now cloudflared.service`
 
 ---
 
@@ -405,14 +405,13 @@ If cloudflared is unreachable (connect error or timeout):
 }
 ```
 
-### cloudflared System Files
+### cloudflared Userland Files
 
 | File | Purpose |
 |------|---------|
-| `/etc/cloudflared/token` | Tunnel connector token (mode 600) |
-| `/etc/systemd/system/cloudflared.service` | System-level cloudflared service |
-| `/usr/local/bin/infra-cf-setup` | Helper script to write token + manage service |
-| `/etc/sudoers.d/infra-cf` | NOPASSWD sudo for the inframatik user to run infra-cf-setup |
+| `~/.config/inframatik/cf-tunnel-token` | Tunnel connector token (mode 600) |
+| `~/.config/systemd/user/cloudflared.service` | User-level cloudflared service unit |
+| `~/.local/bin/cloudflared` | cloudflared binary installed by installer (optional step) |
 
 ---
 
@@ -463,7 +462,7 @@ In the sidebar and settings worker list, workers with a `tunnel_id` show a blue 
 | Route already exists | 400: "Route for {hostname} already exists" |
 | Route not found | 400: "No route found for {hostname}" |
 | cloudflared unreachable | Tunnel status returns `{connected: false}` |
-| cloudflared setup fails (sudo) | 500: "Failed to setup cloudflared" |
+| cloudflared setup fails (user service) | 500 with setup/runtime error detail |
 | Dashboard access without CF config | 400: "Cloudflare not configured. Set up in Settings." |
 | CF cleanup on service delete | Best-effort, errors silently caught |
 | CF setup on service register | Best-effort, logged at debug level, `cf_route_added: false` |
@@ -477,8 +476,8 @@ In the sidebar and settings worker list, workers with a `tunnel_id` show a blue 
 | Credentials in node.json | Separate cf.env, vault, env vars | Single config file. Consistent with all other config. File permissions for security. |
 | Guided setup wizard | Manual config file editing, CLI | Users shouldn't need to know CF API internals. Wizard discovers and validates everything. |
 | One tunnel per node | Shared tunnel, tunnel per service | Isolates nodes. Clean ingress management. Worker tunnels independent. |
-| System-level cloudflared | User-level, Docker | cloudflared needs to run as root for proper networking. System service survives user logouts. |
-| infra-cf-setup helper + sudoers | Direct sudo commands, root service | Principle of least privilege. User only gets NOPASSWD for the specific helper script. |
+| User-level cloudflared | System-level, Docker | Removes runtime sudo and sudoers. Keeps token + service under user-owned paths with least privilege. |
+| Direct Python setup + systemctl --user | Helper script + sudoers | Fewer moving parts and no privileged helper surface. |
 | Prometheus metrics for status | CF API status endpoint, health check | cloudflared exposes metrics locally. Fast, no API call. Real-time connection info. |
 | Policy discovery from apps | Dedicated policy list API | Reusable policies found by scanning existing apps. Works with the CF API structure. Also uses direct `/access/policies` endpoint in wizard. |
 | 10s timeout for CF API calls | 5s, 30s | CF API is usually fast. 10s handles slow responses without blocking too long. |

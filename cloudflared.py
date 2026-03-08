@@ -1,5 +1,8 @@
 import asyncio
+import hashlib
 import os
+import platform
+import re
 import tempfile
 from pathlib import Path
 
@@ -8,6 +11,9 @@ CLOUDFLARED_TOKEN_PATH = Path.home() / ".config" / "inframatik" / "cf-tunnel-tok
 CLOUDFLARED_UNIT_PATH = Path.home() / ".config" / "systemd" / "user" / "cloudflared.service"
 CLOUDFLARED_UNIT_NAME = "cloudflared.service"
 MAX_LOG_LINES = 500
+MAX_CLOUDFLARED_DOWNLOAD_BYTES = 100 * 1024 * 1024
+DEFAULT_CLOUDFLARED_VERSION = os.getenv("INFRAMATIK_CLOUDFLARED_VERSION", "2025.2.1")
+_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 _UNIT_TEMPLATE = """\
 [Unit]
@@ -46,6 +52,26 @@ def _secure_write_text(path: Path, payload: str, mode: int = 0o600):
             os.unlink(tmp_path)
 
 
+def _secure_write_bytes(path: Path, payload: bytes, mode: int = 0o755):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+        os.chmod(path, mode)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 async def _run(cmd: list[str]) -> tuple[int, str]:
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -61,6 +87,84 @@ async def _run_checked(cmd: list[str], error_prefix: str):
     if code != 0:
         detail = output or f"exit code {code}"
         raise RuntimeError(f"{error_prefix}: {detail}")
+
+
+def _cloudflared_arch() -> str:
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "amd64"
+    if machine in ("aarch64", "arm64"):
+        return "arm64"
+    if machine in ("armv7l", "armv6l", "arm"):
+        return "arm"
+    raise ValueError(f"Unsupported architecture for cloudflared update: {machine}")
+
+
+def _normalize_version(version: str | None) -> str:
+    candidate = (version or DEFAULT_CLOUDFLARED_VERSION).strip()
+    if not candidate:
+        raise ValueError("cloudflared version cannot be empty")
+    if not _VERSION_RE.match(candidate):
+        raise ValueError("Invalid cloudflared version format")
+    return candidate
+
+
+async def _download_bytes(url: str, max_bytes: int = MAX_CLOUDFLARED_DOWNLOAD_BYTES) -> bytes:
+    try:
+        import httpx as _httpx
+    except ModuleNotFoundError:
+        raise RuntimeError("cloudflared update requires the 'httpx' package")
+    try:
+        async with _httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            resp = await client.get(url)
+    except _httpx.HTTPError as e:
+        raise RuntimeError(f"Failed to download {url}: {e}")
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to download {url}: HTTP {resp.status_code}")
+    data = resp.content
+    if len(data) > max_bytes:
+        raise RuntimeError(f"Downloaded file from {url} exceeds size limit")
+    return data
+
+
+def _extract_sha256(checksum_text: str) -> str:
+    match = re.search(r"\b[a-fA-F0-9]{64}\b", checksum_text)
+    if not match:
+        raise RuntimeError("Could not parse SHA256 checksum")
+    return match.group(0).lower()
+
+
+async def _download_expected_sha(base_url: str, arch: str) -> str:
+    checksum_urls = [
+        f"{base_url}/cloudflared-linux-{arch}.sha256",
+        f"{base_url}/cloudflared-linux-{arch}.sha256sum",
+    ]
+    last_error = None
+    for url in checksum_urls:
+        try:
+            data = await _download_bytes(url, max_bytes=64 * 1024)
+            return _extract_sha256(data.decode("utf-8", errors="replace"))
+        except RuntimeError as e:
+            last_error = e
+    if last_error is not None:
+        raise RuntimeError(str(last_error))
+    raise RuntimeError("Failed to download cloudflared checksum")
+
+
+async def get_cloudflared_binary_version() -> str:
+    if not CLOUDFLARED_BINARY_PATH.exists() or not os.access(CLOUDFLARED_BINARY_PATH, os.X_OK):
+        return ""
+    try:
+        code, output = await _run([str(CLOUDFLARED_BINARY_PATH), "--version"])
+    except OSError:
+        return ""
+    if code != 0 or not output:
+        return ""
+    first_line = output.splitlines()[0].strip()
+    match = re.search(r"cloudflared version\s+([^\s]+)", first_line, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return first_line
 
 
 def _write_cloudflared_unit():
@@ -109,6 +213,7 @@ def _parse_systemctl_show(output: str) -> dict[str, str]:
 
 async def get_cloudflared_user_service_status() -> dict:
     binary_installed = CLOUDFLARED_BINARY_PATH.exists() and os.access(CLOUDFLARED_BINARY_PATH, os.X_OK)
+    binary_version = await get_cloudflared_binary_version()
     token_present = CLOUDFLARED_TOKEN_PATH.exists()
     unit_present = CLOUDFLARED_UNIT_PATH.exists()
 
@@ -138,6 +243,7 @@ async def get_cloudflared_user_service_status() -> dict:
 
     return {
         "binary_installed": binary_installed,
+        "binary_version": binary_version,
         "token_present": token_present,
         "unit_present": unit_present,
         "binary_path": str(CLOUDFLARED_BINARY_PATH),
@@ -185,3 +291,37 @@ async def restart_cloudflared_user_service() -> dict:
         "Failed to restart cloudflared user service",
     )
     return await get_cloudflared_user_service_status()
+
+
+async def update_cloudflared_user_binary(version: str | None = None) -> dict:
+    target_version = _normalize_version(version)
+    arch = _cloudflared_arch()
+    base_url = f"https://github.com/cloudflare/cloudflared/releases/download/{target_version}"
+    binary_url = f"{base_url}/cloudflared-linux-{arch}"
+
+    expected_sha = await _download_expected_sha(base_url, arch)
+    binary_data = await _download_bytes(binary_url)
+    actual_sha = hashlib.sha256(binary_data).hexdigest()
+    if actual_sha != expected_sha:
+        raise RuntimeError("cloudflared checksum verification failed")
+
+    previous_version = await get_cloudflared_binary_version()
+    _secure_write_bytes(CLOUDFLARED_BINARY_PATH, binary_data, mode=0o755)
+
+    restarted = False
+    if CLOUDFLARED_UNIT_PATH.exists():
+        await _run_checked(
+            ["systemctl", "--user", "restart", CLOUDFLARED_UNIT_NAME],
+            "Failed to restart cloudflared user service after update",
+        )
+        restarted = True
+
+    current_version = await get_cloudflared_binary_version()
+    return {
+        "version_requested": target_version,
+        "version_before": previous_version or None,
+        "version_after": current_version or None,
+        "binary_path": str(CLOUDFLARED_BINARY_PATH),
+        "sha256": actual_sha,
+        "restarted": restarted,
+    }

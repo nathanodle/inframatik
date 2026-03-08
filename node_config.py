@@ -440,18 +440,20 @@ def normalize_worker_allowlist_entry(entry: str) -> str:
 
     try:
         network = ipaddress.ip_network(value, strict=False)
-        return str(network)
     except ValueError:
-        pass
+        network = None
+    if network is not None:
+        return str(network)
 
     raw = value
     if raw.startswith("[") and raw.endswith("]"):
         raw = raw[1:-1]
     try:
         ip = ipaddress.ip_address(raw)
-        return str(ip)
     except ValueError:
-        pass
+        ip = None
+    if ip is not None:
+        return str(ip)
 
     if not _HOST_ENTRY_RE.match(value):
         raise ValueError(f"Invalid allowlist host entry: {entry}")

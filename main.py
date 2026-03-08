@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -26,6 +27,8 @@ from cf_routes import cf_router
 from mcp_routes import mcp_router
 from nodes import stale_checker_loop, heartbeat_sender_loop
 
+logger = logging.getLogger("inframatik.main")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,7 +45,8 @@ async def lifespan(app: FastAPI):
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            logger.debug("Background task cancelled during shutdown: %s", task.get_name())
+            continue
 
 
 app = FastAPI(title="inframatik", lifespan=lifespan)
@@ -65,6 +69,7 @@ _SELF_AUTH_PATHS = {
     "/api/internal/cf/service/status",
     "/api/internal/cf/service/logs",
     "/api/internal/cf/service/restart",
+    "/api/internal/cf/service/update",
 }
 
 
@@ -157,7 +162,11 @@ async def api_system():
 @app.get("/api/tunnel")
 async def api_tunnel():
     status = await get_tunnel_status()
-    status["routes"] = await get_tunnel_routes()
+    try:
+        status["routes"] = await get_tunnel_routes()
+    except ValueError as e:
+        status["routes"] = []
+        status["routes_error"] = str(e)
     return status
 
 

@@ -129,7 +129,7 @@ async def _check_health(address: str) -> str:
                 # Node is reachable but doesn't have cluster code — still online
                 resp2 = await client.get(f"{address}/api/system")
                 status = "online" if resp2.status_code == 200 else "offline"
-    except Exception:
+    except (httpx.HTTPError, ValueError, OSError):
         status = "offline"
     _health_cache[address] = (status, now)
     return status
@@ -262,7 +262,7 @@ async def heartbeat_sender_loop():
         s.connect((master_host, 1))
         local_ip = s.getsockname()[0]
         s.close()
-    except Exception:
+    except (OSError, ValueError):
         local_ip = socket.gethostname()
     worker_address = f"http://{local_ip}:{listen_port}"
 
@@ -289,7 +289,7 @@ async def heartbeat_sender_loop():
                     break
                 else:
                     logger.warning("Registration rejected: %s", resp.text)
-        except Exception as e:
+        except (httpx.HTTPError, ValueError, OSError) as e:
             logger.debug("Registration failed, retrying: %s", e)
         failures += 1
         if failures == 10:
@@ -314,5 +314,5 @@ async def heartbeat_sender_loop():
                         headers=headers,
                         json=register_payload,
                     )
-        except Exception as e:
+        except (httpx.HTTPError, ValueError, OSError) as e:
             logger.debug("Heartbeat failed, will retry: %s", e)

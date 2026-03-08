@@ -1306,10 +1306,11 @@ function cfServiceEndpoint(kind, lines = null) {
 
 function renderCfServiceStatus(status) {
     const stateEl = document.getElementById('cf-service-state');
+    const versionEl = document.getElementById('cf-service-version');
     const enabledEl = document.getElementById('cf-service-enabled');
     const resultEl = document.getElementById('cf-service-result');
     const pidEl = document.getElementById('cf-service-pid');
-    if (!stateEl || !enabledEl || !resultEl || !pidEl) return;
+    if (!stateEl || !versionEl || !enabledEl || !resultEl || !pidEl) return;
 
     const activeState = status.active_state || 'unknown';
     const subState = status.sub_state || '';
@@ -1323,6 +1324,7 @@ function renderCfServiceStatus(status) {
     else if (activeState === 'activating' || activeState === 'deactivating') stateEl.style.color = 'var(--yellow)';
     else stateEl.style.color = 'var(--text-secondary)';
 
+    versionEl.textContent = status.binary_version || '--';
     enabledEl.textContent = status.unit_file_state || 'unknown';
     resultEl.textContent = status.result || '--';
     pidEl.textContent = status.main_pid ? String(status.main_pid) : '--';
@@ -1357,6 +1359,21 @@ async function restartCfService() {
     if (errEl) errEl.textContent = '';
     try {
         await api('POST', cfServiceEndpoint('restart'));
+        await refreshCfServiceControl();
+    } catch (e) {
+        if (errEl) errEl.textContent = e.message;
+    }
+}
+
+async function updateCfService() {
+    const errEl = document.getElementById('cf-service-error');
+    const inputEl = document.getElementById('cf-service-update-version');
+    if (errEl) errEl.textContent = '';
+    const version = inputEl ? inputEl.value.trim() : '';
+    const payload = version ? { version } : {};
+    try {
+        await api('POST', cfServiceEndpoint('update'), payload);
+        if (inputEl) inputEl.value = '';
         await refreshCfServiceControl();
     } catch (e) {
         if (errEl) errEl.textContent = e.message;

@@ -76,7 +76,7 @@ The initial commit shipped a fully functional system with monitoring, service ma
 
 - **Access apps** (`tunnel.py`): Create/delete/list CF Access applications. Self-hosted type with 24h session duration. Policy attachment by ID. Policy discovery by inspecting existing Access apps.
 
-- **CF routes** (`cf_routes.py`): REST endpoints wrapping all tunnel.py functions. Worker tunnel setup flow -- master creates tunnel, gets token, pushes to worker via proxy. Worker-side token receiver starts cloudflared via `sudo /usr/local/bin/infra-cf-setup`.
+- **CF routes** (`cf_routes.py`): REST endpoints wrapping all tunnel.py functions. Worker tunnel setup flow -- master creates tunnel, gets token, pushes to worker via proxy. Worker-side token receiver writes the token to user config and starts `cloudflared` via `systemctl --user`.
 
 - **Setup wizard** (`cf_routes.py`): Multi-step guided flow -- validate API token (fetches accounts), list zones, list/create reusable Access policies, save credentials to node.json. All wizard endpoints accept the token in the request body (credentials not yet saved during wizard).
 

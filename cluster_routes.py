@@ -2,6 +2,7 @@ import asyncio
 import ipaddress
 import logging
 import os
+import tarfile
 from pathlib import Path
 from typing import Optional
 
@@ -423,17 +424,17 @@ async def config_disable_dashboard_access():
     warnings: list[str] = []
     try:
         await remove_tunnel_route(hostname)
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         warnings.append(f"Failed to remove tunnel route: {e}")
         logger.warning("Dashboard access cleanup failed (route %s): %s", hostname, e)
     try:
         await delete_dns_record(hostname)
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         warnings.append(f"Failed to delete DNS record: {e}")
         logger.warning("Dashboard access cleanup failed (dns %s): %s", hostname, e)
     try:
         await delete_access_app(hostname)
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         warnings.append(f"Failed to delete Access app: {e}")
         logger.warning("Dashboard access cleanup failed (access %s): %s", hostname, e)
 
@@ -456,11 +457,15 @@ class WorkerTargetAllowlistBody(BaseModel):
     entries: list[str]
 
 
+def _require_master_for_worker_allowlist(config: Optional[dict]):
+    if not config or config.get("role") != "master":
+        raise HTTPException(403, "Only a master node can manage worker target allowlist")
+
+
 @cluster_router.get("/api/config/worker-target-allowlist")
 async def config_get_worker_target_allowlist():
     config = get_node_config()
-    if not config or config.get("role") != "master":
-        raise HTTPException(400, "Only a master node can manage worker target allowlist")
+    _require_master_for_worker_allowlist(config)
     try:
         entries = get_worker_target_allowlist(config=config)
     except ValueError as e:
@@ -473,6 +478,8 @@ async def config_get_worker_target_allowlist():
 
 @cluster_router.put("/api/config/worker-target-allowlist")
 async def config_set_worker_target_allowlist(body: WorkerTargetAllowlistBody):
+    config = get_node_config()
+    _require_master_for_worker_allowlist(config)
     try:
         entries = set_worker_target_allowlist(body.entries)
     except ValueError as e:
@@ -485,6 +492,8 @@ async def config_set_worker_target_allowlist(body: WorkerTargetAllowlistBody):
 
 @cluster_router.delete("/api/config/worker-target-allowlist")
 async def config_clear_worker_target_allowlist():
+    config = get_node_config()
+    _require_master_for_worker_allowlist(config)
     try:
         entries = set_worker_target_allowlist([])
     except ValueError as e:
@@ -775,6 +784,17 @@ async def proxy_cf_service_restart(node_id: str):
         raise HTTPException(502, str(e))
 
 
+@cluster_router.post("/api/nodes/{node_id}/cf/service/update")
+async def proxy_cf_service_update(node_id: str, body: dict = None):
+    payload = body if isinstance(body, dict) else {}
+    try:
+        return await proxy_to_node(node_id, "POST", "/api/internal/cf/service/update", payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
 # ---------------------------------------------------------------------------
 # Updates / deployment
 # ---------------------------------------------------------------------------
@@ -813,7 +833,7 @@ async def node_update(request: Request):
 
     try:
         apply_package(body)
-    except Exception as e:
+    except (ValueError, OSError, tarfile.TarError) as e:
         raise HTTPException(400, f"Failed to apply package: {e}")
     # Restart in background so the response gets sent first
     asyncio.get_event_loop().call_later(1, restart_service)

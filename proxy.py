@@ -44,14 +44,18 @@ async def proxy_to_node(node_id: str, method: str, path: str, body: dict = None)
 
     if resp.status_code >= 400:
         try:
-            detail = resp.json().get("detail", resp.text)
-        except Exception:
+            data = resp.json()
+            if isinstance(data, dict):
+                detail = data.get("detail", resp.text)
+            else:
+                detail = str(data) or resp.text
+        except ValueError:
             detail = resp.text
         raise RuntimeError(f"Node returned {resp.status_code}: {detail}")
 
     try:
         return resp.json()
-    except Exception:
+    except ValueError:
         raise RuntimeError(f"Node returned non-JSON response")
 
 
@@ -144,7 +148,12 @@ async def _handle_local_services(method: str, route_path: str, query: dict[str, 
     return _NO_MATCH
 
 
-async def _handle_local_cf_service(method: str, route_path: str, query: dict[str, list[str]]):
+async def _handle_local_cf_service(
+    method: str,
+    route_path: str,
+    query: dict[str, list[str]],
+    body: dict = None,
+):
     if not route_path.startswith("/api/internal/cf/service/"):
         return _NO_MATCH
 
@@ -152,6 +161,7 @@ async def _handle_local_cf_service(method: str, route_path: str, query: dict[str
         get_cloudflared_user_service_status,
         get_cloudflared_user_service_logs,
         restart_cloudflared_user_service,
+        update_cloudflared_user_binary,
     )
 
     if route_path == "/api/internal/cf/service/status" and method == "GET":
@@ -165,6 +175,12 @@ async def _handle_local_cf_service(method: str, route_path: str, query: dict[str
     if route_path == "/api/internal/cf/service/restart" and method == "POST":
         service = await restart_cloudflared_user_service()
         return {"status": "restarted", "service": service}
+
+    if route_path == "/api/internal/cf/service/update" and method == "POST":
+        payload = body if isinstance(body, dict) else {}
+        version = payload.get("version")
+        result = await update_cloudflared_user_binary(version=version)
+        return {"status": "updated", "cloudflared": result}
 
     return _NO_MATCH
 
@@ -192,7 +208,7 @@ async def _handle_local(method: str, path: str, body: dict = None):
             status["routes_error"] = str(e)
         return status
 
-    cf_response = await _handle_local_cf_service(method, route_path, query)
+    cf_response = await _handle_local_cf_service(method, route_path, query, body)
     if cf_response is not _NO_MATCH:
         return cf_response
 

@@ -204,6 +204,7 @@
                     <div class="cf-service-state mono-sm" id="cf-service-state">--</div>
                 </div>
                 <div class="cf-service-info">
+                    <span><span class="settings-info-label">Version:</span> <span id="cf-service-version">--</span></span>
                     <span><span class="settings-info-label">Enabled:</span> <span id="cf-service-enabled">--</span></span>
                     <span><span class="settings-info-label">Result:</span> <span id="cf-service-result">--</span></span>
                     <span><span class="settings-info-label">PID:</span> <span id="cf-service-pid">--</span></span>
@@ -211,6 +212,8 @@
                 <div class="cf-service-actions">
                     <button class="btn" onclick="refreshCfServiceControl()">Refresh</button>
                     <button class="btn primary" onclick="restartCfService()">Restart Service</button>
+                    <input type="text" id="cf-service-update-version" placeholder="Version (optional)" autocomplete="off">
+                    <button class="btn" onclick="updateCfService()">Update cloudflared</button>
                 </div>
                 <div class="form-error" id="cf-service-error"></div>
                 <div class="logs-content cf-service-logs" id="cf-service-logs">No logs loaded.</div>

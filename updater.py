@@ -136,7 +136,7 @@ def get_version() -> dict:
             info["summary"] = info["commit"]
             if info["dirty"]:
                 info["summary"] += " (modified)"
-    except Exception as e:
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
         logger.debug("Failed to read git version metadata: %s", e)
     return info
 

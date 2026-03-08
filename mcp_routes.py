@@ -4,6 +4,8 @@ Implements the MCP JSON-RPC protocol directly over HTTP. No external MCP SDK nee
 Auth uses scoped service tokens (svc_...) validated by the main auth middleware.
 """
 
+import logging
+
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -18,6 +20,7 @@ from services import (
 )
 
 mcp_router = APIRouter()
+logger = logging.getLogger("inframatik.mcp")
 
 PROTOCOL_VERSION = "2025-03-26"
 
@@ -182,6 +185,66 @@ _TOOL_REQUIRED_CAPABILITY = {
 
 
 # ---------------------------------------------------------------------------
+# MCP method handlers
+# ---------------------------------------------------------------------------
+
+def _handle_mcp_protocol_method(req_id, method: str, token_capability: str):
+    if method == "initialize":
+        return _jsonrpc_result(req_id, {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {"tools": {}},
+            "serverInfo": SERVER_INFO,
+        })
+    if method == "notifications/initialized":
+        # Client acknowledgment — no response needed but return OK
+        return _jsonrpc_result(req_id, {})
+    if method == "tools/list":
+        allowed_tools = []
+        for tool in TOOLS:
+            required = _TOOL_REQUIRED_CAPABILITY.get(tool["name"], "deploy")
+            if service_token_capability_allows(token_capability, required):
+                allowed_tools.append(tool)
+        return _jsonrpc_result(req_id, {"tools": allowed_tools})
+    return None
+
+
+async def _handle_mcp_tool_call(req_id, scope: str, token_capability: str, params: dict):
+    if not isinstance(params, dict):
+        return _jsonrpc_error(req_id, -32602, "Invalid params")
+
+    tool_name = params.get("name")
+    tool_args = params.get("arguments", {})
+    if tool_args is None:
+        tool_args = {}
+    if not isinstance(tool_args, dict):
+        return _jsonrpc_error(req_id, -32602, "Invalid params: arguments must be an object")
+
+    handler = _TOOL_HANDLERS.get(tool_name)
+    if not handler:
+        return _jsonrpc_error(req_id, -32602, f"Unknown tool: {tool_name}")
+
+    required = _TOOL_REQUIRED_CAPABILITY.get(tool_name, "deploy")
+    if not service_token_capability_allows(token_capability, required):
+        return _jsonrpc_error(
+            req_id,
+            -32603,
+            f"Tool '{tool_name}' requires '{required}' capability",
+        )
+
+    try:
+        result = await handler(scope, tool_args)
+        return _jsonrpc_result(req_id, {
+            "content": [{"type": "text", "text": result.get("text", "")}],
+        })
+    except (ValueError, RuntimeError, TypeError, OSError) as e:
+        logger.debug("MCP tool call failed: tool=%s error=%s", tool_name, e)
+        return _jsonrpc_result(req_id, {
+            "content": [{"type": "text", "text": f"Error: {e}"}],
+            "isError": True,
+        })
+
+
+# ---------------------------------------------------------------------------
 # MCP endpoint
 # ---------------------------------------------------------------------------
 
@@ -195,60 +258,24 @@ async def mcp_endpoint(request: Request):
 
     try:
         body = await request.json()
-    except Exception:
+    except ValueError:
+        logger.debug("MCP parse error on request body")
         return _jsonrpc_error(None, -32700, "Parse error")
+    if not isinstance(body, dict):
+        return _jsonrpc_error(None, -32600, "Invalid request: body must be an object")
 
     req_id = body.get("id")
     method = body.get("method")
 
-    if not method:
+    if not isinstance(method, str) or not method:
         return _jsonrpc_error(req_id, -32600, "Invalid request: missing method")
 
-    # MCP protocol methods
-    if method == "initialize":
-        return _jsonrpc_result(req_id, {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {"tools": {}},
-            "serverInfo": SERVER_INFO,
-        })
-
-    if method == "notifications/initialized":
-        # Client acknowledgment — no response needed but return OK
-        return _jsonrpc_result(req_id, {})
-
-    if method == "tools/list":
-        allowed_tools = []
-        for tool in TOOLS:
-            required = _TOOL_REQUIRED_CAPABILITY.get(tool["name"], "deploy")
-            if service_token_capability_allows(token_capability, required):
-                allowed_tools.append(tool)
-        return _jsonrpc_result(req_id, {"tools": allowed_tools})
+    protocol_response = _handle_mcp_protocol_method(req_id, method, token_capability)
+    if protocol_response is not None:
+        return protocol_response
 
     if method == "tools/call":
         params = body.get("params", {})
-        tool_name = params.get("name")
-        tool_args = params.get("arguments", {})
-
-        handler = _TOOL_HANDLERS.get(tool_name)
-        if not handler:
-            return _jsonrpc_error(req_id, -32602, f"Unknown tool: {tool_name}")
-        required = _TOOL_REQUIRED_CAPABILITY.get(tool_name, "deploy")
-        if not service_token_capability_allows(token_capability, required):
-            return _jsonrpc_error(
-                req_id,
-                -32603,
-                f"Tool '{tool_name}' requires '{required}' capability",
-            )
-
-        try:
-            result = await handler(scope, tool_args)
-            return _jsonrpc_result(req_id, {
-                "content": [{"type": "text", "text": result.get("text", "")}],
-            })
-        except Exception as e:
-            return _jsonrpc_result(req_id, {
-                "content": [{"type": "text", "text": f"Error: {e}"}],
-                "isError": True,
-            })
+        return await _handle_mcp_tool_call(req_id, scope, token_capability, params)
 
     return _jsonrpc_error(req_id, -32601, f"Method not found: {method}")

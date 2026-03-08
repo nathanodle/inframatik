@@ -31,7 +31,7 @@ def api_request(endpoint, method, path, body=None, token=None):
         try:
             err = json.loads(e.read())
             detail = err.get("detail", str(e))
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             detail = str(e)
         print(f"  Error: {detail}", file=sys.stderr)
         return None
@@ -330,7 +330,7 @@ def cmd_rotate():
 
     try:
         config = json.loads(cfg_path.read_text())
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         print("Error: .inframatik is not valid JSON.", file=sys.stderr)
         sys.exit(1)
 
