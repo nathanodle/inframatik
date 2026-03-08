@@ -335,7 +335,7 @@ async def check_auth(request) -> bool:
     cf_jwt_cookie = request.cookies.get("CF_Authorization", "")
     cf_jwt = cf_jwt_header or cf_jwt_cookie
     if cf_jwt and config:
-        logger.warning("CF JWT found (header=%d, cookie=%d), attempting validation", len(cf_jwt_header), len(cf_jwt_cookie))
+        logger.warning("CF JWT found (header=%d, cookie=%d), jwt=%s...", len(cf_jwt_header), len(cf_jwt_cookie), cf_jwt[:80])
         try:
             result = await validate_cf_access(cf_jwt, config)
             if result:
