@@ -345,6 +345,12 @@ async def check_auth(request) -> bool:
             result = await validate_cf_access(cf_jwt, config)
             if result:
                 logger.debug("CF JWT validation succeeded")
+                # Extract email from JWT for display
+                try:
+                    claims = jwt.decode(cf_jwt, options={"verify_signature": False, "verify_aud": False})
+                    request.state.user_email = claims.get("email", "")
+                except Exception:
+                    pass
                 return True
             else:
                 logger.debug("CF JWT validation returned False")

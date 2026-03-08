@@ -154,6 +154,13 @@ async def auth_status():
     return {"has_password": has_admin_password()}
 
 
+@cluster_router.get("/api/auth/me")
+async def auth_me(request: Request):
+    """Return the current user's identity."""
+    email = getattr(request.state, "user_email", None)
+    return {"email": email, "auth_method": "cf_access" if email else "session"}
+
+
 @cluster_router.post("/api/auth/login")
 async def auth_login(body: LoginBody, request: Request):
     from node_config import verify_admin_password

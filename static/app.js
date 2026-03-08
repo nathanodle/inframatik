@@ -2112,6 +2112,17 @@ async function loadVersionTag() {
     } catch (e) {}
 }
 
+async function loadUserInfo() {
+    try {
+        const me = await api('GET', '/api/auth/me');
+        const el = document.getElementById('user-email');
+        if (me.email) {
+            el.textContent = me.email;
+            el.style.display = '';
+        }
+    } catch (e) {}
+}
+
 // ---- Auth flow ----
 
 function showLogin() {
@@ -2151,6 +2162,7 @@ async function checkAuthAndInit() {
     const configured = await initCluster();
     if (configured) {
         loadVersionTag();
+        loadUserInfo();
         refreshAll();
         refreshInterval = setInterval(refreshAll, 5000);
     }
@@ -2174,6 +2186,7 @@ async function submitLogin() {
         const configured = await initCluster();
         if (configured) {
             loadVersionTag();
+        loadUserInfo();
             refreshAll();
             refreshInterval = setInterval(refreshAll, 5000);
         }
@@ -2211,6 +2224,7 @@ async function submitSetPassword() {
         const configured = await initCluster();
         if (configured) {
             loadVersionTag();
+        loadUserInfo();
             refreshAll();
             refreshInterval = setInterval(refreshAll, 5000);
         }
