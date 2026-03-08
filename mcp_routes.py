@@ -31,6 +31,33 @@ SERVER_INFO = {
 
 TOOLS = [
     {
+        "name": "register",
+        "description": "Register the service without starting it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The start command (e.g. 'uvicorn main:app --host 127.0.0.1')",
+                },
+                "working_dir": {
+                    "type": "string",
+                    "description": "Absolute path to the working directory",
+                },
+                "hostname": {
+                    "type": "string",
+                    "description": "Optional CF hostname for public access (e.g. 'myapp.example.com')",
+                },
+                "lan": {
+                    "type": "boolean",
+                    "description": "If true, bind service host to 0.0.0.0 instead of 127.0.0.1",
+                    "default": False,
+                },
+            },
+            "required": ["command", "working_dir"],
+        },
+    },
+    {
         "name": "deploy",
         "description": "Register the service and start it. If already registered, just starts it.",
         "inputSchema": {
@@ -47,6 +74,11 @@ TOOLS = [
                 "hostname": {
                     "type": "string",
                     "description": "Optional CF hostname for public access (e.g. 'myapp.example.com')",
+                },
+                "lan": {
+                    "type": "boolean",
+                    "description": "If true, bind service host to 0.0.0.0 instead of 127.0.0.1",
+                    "default": False,
                 },
             },
             "required": ["command", "working_dir"],
@@ -102,10 +134,50 @@ def _jsonrpc_error(req_id, code, message):
 # Tool implementations
 # ---------------------------------------------------------------------------
 
+async def _tool_register(service_name: str, args: dict) -> dict:
+    command = args.get("command", "")
+    working_dir = args.get("working_dir", ".")
+    hostname = args.get("hostname")
+    lan = args.get("lan", False)
+    if not isinstance(lan, bool):
+        raise ValueError("lan must be a boolean")
+
+    services = await list_services()
+    existing = next((s for s in services if s.get("name") == service_name), None)
+    if existing:
+        return {
+            "text": (
+                f"Service '{service_name}' is already registered. "
+                f"Status: {existing.get('status', 'unknown')}, "
+                f"Port: {existing.get('port', '?')}"
+            )
+        }
+
+    svc = await register_service(
+        name=service_name,
+        command=command,
+        working_dir=working_dir,
+        hostname=hostname,
+        lan=lan,
+    )
+    port = svc.get("port", "?")
+    bind_host = "0.0.0.0" if lan else "127.0.0.1"
+    result = (
+        f"Service '{service_name}' registered on port {port} "
+        f"(bind host {bind_host})."
+    )
+    if hostname:
+        result += f"\nPublic URL: https://{hostname}"
+    return {"text": result}
+
+
 async def _tool_deploy(service_name: str, args: dict) -> dict:
     command = args.get("command", "")
     working_dir = args.get("working_dir", ".")
     hostname = args.get("hostname")
+    lan = args.get("lan", False)
+    if not isinstance(lan, bool):
+        raise ValueError("lan must be a boolean")
 
     # Check if already registered
     services = await list_services()
@@ -124,6 +196,7 @@ async def _tool_deploy(service_name: str, args: dict) -> dict:
         command=command,
         working_dir=working_dir,
         hostname=hostname,
+        lan=lan,
     )
 
     # Start it
@@ -168,6 +241,7 @@ async def _tool_status(service_name: str, args: dict) -> dict:
 
 
 _TOOL_HANDLERS = {
+    "register": _tool_register,
     "deploy": _tool_deploy,
     "restart": _tool_restart,
     "stop": _tool_stop,
@@ -176,6 +250,7 @@ _TOOL_HANDLERS = {
 }
 
 _TOOL_REQUIRED_CAPABILITY = {
+    "register": "deploy",
     "deploy": "deploy",
     "restart": "operate",
     "stop": "operate",

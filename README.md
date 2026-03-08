@@ -142,10 +142,11 @@ A model reads this file and knows how to deploy via `curl` — no MCP required.
 
 ### MCP server
 
-inframatik includes a built-in MCP server at `/mcp` (streamable HTTP transport). Five tools:
+inframatik includes a built-in MCP server at `/mcp` (streamable HTTP transport). Six tools:
 
 | Tool | Description |
 |------|-------------|
+| `register` | Register the service without starting it |
 | `deploy` | Register and start the service |
 | `restart` | Restart the service |
 | `stop` | Stop the service |

@@ -373,7 +373,7 @@ def cmd_mcp():
     print("Auth: service token (from .inframatik)")
     print()
     print("If you ran 'inframatik init', your agent harness is already configured.")
-    print("The MCP server exposes: deploy, restart, stop, logs, status")
+    print("The MCP server exposes: register, deploy, restart, stop, logs, status")
 
 
 # ---------------------------------------------------------------------------

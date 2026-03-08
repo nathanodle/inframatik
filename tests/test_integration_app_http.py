@@ -247,6 +247,19 @@ def test_mcp_tools_list_limited_for_read_capability():
     assert tools == {"logs", "status"}
 
 
+def test_mcp_tools_list_includes_register_for_deploy_capability():
+    resp = _request(
+        "POST",
+        "/mcp",
+        json_body={"id": 21, "method": "tools/list"},
+        patches=((auth, "check_auth", _scoped_auth("svc-a", "deploy")),),
+    )
+    assert resp.status_code == 200
+    tools = {t["name"] for t in resp.json()["result"]["tools"]}
+    assert "register" in tools
+    assert "deploy" in tools
+
+
 def test_mcp_tools_call_invalid_params_shape():
     resp = _request(
         "POST",

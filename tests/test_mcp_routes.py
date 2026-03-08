@@ -61,6 +61,7 @@ def test_protocol_tools_list_filters_by_capability_read():
     tool_names = {t["name"] for t in payload["result"]["tools"]}
     assert "logs" in tool_names
     assert "status" in tool_names
+    assert "register" not in tool_names
     assert "deploy" not in tool_names
     assert "restart" not in tool_names
     assert "stop" not in tool_names
@@ -74,11 +75,24 @@ def test_protocol_tools_list_filters_by_capability_operate():
     assert "status" in tool_names
     assert "restart" in tool_names
     assert "stop" in tool_names
+    assert "register" not in tool_names
     assert "deploy" not in tool_names
 
 
+def test_protocol_tools_list_includes_register_for_deploy_capability():
+    resp = mcp_routes._handle_mcp_protocol_method(5, "tools/list", "deploy")
+    payload = _response_json(resp)
+    tool_names = {t["name"] for t in payload["result"]["tools"]}
+    assert "register" in tool_names
+    assert "deploy" in tool_names
+    assert "restart" in tool_names
+    assert "stop" in tool_names
+    assert "logs" in tool_names
+    assert "status" in tool_names
+
+
 def test_protocol_unknown_method_returns_none():
-    assert mcp_routes._handle_mcp_protocol_method(5, "unknown/method", "deploy") is None
+    assert mcp_routes._handle_mcp_protocol_method(6, "unknown/method", "deploy") is None
 
 
 def test_tool_call_rejects_non_dict_params():
@@ -118,6 +132,58 @@ def test_tool_call_capability_denied():
     )
     payload = _response_json(resp)
     assert payload["error"]["code"] == -32603
+
+
+def test_tool_call_register_success():
+    original_list = mcp_routes.list_services
+    original_register = mcp_routes.register_service
+    original_start = mcp_routes.start_service
+
+    async def fake_list_services():
+        return []
+
+    async def fake_register_service(name, command, working_dir, hostname=None, lan=False):
+        assert name == "svc-a"
+        assert command == "python app.py"
+        assert working_dir == "/tmp"
+        assert hostname == "app.example.com"
+        assert lan is True
+        return {"name": name, "port": 8123, "status": "inactive"}
+
+    async def fake_start_service(_name):
+        raise AssertionError("register tool must not start the service")
+
+    mcp_routes.list_services = fake_list_services
+    mcp_routes.register_service = fake_register_service
+    mcp_routes.start_service = fake_start_service
+    try:
+        resp = asyncio.run(
+            mcp_routes._handle_mcp_tool_call(
+                5,
+                "svc-a",
+                "deploy",
+                {
+                    "name": "register",
+                    "arguments": {
+                        "command": "python app.py",
+                        "working_dir": "/tmp",
+                        "hostname": "app.example.com",
+                        "lan": True,
+                    },
+                },
+            )
+        )
+    finally:
+        mcp_routes.list_services = original_list
+        mcp_routes.register_service = original_register
+        mcp_routes.start_service = original_start
+
+    payload = _response_json(resp)
+    assert payload["result"]["content"][0]["type"] == "text"
+    text = payload["result"]["content"][0]["text"]
+    assert "registered on port 8123" in text
+    assert "bind host 0.0.0.0" in text
+    assert "https://app.example.com" in text
 
 
 def test_tool_call_success_result_shape():
