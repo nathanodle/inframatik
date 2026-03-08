@@ -267,34 +267,39 @@ async def validate_cf_access(token: str, config: dict) -> bool:
             # Decode WITHOUT verification just to peek at issuer
             unverified = jwt.decode(token, options={"verify_signature": False, "verify_aud": False})
             iss = unverified.get("iss", "")
-            logger.debug("CF JWT auto-discovery: iss=%s, aud_from_jwt=%s", iss, unverified.get("aud"))
+            logger.warning("CF JWT auto-discovery: iss=%s, aud_from_jwt=%s", iss, unverified.get("aud"))
             # iss must be https://<team>.cloudflareaccess.com — reject anything else
             if iss.endswith(".cloudflareaccess.com") or ".cloudflareaccess.com/" in iss:
                 team_domain = iss.split("//")[-1].split(".cloudflareaccess.com")[0]
                 if not team_domain or "/" in team_domain or "." in team_domain:
-                    logger.debug("CF JWT: rejected suspicious team_domain=%s", team_domain)
+                    logger.warning("CF JWT: rejected suspicious team_domain=%s", team_domain)
                     team_domain = ""  # reject suspicious values
                 else:
-                    logger.debug("CF JWT: discovered team_domain=%s", team_domain)
+                    logger.warning("CF JWT: discovered team_domain=%s", team_domain)
                 # Also auto-discover AUD if not set
                 if not aud:
                     aud = unverified.get("aud", [None])[0] if isinstance(unverified.get("aud"), list) else unverified.get("aud")
             else:
-                logger.debug("CF JWT: issuer '%s' is not cloudflareaccess.com", iss)
+                logger.warning("CF JWT: issuer '%s' is not cloudflareaccess.com", iss)
         except Exception as e:
-            logger.debug("CF JWT: failed to peek at unverified claims: %s", e)
+            logger.warning("CF JWT: failed to peek at unverified claims: %s", e)
             pass
 
     if not team_domain or not aud:
+        logger.warning("CF JWT: missing team_domain=%s or aud=%s", team_domain, bool(aud))
         return False
 
     issuer = config.get("cf_access_issuer")
     if not issuer:
         issuer = f"https://{team_domain}.cloudflareaccess.com"
+    logger.warning("CF JWT: fetching keys for team_domain=%s, aud=%s..., issuer=%s", team_domain, str(aud)[:20], issuer)
     keys = await _fetch_cf_keys(team_domain)
     if not keys:
+        logger.warning("CF JWT: no keys returned from CF")
         return False
+    logger.warning("CF JWT: got %d keys, validating...", len(keys))
     valid = _validate_cf_jwt_sync(token, keys, aud, issuer=issuer)
+    logger.warning("CF JWT: validation result=%s", valid)
 
     # Auto-store discovered values for future use
     if valid and not config.get("cf_team_domain"):
