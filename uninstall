@@ -1,9 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 echo ""
 echo "  inframatik uninstall"
 echo ""
+
+# --- CF cleanup (before we delete config) ---
+CONFIG_FILE="$HOME/.config/inframatik/node.json"
+if [ -f "$CONFIG_FILE" ]; then
+    # Check if CF is configured and offer to clean up
+    HAS_CF=$(python3 -c "
+import json, sys
+try:
+    cfg = json.load(open('$CONFIG_FILE'))
+    has_cf = bool(cfg.get('cf_token') and cfg.get('cf_account_id'))
+    print('yes' if has_cf else 'no')
+except Exception:
+    print('no')
+" 2>/dev/null || echo "no")
+
+    if [ "$HAS_CF" = "yes" ]; then
+        echo "==> Cloudflare resources detected"
+        echo ""
+        read -p "  Clean up Cloudflare resources (tunnel, DNS, Access apps)? [Y/n] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            echo ""
+            python3 "$REPO_DIR/cf_cleanup.py" "$CONFIG_FILE"
+            echo ""
+        fi
+    fi
+fi
 
 # --- Stop and remove managed services ---
 MANAGED=$(systemctl --user list-units --type=service --no-legend 2>/dev/null | grep 'infra-' | awk '{print $1}' || true)
@@ -60,7 +89,6 @@ fi
 if grep -q 'inframatik' ~/.bashrc 2>/dev/null; then
     echo "==> Cleaning .bashrc..."
     sed -i '/inframatik/d' ~/.bashrc
-    # Remove blank lines left behind
     sed -i '/^$/N;/^\n$/d' ~/.bashrc
 fi
 
