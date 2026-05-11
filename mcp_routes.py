@@ -32,17 +32,25 @@ SERVER_INFO = {
 TOOLS = [
     {
         "name": "register",
-        "description": "Register the service and start it. If already registered, just starts it.",
+        "description": (
+            "Register the service and start it. If already registered, just starts it. "
+            ".inframatik is a secret config file, not a runtime data directory; do not store "
+            "SQLite databases, uploads, caches, or other app data under .inframatik."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The start command (e.g. 'uvicorn main:app --host 127.0.0.1')",
+                    "description": (
+                        "The start command (e.g. 'uvicorn main:app --host 127.0.0.1'). "
+                        "If setting data-directory env vars, use the app's documented data "
+                        "directory or platform default, never .inframatik or .inframatik/."
+                    ),
                 },
                 "working_dir": {
                     "type": "string",
-                    "description": "Absolute path to the working directory",
+                    "description": "Absolute path to the working directory, usually the app or repo root.",
                 },
                 "hostname": {
                     "type": "string",

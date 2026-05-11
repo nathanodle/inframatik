@@ -54,6 +54,13 @@ def test_protocol_notifications_initialized_returns_ok():
     assert resp.body == b""
 
 
+def test_register_tool_warns_against_inframatik_data_dir():
+    register_tool = next(t for t in mcp_routes.TOOLS if t["name"] == "register")
+    assert ".inframatik is a secret config file" in register_tool["description"]
+    command_description = register_tool["inputSchema"]["properties"]["command"]["description"]
+    assert "never .inframatik" in command_description
+
+
 def test_protocol_tools_list_filters_by_capability_read():
     resp = mcp_routes._handle_mcp_protocol_method(3, "tools/list", "read")
     payload = _response_json(resp)

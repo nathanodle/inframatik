@@ -221,6 +221,8 @@ def test_build_inframatik_instructions_with_hostname():
     assert '"hostname": "uderp.discovery-tech.com"' in instructions
     assert "full public hostname/FQDN" in instructions
     assert "not just a subdomain label" in instructions
+    assert ".inframatik is a secret config file, not an application data directory" in instructions
+    assert "Do not create .inframatik/data" in instructions
 
 
 def test_build_inframatik_instructions_with_access_policy():
@@ -238,6 +240,12 @@ def test_build_inframatik_instructions_without_hostname():
     assert '"hostname"' not in instructions
     assert "like app.example.com" in instructions
     assert "full public hostname/FQDN" in instructions
+    assert ".inframatik is a secret config file, not an application data directory" in instructions
+
+
+def test_deployment_instructions_warn_against_inframatik_data_dir():
+    assert "`.inframatik` is a secret config file" in cli.DEPLOYMENT_INSTRUCTIONS
+    assert "Do not store SQLite databases" in cli.DEPLOYMENT_INSTRUCTIONS
 
 
 def test_choose_access_policy_returns_selected_existing_policy():

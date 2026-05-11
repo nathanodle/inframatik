@@ -164,7 +164,9 @@ def append_instructions(path, content):
 
 DEPLOYMENT_INSTRUCTIONS = """## Deployment
 
-This app is deployed via inframatik. See `.inframatik` for API endpoint, auth token, and usage instructions."""
+This app is deployed via inframatik. See `.inframatik` for API endpoint, auth token, and usage instructions.
+
+`.inframatik` is a secret config file, not an application data directory. Do not store SQLite databases, uploads, caches, or other runtime data under `.inframatik` or `.inframatik/`; use the app's documented data directory or platform default instead."""
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +209,11 @@ def build_inframatik_instructions(service, hostname=None, access_policy_id=None)
         build_service_registration_body(service, hostname, access_policy_id)
     )
     notes = []
+    notes.append(
+        "Runtime data: .inframatik is a secret config file, not an application data directory. "
+        "Do not create .inframatik/data or store SQLite databases, uploads, caches, or other runtime files under it; "
+        "use the app's documented data directory or platform default instead."
+    )
     if hostname:
         notes.append(
             f"Hostname: use the full public hostname/FQDN exactly as configured here "
