@@ -1,5 +1,6 @@
 """Tests for inframatik CLI config file editing functions."""
 
+import builtins
 import json
 import os
 import sys
@@ -148,6 +149,157 @@ def test_secure_write_text_mode_600():
     """Secure writes should enforce restrictive mode even for new files."""
     cli.secure_write_text(".inframatik", "{}\n")
     assert (Path(".inframatik").stat().st_mode & 0o777) == 0o600
+
+
+# ---------------------------------------------------------------------------
+# .inframatik instruction generation tests
+# ---------------------------------------------------------------------------
+
+def test_build_service_registration_body_with_hostname():
+    payload = cli.build_service_registration_body("uderp", "uderp.discovery-tech.com")
+    assert payload["name"] == "uderp"
+    assert payload["hostname"] == "uderp.discovery-tech.com"
+
+
+def test_build_service_registration_body_with_access_policy():
+    payload = cli.build_service_registration_body(
+        "uderp",
+        "uderp.discovery-tech.com",
+        "pol-123",
+    )
+    assert payload["access_policy_id"] == "pol-123"
+
+
+def test_normalize_public_hostname_accepts_fqdn():
+    hostname = cli.normalize_public_hostname(" UDERP.Discovery-Tech.com. ")
+    assert hostname == "uderp.discovery-tech.com"
+
+
+def test_normalize_public_hostname_rejects_single_label():
+    try:
+        cli.normalize_public_hostname("uderp")
+    except ValueError as e:
+        assert "include a domain" in str(e)
+        return
+    raise AssertionError("Expected ValueError")
+
+
+def test_normalize_public_hostname_rejects_scheme_or_port():
+    try:
+        cli.normalize_public_hostname("https://uderp.discovery-tech.com:8443")
+    except ValueError as e:
+        assert "without scheme, path, or port" in str(e)
+        return
+    raise AssertionError("Expected ValueError")
+
+
+def test_normalize_public_hostname_rejects_wildcard():
+    try:
+        cli.normalize_public_hostname("*.discovery-tech.com")
+    except ValueError as e:
+        assert "not a wildcard" in str(e)
+        return
+    raise AssertionError("Expected ValueError")
+
+
+def test_normalize_public_hostname_rejects_ip_address():
+    try:
+        cli.normalize_public_hostname("127.0.0.1")
+    except ValueError as e:
+        assert "not an IP address" in str(e)
+        return
+    raise AssertionError("Expected ValueError")
+
+
+def test_build_inframatik_instructions_with_hostname():
+    instructions = cli.build_inframatik_instructions("uderp", "uderp.discovery-tech.com")
+    assert '"hostname": "uderp.discovery-tech.com"' in instructions
+    assert "full public hostname/FQDN" in instructions
+    assert "not just a subdomain label" in instructions
+
+
+def test_build_inframatik_instructions_with_access_policy():
+    instructions = cli.build_inframatik_instructions(
+        "uderp",
+        "uderp.discovery-tech.com",
+        "pol-123",
+    )
+    assert '"access_policy_id": "pol-123"' in instructions
+    assert "Access policy: use reusable Cloudflare Access policy ID pol-123" in instructions
+
+
+def test_build_inframatik_instructions_without_hostname():
+    instructions = cli.build_inframatik_instructions("uderp")
+    assert '"hostname"' not in instructions
+    assert "like app.example.com" in instructions
+    assert "full public hostname/FQDN" in instructions
+
+
+def test_choose_access_policy_returns_selected_existing_policy():
+    original_api_request = cli.api_request
+    original_input = builtins.input
+    policies = [
+        {"id": "pol-1", "name": "Admins", "members": [{"kind": "email", "value": "a@example.com"}]},
+        {"id": "pol-2", "name": "Team", "members": [{"kind": "email_domain", "value": "example.com"}]},
+    ]
+    prompts = iter(["2"])
+
+    def fake_api_request(endpoint, method, path, body=None, token=None):
+        assert endpoint == ENDPOINT
+        assert method == "GET"
+        assert path == "/api/cf/access/policies"
+        assert token == TOKEN
+        return policies
+
+    def fake_input(_prompt=""):
+        return next(prompts)
+
+    cli.api_request = fake_api_request
+    builtins.input = fake_input
+    try:
+        selected = cli.choose_access_policy(ENDPOINT, TOKEN)
+    finally:
+        cli.api_request = original_api_request
+        builtins.input = original_input
+
+    assert selected["id"] == "pol-2"
+
+
+def test_choose_access_policy_can_create_new_policy():
+    original_api_request = cli.api_request
+    original_input = builtins.input
+    calls = []
+    prompts = iter(["n", "Uderp Team", "team.example.com"])
+
+    def fake_api_request(endpoint, method, path, body=None, token=None):
+        calls.append((method, path, body, token))
+        if method == "GET":
+            return []
+        if method == "POST":
+            return {
+                "status": "created",
+                "policy": {"id": "pol-new", "name": "Uderp Team", "members": []},
+            }
+        raise AssertionError("Unexpected api_request call")
+
+    def fake_input(_prompt=""):
+        return next(prompts)
+
+    cli.api_request = fake_api_request
+    builtins.input = fake_input
+    try:
+        selected = cli.choose_access_policy(ENDPOINT, TOKEN)
+    finally:
+        cli.api_request = original_api_request
+        builtins.input = original_input
+
+    assert selected["id"] == "pol-new"
+    assert calls[0][0:2] == ("GET", "/api/cf/access/policies")
+    assert calls[1][0:3] == (
+        "POST",
+        "/api/cf/access/policies",
+        {"name": "Uderp Team", "value": "team.example.com"},
+    )
 
 
 # ---------------------------------------------------------------------------

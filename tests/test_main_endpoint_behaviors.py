@@ -136,18 +136,28 @@ def test_api_register_service_maps_value_error():
 
 def test_api_register_service_success():
     original_register = main.register_service
+    seen = {}
 
     async def fake_register(**kwargs):
+        seen.update(kwargs)
         return {"name": kwargs["name"], "status": "inactive"}
 
     main.register_service = fake_register
     try:
-        body = main.ServiceCreate(name="svc-a", command="python app.py", working_dir="/tmp/app")
+        body = main.ServiceCreate(
+            name="svc-a",
+            command="python app.py",
+            working_dir="/tmp/app",
+            hostname="app.example.com",
+            access_policy_id="pol-1",
+        )
         result = _run(main.api_register_service(body, _DummyRequest(scope=None)))
     finally:
         main.register_service = original_register
 
     assert result == {"name": "svc-a", "status": "inactive"}
+    assert seen["hostname"] == "app.example.com"
+    assert seen["access_policy_id"] == "pol-1"
 
 
 def test_api_deregister_service_maps_not_found():

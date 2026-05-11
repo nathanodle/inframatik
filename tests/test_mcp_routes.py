@@ -142,11 +142,19 @@ def test_tool_call_register_success():
     async def fake_list_services():
         return []
 
-    async def fake_register_service(name, command, working_dir, hostname=None, lan=False):
+    async def fake_register_service(
+        name,
+        command,
+        working_dir,
+        hostname=None,
+        access_policy_id=None,
+        lan=False,
+    ):
         assert name == "svc-a"
         assert command == "python app.py"
         assert working_dir == "/tmp"
         assert hostname == "app.example.com"
+        assert access_policy_id == "pol-1"
         assert lan is True
         return {"name": name, "port": 8123, "status": "inactive"}
 
@@ -169,6 +177,7 @@ def test_tool_call_register_success():
                         "command": "python app.py",
                         "working_dir": "/tmp",
                         "hostname": "app.example.com",
+                        "access_policy_id": "pol-1",
                         "lan": True,
                     },
                 },

@@ -1,5 +1,6 @@
 import base64
 import logging
+import re
 import secrets
 from typing import Optional
 
@@ -7,6 +8,10 @@ import httpx
 
 METRICS_URL = "http://127.0.0.1:20241/metrics"
 logger = logging.getLogger("inframatik.tunnel")
+_ACCESS_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_ACCESS_EMAIL_DOMAIN_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +412,104 @@ async def list_dns_records() -> list[dict]:
 # Access applications
 # ---------------------------------------------------------------------------
 
+
+def _shape_access_app(app: dict) -> dict:
+    return {
+        "id": app["id"],
+        "name": app.get("name", ""),
+        "domain": app.get("domain", ""),
+        "type": app.get("type", ""),
+        "session_duration": app.get("session_duration", ""),
+        "app_launcher_visible": app.get("app_launcher_visible", True),
+        "policies": app.get("policies", []),
+    }
+
+
+def _extract_access_policy_member(rule: dict) -> Optional[dict]:
+    if not isinstance(rule, dict):
+        return None
+
+    email = rule.get("email")
+    if isinstance(email, dict):
+        value = str(email.get("email", "")).strip().lower()
+        if value:
+            return {"kind": "email", "value": value}
+
+    email_domain = rule.get("email_domain")
+    if isinstance(email_domain, dict):
+        value = str(email_domain.get("domain", "")).strip().lower()
+        if value:
+            return {"kind": "email_domain", "value": value}
+
+    return None
+
+
+def _extract_access_policy_members(include: list) -> list[dict]:
+    members = []
+    for rule in include:
+        member = _extract_access_policy_member(rule)
+        if member:
+            members.append(member)
+    return members
+
+
+def _shape_access_policy(policy: dict) -> dict:
+    include = policy.get("include", [])
+    if not isinstance(include, list):
+        include = []
+    return {
+        "id": policy["id"],
+        "name": policy.get("name", ""),
+        "decision": policy.get("decision", ""),
+        "include": include,
+        "exclude": policy.get("exclude", []),
+        "require": policy.get("require", []),
+        "approval_groups": policy.get("approval_groups", []),
+        "approval_required": policy.get("approval_required"),
+        "purpose_justification_prompt": policy.get("purpose_justification_prompt"),
+        "purpose_justification_required": policy.get("purpose_justification_required"),
+        "session_duration": policy.get("session_duration"),
+        "connection_rules": policy.get("connection_rules"),
+        "members": _extract_access_policy_members(include),
+    }
+
+
+def _normalize_access_policy_member(value: str) -> tuple[str, str, dict]:
+    raw = (value or "").strip().lower()
+    if not raw:
+        raise ValueError("Policy member is required")
+
+    if "@" in raw:
+        if not _ACCESS_EMAIL_RE.fullmatch(raw):
+            raise ValueError("Policy member must be a valid email or literal email domain")
+        return "email", raw, {"email": {"email": raw}}
+
+    domain = raw[1:] if raw.startswith("@") else raw
+    if not _ACCESS_EMAIL_DOMAIN_RE.fullmatch(domain):
+        raise ValueError("Policy member must be a valid email or literal email domain")
+    return "email_domain", domain, {"email_domain": {"domain": domain}}
+
+
+def _policy_update_payload(policy: dict, include: list[dict]) -> dict:
+    payload = {
+        "name": policy.get("name", ""),
+        "decision": policy.get("decision", "allow"),
+        "include": include,
+    }
+    for key in (
+        "exclude",
+        "require",
+        "approval_groups",
+        "approval_required",
+        "purpose_justification_prompt",
+        "purpose_justification_required",
+        "session_duration",
+        "connection_rules",
+    ):
+        if key in policy and policy.get(key) is not None:
+            payload[key] = policy.get(key)
+    return payload
+
 async def create_access_app(name: str, hostname: str, policy_id: str) -> dict:
     """Create a CF Access Application with specified policy. Returns {id, aud}."""
     cfg = _require_cf_config()
@@ -456,6 +559,55 @@ async def delete_access_app(hostname: str) -> bool:
         raise ValueError(f"CF API error: {e}")
 
 
+async def get_access_app(app_id: str) -> dict:
+    """Fetch a single CF Access application."""
+    cfg = _require_cf_config()
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/apps/{app_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=_cf_headers(cfg["token"]))
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to fetch Access app %s from Cloudflare: %s", app_id, e)
+        raise ValueError("Failed to fetch Access app from Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected Access app read for %s: %s", app_id, data.get("errors"))
+        raise ValueError(f"Failed to read Access app: {data.get('errors')}")
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Cloudflare returned an invalid Access app payload")
+    return result
+
+
+async def update_access_app_policy(app_id: str, policy_id: str) -> dict:
+    """Replace the reusable policy attached to an Access application."""
+    cfg = _require_cf_config()
+    app = await get_access_app(app_id)
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/apps/{app_id}"
+    payload = {
+        "name": app.get("name", ""),
+        "domain": app.get("domain", ""),
+        "type": app.get("type", "self_hosted"),
+        "session_duration": app.get("session_duration", "24h"),
+        "app_launcher_visible": app.get("app_launcher_visible", True),
+        "policies": [{"id": policy_id, "precedence": 1}],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.put(url, headers=_cf_headers(cfg["token"]), json=payload)
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to update Access app %s in Cloudflare: %s", app_id, e)
+        raise ValueError("Failed to update Access app policy in Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected Access app update for %s: %s", app_id, data.get("errors"))
+        raise ValueError(f"Failed to update Access app: {data.get('errors')}")
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Cloudflare returned an invalid Access app update payload")
+    return _shape_access_app(result)
+
+
 async def list_access_apps() -> list[dict]:
     """List all CF Access applications."""
     cfg = _require_cf_config()
@@ -470,33 +622,142 @@ async def list_access_apps() -> list[dict]:
     if not data.get("success"):
         logger.warning("Cloudflare rejected Access app list request: %s", data.get("errors"))
         raise ValueError(f"Failed to list Access apps: {data.get('errors')}")
-    return [
-        {
-            "id": a["id"],
-            "name": a.get("name", ""),
-            "domain": a.get("domain", ""),
-            "type": a.get("type", ""),
-            "session_duration": a.get("session_duration", ""),
-            "policies": a.get("policies", []),
-        }
-        for a in data.get("result", [])
-    ]
+    return [_shape_access_app(a) for a in data.get("result", [])]
 
 
 async def list_access_policies() -> list[dict]:
-    """Discover reusable policies by inspecting existing Access apps."""
-    apps = await list_access_apps()
-    seen = {}
-    for app in apps:
-        for policy in app.get("policies", []):
-            pid = policy.get("id")
-            if pid and pid not in seen:
-                seen[pid] = {
-                    "id": pid,
-                    "name": policy.get("name", "Unnamed"),
-                    "decision": policy.get("decision", ""),
-                }
-    return list(seen.values())
+    """List reusable CF Access policies."""
+    cfg = _require_cf_config()
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/policies"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=_cf_headers(cfg["token"]))
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to fetch Access policies from Cloudflare: %s", e)
+        raise ValueError("Failed to fetch Access policies from Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected Access policy list request: %s", data.get("errors"))
+        raise ValueError(f"Failed to list Access policies: {data.get('errors')}")
+    return [_shape_access_policy(p) for p in data.get("result", [])]
+
+
+async def create_access_policy(name: str, value: str) -> dict:
+    """Create a reusable CF Access policy with an initial email/email-domain rule."""
+    cfg = _require_cf_config()
+    _kind, _canonical_value, rule = _normalize_access_policy_member(value)
+    policy_name = (name or "").strip()
+    if not policy_name:
+        raise ValueError("Policy name is required")
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/policies"
+    payload = {
+        "name": policy_name,
+        "decision": "allow",
+        "include": [rule],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, headers=_cf_headers(cfg["token"]), json=payload)
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to create Access policy in Cloudflare: %s", e)
+        raise ValueError("Failed to create Access policy in Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected Access policy create request: %s", data.get("errors"))
+        raise ValueError(f"Failed to create Access policy: {data.get('errors')}")
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Cloudflare returned an invalid Access policy create payload")
+    return _shape_access_policy(result)
+
+
+async def delete_access_policy(policy_id: str) -> bool:
+    """Delete a reusable CF Access policy by ID."""
+    cfg = _require_cf_config()
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/policies/{policy_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.delete(url, headers=_cf_headers(cfg["token"]))
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to delete Access policy %s in Cloudflare: %s", policy_id, e)
+        raise ValueError("Failed to delete Access policy in Cloudflare")
+    return bool(data.get("success", False))
+
+
+async def get_access_policy(policy_id: str) -> dict:
+    """Fetch a single reusable CF Access policy."""
+    cfg = _require_cf_config()
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/policies/{policy_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=_cf_headers(cfg["token"]))
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to fetch Access policy %s from Cloudflare: %s", policy_id, e)
+        raise ValueError("Failed to fetch Access policy from Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected Access policy read for %s: %s", policy_id, data.get("errors"))
+        raise ValueError(f"Failed to read Access policy: {data.get('errors')}")
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Cloudflare returned an invalid Access policy payload")
+    return _shape_access_policy(result)
+
+
+async def update_access_policy(policy_id: str, payload: dict) -> dict:
+    """Update a reusable CF Access policy."""
+    cfg = _require_cf_config()
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/policies/{policy_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.put(url, headers=_cf_headers(cfg["token"]), json=payload)
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to update Access policy %s in Cloudflare: %s", policy_id, e)
+        raise ValueError("Failed to update Access policy in Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected Access policy update for %s: %s", policy_id, data.get("errors"))
+        raise ValueError(f"Failed to update Access policy: {data.get('errors')}")
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Cloudflare returned an invalid Access policy update payload")
+    return _shape_access_policy(result)
+
+
+async def add_access_policy_member(policy_id: str, value: str) -> dict:
+    """Add an email or email-domain include rule to a reusable Access policy."""
+    policy = await get_access_policy(policy_id)
+    kind, canonical_value, rule = _normalize_access_policy_member(value)
+    include = list(policy.get("include", []))
+    existing = _extract_access_policy_members(include)
+    if any(m["kind"] == kind and m["value"] == canonical_value for m in existing):
+        raise ValueError(f"Policy already includes {canonical_value}")
+    include.append(rule)
+    return await update_access_policy(policy_id, _policy_update_payload(policy, include))
+
+
+async def remove_access_policy_member(policy_id: str, value: str) -> dict:
+    """Remove an email or email-domain include rule from a reusable Access policy."""
+    policy = await get_access_policy(policy_id)
+    kind, canonical_value, _rule = _normalize_access_policy_member(value)
+    include = list(policy.get("include", []))
+    updated = []
+    removed = False
+    for entry in include:
+        member = _extract_access_policy_member(entry)
+        if (
+            not removed
+            and member
+            and member["kind"] == kind
+            and member["value"] == canonical_value
+        ):
+            removed = True
+            continue
+        updated.append(entry)
+    if not removed:
+        raise ValueError(f"Policy does not include {canonical_value}")
+    return await update_access_policy(policy_id, _policy_update_payload(policy, updated))
 
 
 # ---------------------------------------------------------------------------

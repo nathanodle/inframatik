@@ -36,6 +36,11 @@ from tunnel import (
     list_dns_records,
     list_access_apps,
     list_access_policies,
+    create_access_policy,
+    delete_access_policy,
+    update_access_app_policy,
+    add_access_policy_member,
+    remove_access_policy_member,
     create_access_app,
     delete_access_app,
 )
@@ -219,6 +224,20 @@ async def api_create_access_app(body: CreateAccessAppBody):
         raise HTTPException(400, str(e))
 
 
+class UpdateAccessAppPolicyBody(BaseModel):
+    policy_id: str
+
+
+@cf_router.put("/api/cf/access/apps/{app_id}/policy")
+async def api_update_access_app_policy(app_id: str, body: UpdateAccessAppPolicyBody):
+    _require_cf_config()
+    try:
+        result = await update_access_app_policy(app_id, body.policy_id)
+        return {"status": "updated", "app": result}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @cf_router.delete("/api/cf/access/apps/{hostname}")
 async def api_delete_access_app(hostname: str):
     _require_cf_config()
@@ -232,7 +251,7 @@ async def api_delete_access_app(hostname: str):
 
 
 # ---------------------------------------------------------------------------
-# Access policies (read-only discovery)
+# Access policies
 # ---------------------------------------------------------------------------
 
 @cf_router.get("/api/cf/access/policies")
@@ -242,6 +261,57 @@ async def api_list_policies():
         return await list_access_policies()
     except ValueError as e:
         raise HTTPException(502, str(e))
+
+
+class CreateAccessPolicyBody(BaseModel):
+    name: str
+    value: str
+
+
+@cf_router.post("/api/cf/access/policies")
+async def api_create_access_policy(body: CreateAccessPolicyBody):
+    _require_cf_config()
+    try:
+        result = await create_access_policy(body.name, body.value)
+        return {"status": "created", "policy": result}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@cf_router.delete("/api/cf/access/policies/{policy_id}")
+async def api_delete_access_policy(policy_id: str):
+    _require_cf_config()
+    try:
+        result = await delete_access_policy(policy_id)
+        if not result:
+            raise HTTPException(404, f"No Access policy found for {policy_id}")
+        return {"status": "deleted", "policy_id": policy_id}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class AccessPolicyMemberBody(BaseModel):
+    value: str
+
+
+@cf_router.post("/api/cf/access/policies/{policy_id}/members")
+async def api_add_access_policy_member(policy_id: str, body: AccessPolicyMemberBody):
+    _require_cf_config()
+    try:
+        result = await add_access_policy_member(policy_id, body.value)
+        return {"status": "updated", "policy": result}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@cf_router.delete("/api/cf/access/policies/{policy_id}/members")
+async def api_remove_access_policy_member(policy_id: str, body: AccessPolicyMemberBody):
+    _require_cf_config()
+    try:
+        result = await remove_access_policy_member(policy_id, body.value)
+        return {"status": "updated", "policy": result}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 # ---------------------------------------------------------------------------

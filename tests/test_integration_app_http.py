@@ -283,7 +283,14 @@ def test_services_create_rejects_scope_mismatch():
 
 
 def test_services_create_allows_matching_scope():
-    async def fake_register_service(name, command, working_dir, hostname=None, lan=False):
+    async def fake_register_service(
+        name,
+        command,
+        working_dir,
+        hostname=None,
+        access_policy_id=None,
+        lan=False,
+    ):
         return {"name": name, "status": "inactive"}
 
     resp = _request(

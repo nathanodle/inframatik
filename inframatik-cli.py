@@ -2,8 +2,10 @@
 """inframatik CLI — service token management and agent harness setup."""
 
 import getpass
+import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -11,6 +13,8 @@ import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+_DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +189,189 @@ def prompt_yn(question, default=True):
     return resp in ("y", "yes")
 
 
+def build_service_registration_body(service, hostname=None, access_policy_id=None):
+    """Build the example service registration payload for .inframatik."""
+    payload = {
+        "name": service,
+        "command": "<start command>",
+        "working_dir": "<path>",
+    }
+    if hostname:
+        payload["hostname"] = hostname
+    if access_policy_id:
+        payload["access_policy_id"] = access_policy_id
+    return payload
+
+
+def build_inframatik_instructions(service, hostname=None, access_policy_id=None):
+    """Build the inline usage instructions stored in .inframatik."""
+    register_payload = json.dumps(
+        build_service_registration_body(service, hostname, access_policy_id)
+    )
+    notes = []
+    if hostname:
+        notes.append(
+            f"Hostname: use the full public hostname/FQDN exactly as configured here "
+            f"({hostname}), not just a subdomain label."
+        )
+        if access_policy_id:
+            notes.append(
+                f"Access policy: use reusable Cloudflare Access policy ID {access_policy_id} "
+                "for this service."
+            )
+        else:
+            notes.append(
+                "Access policy: if you want a specific reusable Cloudflare Access policy "
+                "instead of the server default, include access_policy_id in the registration payload."
+            )
+    else:
+        notes.append(
+            "Hostname: if you add one later, use the full public hostname/FQDN "
+            "like app.example.com, not just a subdomain label."
+        )
+    notes_text = "\n".join(notes)
+
+    return (
+        "This app is managed by inframatik. "
+        "Use the API at the endpoint below with the token as Bearer auth.\n\n"
+        f"Register: POST /api/services {register_payload}\n"
+        f"Start: POST /api/services/{service}/start\n"
+        f"Stop: POST /api/services/{service}/stop\n"
+        f"Restart: POST /api/services/{service}/restart\n"
+        f"Logs: GET /api/services/{service}/logs\n"
+        "Status: GET /api/services\n"
+        f"{notes_text}\n\n"
+        "All requests need header: Authorization: Bearer <token from this file>"
+    )
+
+
+def normalize_public_hostname(raw):
+    """Normalize and validate a public hostname/FQDN."""
+    hostname = (raw or "").strip().lower().strip(".")
+    if not hostname:
+        raise ValueError("Hostname is required")
+    if hostname.startswith("*."):
+        raise ValueError("Hostname must be a specific hostname, not a wildcard")
+    if "://" in hostname or "/" in hostname or " " in hostname or ":" in hostname:
+        raise ValueError("Hostname must be a domain name only, without scheme, path, or port")
+    if "." not in hostname:
+        raise ValueError("Hostname must include a domain (e.g. app.example.com)")
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("Hostname must be a DNS name, not an IP address")
+    labels = hostname.split(".")
+    if any(not _DNS_LABEL_RE.fullmatch(label) for label in labels):
+        raise ValueError("Hostname must be a valid domain name")
+    return hostname
+
+
+def _access_policy_member_label(member):
+    kind = member.get("kind")
+    value = str(member.get("value", "")).strip()
+    if not value:
+        return ""
+    if kind == "email_domain":
+        return value
+    return value
+
+
+def _access_policy_summary(policy):
+    members = policy.get("members")
+    if not isinstance(members, list):
+        return "no members"
+    labels = []
+    total = 0
+    for member in members:
+        if not isinstance(member, dict):
+            continue
+        total += 1
+        label = _access_policy_member_label(member)
+        if label and len(labels) < 3:
+            labels.append(label)
+    if not labels:
+        return "no members"
+    summary = ", ".join(labels)
+    if total > len(labels):
+        summary += f", +{total - len(labels)} more"
+    return summary
+
+
+def prompt_create_access_policy(endpoint, session_token):
+    print("\nCreate reusable Cloudflare Access policy")
+    while True:
+        name = input("  Policy name: ").strip()
+        if name:
+            break
+        print("  Policy name is required.")
+
+    while True:
+        value = input(
+            "  Initial member (email or literal email domain like alice@example.com or example.com): "
+        ).strip()
+        if not value:
+            print("  Initial member is required.")
+            continue
+        result = api_request(
+            endpoint,
+            "POST",
+            "/api/cf/access/policies",
+            {"name": name, "value": value},
+            token=session_token,
+        )
+        if isinstance(result, dict) and isinstance(result.get("policy"), dict):
+            policy = result["policy"]
+            print(f"✓ Created Access policy {policy.get('name') or policy.get('id')}")
+            return policy
+        if not prompt_yn("  Try creating the policy again?"):
+            return None
+
+
+def choose_access_policy(endpoint, session_token):
+    policies = api_request(endpoint, "GET", "/api/cf/access/policies", token=session_token)
+    if policies is None:
+        print("Cloudflare Access policies unavailable; continuing without a per-app policy override.")
+        return None
+    if not isinstance(policies, list):
+        print("Cloudflare returned an invalid Access policy list; continuing without a per-app policy override.")
+        return None
+
+    print("\nCloudflare Access policy for this hostname")
+    if policies:
+        for index, policy in enumerate(policies, start=1):
+            name = policy.get("name") or f"Policy {index}"
+            summary = _access_policy_summary(policy)
+            print(f"  {index}. {name} ({summary})")
+    else:
+        print("  No reusable Access policies found.")
+
+    while True:
+        if policies:
+            choice = input(
+                f"Access policy [Enter=use server default, 1-{len(policies)}=select, n=create new]: "
+            ).strip()
+        else:
+            choice = input(
+                "Access policy [Enter=use server default, n=create new]: "
+            ).strip()
+
+        if not choice:
+            return None
+
+        lowered = choice.lower()
+        if lowered in {"n", "new", "c", "create"}:
+            return prompt_create_access_policy(endpoint, session_token)
+
+        if choice.isdigit():
+            index = int(choice)
+            if 1 <= index <= len(policies):
+                return policies[index - 1]
+
+        print("Invalid choice. Enter a listed policy number, 'n' to create one, or press Enter to use the server default.")
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -212,7 +399,16 @@ def cmd_init():
     if not service:
         print("Service name is required.")
         sys.exit(1)
-    hostname = input("Hostname (optional): ").strip() or None
+    hostname_raw = input(
+        "Hostname (optional, full public hostname/FQDN like app.example.com; leave blank for local-only): "
+    ).strip()
+    hostname = None
+    if hostname_raw:
+        try:
+            hostname = normalize_public_hostname(hostname_raw)
+        except ValueError as e:
+            print(f"Invalid hostname: {e}")
+            sys.exit(1)
 
     # 4. Create service token
     result = api_request(endpoint, "POST", "/api/config/service-tokens",
@@ -223,19 +419,15 @@ def cmd_init():
     svc_token = result["token"]
     print(f"✓ Created service token for {service}")
 
+    access_policy = None
+    if hostname:
+        access_policy = choose_access_policy(endpoint, session_token)
+        if access_policy:
+            print(f"✓ Selected Access policy {access_policy.get('name') or access_policy.get('id')}")
+
     # 5. Write .inframatik
-    instructions = (
-        f"This app is managed by inframatik. "
-        f"Use the API at the endpoint below with the token as Bearer auth.\n\n"
-        f"Register: POST /api/services "
-        f'{{"name": "{service}", "command": "<start command>", "working_dir": "<path>"}}\n'
-        f"Start: POST /api/services/{service}/start\n"
-        f"Stop: POST /api/services/{service}/stop\n"
-        f"Restart: POST /api/services/{service}/restart\n"
-        f"Logs: GET /api/services/{service}/logs\n"
-        f"Status: GET /api/services\n\n"
-        f"All requests need header: Authorization: Bearer <token from this file>"
-    )
+    access_policy_id = access_policy.get("id") if isinstance(access_policy, dict) else None
+    instructions = build_inframatik_instructions(service, hostname, access_policy_id)
     inframatik_config = {
         "endpoint": endpoint,
         "token": svc_token,
@@ -243,6 +435,8 @@ def cmd_init():
     }
     if hostname:
         inframatik_config["hostname"] = hostname
+    if access_policy_id:
+        inframatik_config["access_policy_id"] = access_policy_id
     inframatik_config["instructions"] = instructions
 
     secure_write_text(".inframatik", json.dumps(inframatik_config, indent=2) + "\n")

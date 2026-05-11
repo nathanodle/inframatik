@@ -200,11 +200,16 @@ async def register_service(
     command: str,
     working_dir: str,
     hostname: Optional[str] = None,
+    access_policy_id: Optional[str] = None,
     lan: bool = False,
 ) -> dict:
     _validate_name(name)
     _validate_command(command)
     _validate_working_dir(working_dir)
+    if access_policy_id is not None:
+        access_policy_id = access_policy_id.strip() or None
+    if access_policy_id and not hostname:
+        raise ValueError("access_policy_id requires hostname")
 
     registry = _load_registry()
 
@@ -235,6 +240,7 @@ async def register_service(
         "command": command,
         "working_dir": str(working_path),
         "hostname": hostname,
+        "access_policy_id": access_policy_id,
         "lan": lan,
     }
     registry[name] = svc
@@ -251,7 +257,7 @@ async def register_service(
             await add_tunnel_route(hostname, port)
             await create_dns_record(hostname)
             cf_cfg = _load_cf_config()
-            policy_id = cf_cfg.get("default_policy_id") if cf_cfg else None
+            policy_id = access_policy_id or (cf_cfg.get("default_policy_id") if cf_cfg else None)
             if policy_id:
                 await create_access_app(name, hostname, policy_id)
             cf_route_added = True

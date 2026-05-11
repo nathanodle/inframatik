@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 import cf_routes
 import proxy
+import tunnel
 
 
 class _Patch:
@@ -93,6 +94,18 @@ def test_require_cf_config_rejects_missing():
     with _Patch([(cf_routes, "_load_cf_config", lambda: None)]):
         exc = _assert_raises(HTTPException, cf_routes._require_cf_config)
     assert exc.status_code == 400
+
+
+def test_normalize_access_policy_member_accepts_literal_subdomain():
+    kind, value, rule = tunnel._normalize_access_policy_member("team.example.com")
+    assert kind == "email_domain"
+    assert value == "team.example.com"
+    assert rule == {"email_domain": {"domain": "team.example.com"}}
+
+
+def test_normalize_access_policy_member_rejects_wildcard_domain():
+    exc = _assert_raises(ValueError, tunnel._normalize_access_policy_member, "*.example.com")
+    assert "literal email domain" in str(exc)
 
 
 def test_api_list_tunnels_success():
@@ -382,6 +395,38 @@ def test_api_create_access_app_success():
     assert result == {"id": "app-1", "status": "created"}
 
 
+def test_api_update_access_app_policy_success():
+    async def fake_update(app_id, policy_id):
+        assert app_id == "app-1"
+        assert policy_id == "pol-2"
+        return {"id": "app-1", "policies": [{"id": "pol-2"}]}
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "update_access_app_policy", fake_update),
+        ]
+    ):
+        body = cf_routes.UpdateAccessAppPolicyBody(policy_id="pol-2")
+        result = _run(cf_routes.api_update_access_app_policy("app-1", body))
+    assert result == {"status": "updated", "app": {"id": "app-1", "policies": [{"id": "pol-2"}]}}
+
+
+def test_api_update_access_app_policy_maps_value_error():
+    async def fake_update(_app_id, _policy_id):
+        raise ValueError("bad app")
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "update_access_app_policy", fake_update),
+        ]
+    ):
+        body = cf_routes.UpdateAccessAppPolicyBody(policy_id="pol-2")
+        exc = _assert_raises_async(HTTPException, cf_routes.api_update_access_app_policy, "app-1", body)
+    assert exc.status_code == 400
+
+
 def test_api_delete_access_app_not_found_maps_404():
     async def fake_delete(_hostname):
         return False
@@ -408,6 +453,141 @@ def test_api_list_policies_maps_value_error():
     ):
         exc = _assert_raises_async(HTTPException, cf_routes.api_list_policies)
     assert exc.status_code == 502
+
+
+def test_api_create_access_policy_success():
+    async def fake_create(name, value):
+        assert name == "Allow contractors"
+        assert value == "contractor.example.com"
+        return {"id": "pol-22", "name": "Allow contractors", "members": [{"kind": "email_domain", "value": "contractor.example.com"}]}
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "create_access_policy", fake_create),
+        ]
+    ):
+        body = cf_routes.CreateAccessPolicyBody(name="Allow contractors", value="contractor.example.com")
+        result = _run(cf_routes.api_create_access_policy(body))
+    assert result == {
+        "status": "created",
+        "policy": {
+            "id": "pol-22",
+            "name": "Allow contractors",
+            "members": [{"kind": "email_domain", "value": "contractor.example.com"}],
+        },
+    }
+
+
+def test_api_create_access_policy_maps_value_error():
+    async def fake_create(_name, _value):
+        raise ValueError("bad policy")
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "create_access_policy", fake_create),
+        ]
+    ):
+        body = cf_routes.CreateAccessPolicyBody(name="Allow contractors", value="contractor.example.com")
+        exc = _assert_raises_async(HTTPException, cf_routes.api_create_access_policy, body)
+    assert exc.status_code == 400
+
+
+def test_api_delete_access_policy_success():
+    async def fake_delete(policy_id):
+        assert policy_id == "pol-22"
+        return True
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "delete_access_policy", fake_delete),
+        ]
+    ):
+        result = _run(cf_routes.api_delete_access_policy("pol-22"))
+    assert result == {"status": "deleted", "policy_id": "pol-22"}
+
+
+def test_api_delete_access_policy_not_found_maps_404():
+    async def fake_delete(_policy_id):
+        return False
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "delete_access_policy", fake_delete),
+        ]
+    ):
+        exc = _assert_raises_async(HTTPException, cf_routes.api_delete_access_policy, "pol-22")
+    assert exc.status_code == 404
+
+
+def test_api_add_access_policy_member_success():
+    async def fake_add(policy_id, value):
+        assert policy_id == "pol-1"
+        assert value == "alice@example.com"
+        return {"id": "pol-1", "members": [{"kind": "email", "value": "alice@example.com"}]}
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "add_access_policy_member", fake_add),
+        ]
+    ):
+        body = cf_routes.AccessPolicyMemberBody(value="alice@example.com")
+        result = _run(cf_routes.api_add_access_policy_member("pol-1", body))
+    assert result == {
+        "status": "updated",
+        "policy": {"id": "pol-1", "members": [{"kind": "email", "value": "alice@example.com"}]},
+    }
+
+
+def test_api_add_access_policy_member_maps_value_error():
+    async def fake_add(_policy_id, _value):
+        raise ValueError("bad member")
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "add_access_policy_member", fake_add),
+        ]
+    ):
+        body = cf_routes.AccessPolicyMemberBody(value="alice@example.com")
+        exc = _assert_raises_async(HTTPException, cf_routes.api_add_access_policy_member, "pol-1", body)
+    assert exc.status_code == 400
+
+
+def test_api_remove_access_policy_member_success():
+    async def fake_remove(policy_id, value):
+        assert policy_id == "pol-1"
+        assert value == "contractor.example.com"
+        return {"id": "pol-1", "members": []}
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "remove_access_policy_member", fake_remove),
+        ]
+    ):
+        body = cf_routes.AccessPolicyMemberBody(value="contractor.example.com")
+        result = _run(cf_routes.api_remove_access_policy_member("pol-1", body))
+    assert result == {"status": "updated", "policy": {"id": "pol-1", "members": []}}
+
+
+def test_api_remove_access_policy_member_maps_value_error():
+    async def fake_remove(_policy_id, _value):
+        raise ValueError("missing member")
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "remove_access_policy_member", fake_remove),
+        ]
+    ):
+        body = cf_routes.AccessPolicyMemberBody(value="contractor.example.com")
+        exc = _assert_raises_async(HTTPException, cf_routes.api_remove_access_policy_member, "pol-1", body)
+    assert exc.status_code == 400
 
 
 def test_api_setup_worker_tunnel_rejects_unknown_worker():

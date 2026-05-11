@@ -109,6 +109,7 @@ async def _handle_local_services(method: str, route_path: str, query: dict[str, 
                 command=payload["command"],
                 working_dir=payload["working_dir"],
                 hostname=payload.get("hostname"),
+                access_policy_id=payload.get("access_policy_id"),
                 lan=payload.get("lan", False),
             )
         return _NO_MATCH

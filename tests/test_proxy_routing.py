@@ -95,13 +95,21 @@ def test_handle_local_services_post_registers_service():
     original_register = services.register_service
     calls = []
 
-    async def fake_register_service(name, command, working_dir, hostname=None, lan=False):
+    async def fake_register_service(
+        name,
+        command,
+        working_dir,
+        hostname=None,
+        access_policy_id=None,
+        lan=False,
+    ):
         calls.append(
             {
                 "name": name,
                 "command": command,
                 "working_dir": working_dir,
                 "hostname": hostname,
+                "access_policy_id": access_policy_id,
                 "lan": lan,
             }
         )
@@ -114,6 +122,7 @@ def test_handle_local_services_post_registers_service():
             "command": "python app.py",
             "working_dir": "/tmp/app",
             "hostname": "app.example.com",
+            "access_policy_id": "pol-1",
             "lan": True,
         }
         result = _run(proxy._handle_local_services("POST", "/api/services", {}, payload))
@@ -122,6 +131,7 @@ def test_handle_local_services_post_registers_service():
 
     assert result["name"] == "svc-a"
     assert calls[0]["hostname"] == "app.example.com"
+    assert calls[0]["access_policy_id"] == "pol-1"
     assert calls[0]["lan"] is True
 
 

@@ -1808,17 +1808,24 @@ async function refreshCfSection() {
         renderCfStatus(tunnelData);
         await refreshCfServiceControl();
 
+        const accessAppsPromise = api('GET', '/api/cf/access/apps');
+        const policiesPromise = api('GET', '/api/cf/access/policies');
+
         // If this node has no tunnel configured, show empty state for routes
         if (!currentTunnelId) {
             renderCfRoutes([]);
-            renderCfAccessApps(await api('GET', '/api/cf/access/apps'));
+            const [accessApps, policies] = await Promise.all([accessAppsPromise, policiesPromise]);
+            loadCfPolicies(policies);
+            renderCfAccessApps(accessApps);
             return;
         }
 
-        const [routes, accessApps] = await Promise.all([
+        const [routes, accessApps, policies] = await Promise.all([
             api('GET', `/api/cf/routes?tunnel_id=${currentTunnelId}`),
-            api('GET', '/api/cf/access/apps'),
+            accessAppsPromise,
+            policiesPromise,
         ]);
+        loadCfPolicies(policies);
         renderCfRoutes(routes);
         renderCfAccessApps(accessApps);
     } catch (e) {
@@ -1946,6 +1953,28 @@ function renderCfRoutes(routes) {
     `;
 }
 
+function buildCfPolicyOptions(selectedId = '', selectedName = '') {
+    const options = [];
+    if (selectedId && !cfPolicies.some(p => p.id === selectedId)) {
+        options.push(`<option value="${esc(selectedId)}" selected>${esc(selectedName || selectedId)}</option>`);
+    }
+    for (const policy of cfPolicies) {
+        const selected = policy.id === selectedId ? ' selected' : '';
+        options.push(`<option value="${esc(policy.id)}"${selected}>${esc(policy.name || policy.id)}</option>`);
+    }
+    return options.join('');
+}
+
+function renderCfPolicySelect() {
+    const select = document.getElementById('cf-access-policy');
+    if (!select) return;
+    if (cfPolicies.length === 0) {
+        select.innerHTML = '<option value="">No policies found</option>';
+        return;
+    }
+    select.innerHTML = '<option value="">Select policy</option>' + buildCfPolicyOptions();
+}
+
 function renderCfAccessApps(apps) {
     const el = document.getElementById('cf-access-table');
     if (!apps || apps.length === 0) {
@@ -1953,38 +1982,128 @@ function renderCfAccessApps(apps) {
         return;
     }
     el.innerHTML = `
-        <div class="cf-table-header cf-table-4col">
+        <div class="cf-table-header cf-table-5col">
             <span>Name</span>
             <span>Domain</span>
             <span>Policy</span>
             <span></span>
+            <span></span>
         </div>
         ${apps.map(a => {
-            const policyName = (a.policies && a.policies[0]) ? a.policies[0].name : 'None';
+            const currentPolicy = (a.policies && a.policies[0]) ? a.policies[0] : null;
+            const selectId = `cf-access-policy-app-${a.id}`;
             return `
-            <div class="cf-table-row cf-table-4col">
+            <div class="cf-table-row cf-table-5col">
                 <span>${esc(a.name)}</span>
                 <span><a href="https://${esc(a.domain)}" target="_blank">${esc(a.domain)}</a></span>
-                <span>${esc(policyName)}</span>
+                <span>
+                    <select id="${esc(selectId)}" class="cf-table-inline-select">
+                        ${buildCfPolicyOptions(
+                            currentPolicy ? currentPolicy.id : '',
+                            currentPolicy ? (currentPolicy.name || currentPolicy.id) : 'No policy'
+                        )}
+                    </select>
+                </span>
+                <span><button class="btn" onclick="assignCfAccessAppPolicy('${esc(a.id)}', '${esc(selectId)}')">Apply</button></span>
                 <span><button class="btn danger" onclick="removeCfAccessApp('${esc(a.domain)}')">Remove</button></span>
             </div>`;
         }).join('')}
     `;
 }
 
-async function loadCfPolicies() {
+function renderCfPolicies(policies) {
+    const el = document.getElementById('cf-policy-list');
+    if (!el) return;
+    if (!policies || policies.length === 0) {
+        el.innerHTML = '<div class="empty-state">No reusable policies found</div>';
+        return;
+    }
+    el.innerHTML = policies.map(policy => {
+        const members = Array.isArray(policy.members) ? policy.members : [];
+        const memberRows = members.length > 0
+            ? members.map(member => `
+                <div class="cf-policy-member-row">
+                    <code>${esc(member.value)}</code>
+                    <button class="btn danger" onclick="removeCfPolicyMember('${esc(policy.id)}', '${encodeURIComponent(member.value)}')">Remove</button>
+                </div>
+            `).join('')
+            : '<div class="cf-policy-empty">No email or domain rules on this policy.</div>';
+        return `
+            <div class="cf-policy-card">
+                <div class="cf-policy-card-header">
+                    <div>
+                        <div class="cf-policy-card-title">${esc(policy.name || policy.id)}</div>
+                        <div class="cf-policy-card-meta">
+                            ${esc(policy.decision || 'allow')} policy · ${members.length} member${members.length === 1 ? '' : 's'}
+                        </div>
+                    </div>
+                    <button class="btn danger" onclick="removeCfPolicy('${esc(policy.id)}')">Delete Policy</button>
+                </div>
+                <div class="cf-policy-members">${memberRows}</div>
+                <div class="cf-add-form-row cf-policy-edit-row">
+                    <div class="form-group">
+                        <label>Add Email or Domain</label>
+                        <input
+                            type="text"
+                            id="cf-policy-member-${esc(policy.id)}"
+                            placeholder="alice@example.com or team.example.com"
+                            autocomplete="off"
+                        >
+                    </div>
+                    <button class="btn primary" onclick="addCfPolicyMember('${esc(policy.id)}')">Add</button>
+                </div>
+                <div class="form-error" id="cf-policy-error-${esc(policy.id)}"></div>
+            </div>
+        `;
+    }).join('');
+}
+
+function loadCfPolicies(policies = null) {
     try {
-        cfPolicies = await api('GET', '/api/cf/access/policies');
-        const select = document.getElementById('cf-access-policy');
-        if (cfPolicies.length === 0) {
-            select.innerHTML = '<option value="">No policies found</option>';
-        } else {
-            select.innerHTML = cfPolicies.map(p =>
-                `<option value="${esc(p.id)}">${esc(p.name)}</option>`
-            ).join('');
-        }
+        cfPolicies = Array.isArray(policies) ? policies : [];
+        renderCfPolicySelect();
+        renderCfPolicies(cfPolicies);
     } catch (e) {
         console.error('Failed to load policies:', e);
+    }
+}
+
+async function createCfPolicy() {
+    const nameEl = document.getElementById('cf-policy-create-name');
+    const valueEl = document.getElementById('cf-policy-create-value');
+    const errEl = document.getElementById('cf-policy-create-error');
+    const name = nameEl ? nameEl.value.trim() : '';
+    const value = valueEl ? valueEl.value.trim() : '';
+    if (errEl) errEl.textContent = '';
+    if (!name || !value) {
+        if (errEl) errEl.textContent = 'Policy name and initial email/domain are required.';
+        return;
+    }
+    try {
+        const result = await api('POST', '/api/cf/access/policies', { name, value });
+        if (nameEl) nameEl.value = '';
+        if (valueEl) valueEl.value = '';
+        await refreshCfSection();
+        const select = document.getElementById('cf-access-policy');
+        if (select && result && result.policy && result.policy.id) {
+            select.value = result.policy.id;
+        }
+    } catch (e) {
+        if (errEl) errEl.textContent = e.message;
+    }
+}
+
+async function removeCfPolicy(policyId) {
+    const policy = cfPolicies.find(p => p.id === policyId);
+    const label = policy && policy.name ? `"${policy.name}"` : policyId;
+    if (!confirm(`Delete Access policy ${label}?`)) return;
+    const errEl = document.getElementById('cf-policy-create-error');
+    if (errEl) errEl.textContent = '';
+    try {
+        await api('DELETE', `/api/cf/access/policies/${policyId}`);
+        await refreshCfSection();
+    } catch (e) {
+        if (errEl) errEl.textContent = e.message;
     }
 }
 
@@ -2032,6 +2151,20 @@ async function addCfAccessApp() {
     }
 }
 
+async function assignCfAccessAppPolicy(appId, selectId) {
+    const select = document.getElementById(selectId);
+    const policyId = select ? select.value : '';
+    const errEl = document.getElementById('cf-access-error');
+    errEl.textContent = '';
+    if (!policyId) { errEl.textContent = 'Choose a policy before assigning it.'; return; }
+    try {
+        await api('PUT', `/api/cf/access/apps/${appId}/policy`, { policy_id: policyId });
+        await refreshCfSection();
+    } catch (e) {
+        errEl.textContent = e.message;
+    }
+}
+
 async function removeCfAccessApp(hostname) {
     if (!confirm(`Delete Access app for ${hostname}?`)) return;
     try {
@@ -2039,6 +2172,37 @@ async function removeCfAccessApp(hostname) {
         await refreshCfSection();
     } catch (e) {
         alert('Failed to delete Access app: ' + e.message);
+    }
+}
+
+async function addCfPolicyMember(policyId) {
+    const inputEl = document.getElementById(`cf-policy-member-${policyId}`);
+    const errEl = document.getElementById(`cf-policy-error-${policyId}`);
+    const value = inputEl ? inputEl.value.trim() : '';
+    if (errEl) errEl.textContent = '';
+    if (!value) {
+        if (errEl) errEl.textContent = 'Enter an email or literal email domain.';
+        return;
+    }
+    try {
+        await api('POST', `/api/cf/access/policies/${policyId}/members`, { value });
+        if (inputEl) inputEl.value = '';
+        await refreshCfSection();
+    } catch (e) {
+        if (errEl) errEl.textContent = e.message;
+    }
+}
+
+async function removeCfPolicyMember(policyId, encodedValue) {
+    const value = decodeURIComponent(encodedValue);
+    if (!confirm(`Remove ${value} from this policy?`)) return;
+    const errEl = document.getElementById(`cf-policy-error-${policyId}`);
+    if (errEl) errEl.textContent = '';
+    try {
+        await api('DELETE', `/api/cf/access/policies/${policyId}/members`, { value });
+        await refreshCfSection();
+    } catch (e) {
+        if (errEl) errEl.textContent = e.message;
     }
 }
 
@@ -2101,7 +2265,7 @@ async function refreshAll() {
     await Promise.all([refreshSystem(), refreshTunnel(), refreshServices()]);
     if (isMaster && !cfSectionLoaded) {
         cfSectionLoaded = true;
-        await Promise.all([refreshCfSection(), loadCfPolicies()]);
+        await refreshCfSection();
     }
 }
 

@@ -59,8 +59,19 @@ app.include_router(ws_router)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-# Cache buster: git commit hash at startup, falls back to file mtime
+# Cache buster: combine git commit hash with static asset mtimes so local edits
+# invalidate browser caches even before they are committed.
 def _get_asset_version() -> str:
+    latest_mtime = "0"
+    try:
+        asset_paths = [
+            STATIC_DIR / "app.js",
+            STATIC_DIR / "style.css",
+            STATIC_DIR / "index.html",
+        ]
+        latest_mtime = str(int(max(path.stat().st_mtime for path in asset_paths if path.exists())))
+    except Exception:
+        pass
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -68,14 +79,10 @@ def _get_asset_version() -> str:
             cwd=Path(__file__).parent,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+            return f"{result.stdout.strip()}-{latest_mtime}"
     except Exception:
         pass
-    # Fallback: use app.js mtime
-    try:
-        return str(int((STATIC_DIR / "app.js").stat().st_mtime))
-    except Exception:
-        return "0"
+    return latest_mtime
 
 _ASSET_VERSION = _get_asset_version()
 
@@ -163,6 +170,7 @@ class ServiceCreate(BaseModel):
     command: str
     working_dir: str
     hostname: Optional[str] = None
+    access_policy_id: Optional[str] = None
     lan: bool = False
 
 
@@ -227,6 +235,7 @@ async def api_register_service(body: ServiceCreate, request: Request):
             command=body.command,
             working_dir=body.working_dir,
             hostname=body.hostname,
+            access_policy_id=body.access_policy_id,
             lan=body.lan,
         )
         return svc

@@ -48,6 +48,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Optional CF hostname for public access (e.g. 'myapp.example.com')",
                 },
+                "access_policy_id": {
+                    "type": "string",
+                    "description": "Optional reusable Cloudflare Access policy ID to attach when hostname is set",
+                },
                 "lan": {
                     "type": "boolean",
                     "description": "If true, bind service host to 0.0.0.0 instead of 127.0.0.1",
@@ -111,9 +115,12 @@ async def _tool_register(service_name: str, args: dict) -> dict:
     command = args.get("command", "")
     working_dir = args.get("working_dir", ".")
     hostname = args.get("hostname")
+    access_policy_id = args.get("access_policy_id")
     lan = args.get("lan", False)
     if not isinstance(lan, bool):
         raise ValueError("lan must be a boolean")
+    if access_policy_id is not None and not isinstance(access_policy_id, str):
+        raise ValueError("access_policy_id must be a string")
 
     services = await list_services()
     existing = next((s for s in services if s.get("name") == service_name), None)
@@ -129,6 +136,7 @@ async def _tool_register(service_name: str, args: dict) -> dict:
         command=command,
         working_dir=working_dir,
         hostname=hostname,
+        access_policy_id=access_policy_id,
         lan=lan,
     )
     status = await start_service(service_name)
