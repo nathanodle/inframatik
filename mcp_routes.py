@@ -7,7 +7,7 @@ Auth uses scoped service tokens (svc_...) validated by the main auth middleware.
 import logging
 
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from node_config import service_token_capability_allows
 from services import (
@@ -105,6 +105,10 @@ def _jsonrpc_error(req_id, code, message):
     return JSONResponse(
         {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
     )
+
+
+def _jsonrpc_notification_response():
+    return Response(status_code=202)
 
 
 # ---------------------------------------------------------------------------
@@ -208,8 +212,7 @@ def _handle_mcp_protocol_method(req_id, method: str, token_capability: str):
             "serverInfo": SERVER_INFO,
         })
     if method == "notifications/initialized":
-        # Client acknowledgment — no response needed but return OK
-        return _jsonrpc_result(req_id, {})
+        return _jsonrpc_notification_response()
     if method == "tools/list":
         allowed_tools = []
         for tool in TOOLS:

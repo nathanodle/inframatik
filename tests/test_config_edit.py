@@ -101,6 +101,8 @@ def test_codex_toml_create():
     assert "[mcp_servers.inframatik]" in content
     assert ENDPOINT in content
     assert TOKEN in content
+    assert 'http_headers = { Authorization = "Bearer svc_test1234" }' in content
+    assert "[mcp_servers.inframatik.headers]" not in content
 
 
 @_run_in_tmpdir
@@ -119,12 +121,15 @@ def test_codex_toml_update():
     """Existing file with inframatik → update in place."""
     Path(".codex").mkdir()
     Path(".codex/config.toml").write_text(
-        '[mcp_servers.inframatik]\nurl = "http://old:9000/mcp"\n'
+        '[mcp_servers.inframatik]\nurl = "http://old:9000/mcp"\n\n'
+        '[mcp_servers.inframatik.headers]\nAuthorization = "Bearer old"\n'
     )
     assert cli.edit_codex_toml(ENDPOINT, TOKEN)
     content = Path(".codex/config.toml").read_text()
     assert "old:9000" not in content
     assert ENDPOINT in content
+    assert 'http_headers = { Authorization = "Bearer svc_test1234" }' in content
+    assert "[mcp_servers.inframatik.headers]" not in content
 
 
 @_run_in_tmpdir

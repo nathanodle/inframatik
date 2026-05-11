@@ -50,9 +50,8 @@ def test_protocol_initialize_returns_server_info():
 
 def test_protocol_notifications_initialized_returns_ok():
     resp = mcp_routes._handle_mcp_protocol_method(2, "notifications/initialized", "deploy")
-    payload = _response_json(resp)
-    assert payload["id"] == 2
-    assert payload["result"] == {}
+    assert resp.status_code == 202
+    assert resp.body == b""
 
 
 def test_protocol_tools_list_filters_by_capability_read():
@@ -332,6 +331,17 @@ def test_endpoint_tools_list_ok():
     payload = _response_json(resp)
     assert payload["id"] == 12
     assert "tools" in payload["result"]
+
+
+def test_endpoint_initialized_notification_returns_no_body():
+    req = _DummyRequest(
+        body={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        scope="svc-a",
+        capability="deploy",
+    )
+    resp = asyncio.run(mcp_routes.mcp_endpoint(req))
+    assert resp.status_code == 202
+    assert resp.body == b""
 
 
 def test_endpoint_unknown_method_not_found():

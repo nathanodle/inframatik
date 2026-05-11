@@ -139,9 +139,7 @@ def edit_codex_toml(endpoint, token, path=".codex/config.toml"):
         "[mcp_servers.inframatik]",
         'type = "http"',
         f'url = "{_toml_escape(endpoint)}/mcp"',
-        "",
-        "[mcp_servers.inframatik.headers]",
-        f'Authorization = "Bearer {_toml_escape(token)}"',
+        f'http_headers = {{ Authorization = "Bearer {_toml_escape(token)}" }}',
     ])
 
     secure_write_text(toml_path, "\n".join(filtered) + "\n")
@@ -484,22 +482,8 @@ def cmd_init():
     if has_codex:
         print("Detected: Codex CLI")
         if prompt_yn("  Register MCP server for this project?"):
-            codex_cli = shutil.which("codex")
-            if codex_cli:
-                try:
-                    subprocess.run([
-                        codex_cli, "mcp", "add",
-                        "inframatik",
-                        "--transport", "http",
-                        f"{endpoint}/mcp",
-                    ], check=True, capture_output=True)
-                    print("  ✓ Registered MCP server")
-                except subprocess.CalledProcessError:
-                    if edit_codex_toml(endpoint, svc_token):
-                        print("  ✓ Created .codex/config.toml")
-            else:
-                if edit_codex_toml(endpoint, svc_token):
-                    print("  ✓ Created .codex/config.toml")
+            if edit_codex_toml(endpoint, svc_token):
+                print("  ✓ Updated .codex/config.toml")
 
         if prompt_yn("  Add deployment instructions to AGENTS.md?"):
             if append_instructions("AGENTS.md", DEPLOYMENT_INSTRUCTIONS):
