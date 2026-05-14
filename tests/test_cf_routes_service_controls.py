@@ -240,9 +240,11 @@ def test_api_receive_tunnel_token_success_sets_tunnel_and_starts_service():
     original_get_cfg = cf_routes.get_node_config
     original_set_tid = cf_routes.set_tunnel_id
     original_setup = cf_routes.setup_cloudflared_user_service
+    original_save = cf_routes.save_cf_config
     seen = {}
     cf_routes.get_node_config = lambda: {"api_key": "k1"}
     cf_routes.set_tunnel_id = lambda tunnel_id: seen.setdefault("tunnel_id", tunnel_id)
+    cf_routes.save_cf_config = lambda *args, **kwargs: seen.setdefault("cf_config", (args, kwargs))
 
     async def fake_setup(token):
         seen.setdefault("token", token)
@@ -251,7 +253,18 @@ def test_api_receive_tunnel_token_success_sets_tunnel_and_starts_service():
     try:
         result = asyncio.run(
             cf_routes.api_receive_tunnel_token(
-                cf_routes.ReceiveTunnelTokenBody(tunnel_id="tid-1", token="tok-1"),
+                cf_routes.ReceiveTunnelTokenBody(
+                    tunnel_id="tid-1",
+                    token="tok-1",
+                    cf_config={
+                        "token": "cf-token",
+                        "account_id": "acct",
+                        "zone_id": "zone",
+                        "default_policy_id": "pol",
+                        "team_domain": "team",
+                        "access_issuer": "https://team.cloudflareaccess.com",
+                    },
+                ),
                 _DummyRequest(headers={"X-Api-Key": "k1"}),
             )
         )
@@ -259,9 +272,18 @@ def test_api_receive_tunnel_token_success_sets_tunnel_and_starts_service():
         cf_routes.get_node_config = original_get_cfg
         cf_routes.set_tunnel_id = original_set_tid
         cf_routes.setup_cloudflared_user_service = original_setup
+        cf_routes.save_cf_config = original_save
 
     assert result == {"status": "token_received", "tunnel_id": "tid-1"}
-    assert seen == {"tunnel_id": "tid-1", "token": "tok-1"}
+    assert seen["tunnel_id"] == "tid-1"
+    assert seen["token"] == "tok-1"
+    assert seen["cf_config"] == (
+        ("cf-token", "acct", "zone", "pol"),
+        {
+            "team_domain": "team",
+            "access_issuer": "https://team.cloudflareaccess.com",
+        },
+    )
 
 
 def test_api_receive_tunnel_token_maps_setup_errors():

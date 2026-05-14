@@ -491,6 +491,27 @@ def test_install_script_embeds_master_url_and_public_key():
     assert "key=PUBKEYB64" in body
 
 
+def test_install_script_no_longer_exposes_install_cf_flag():
+    original_get_cfg = cluster_routes.get_node_config
+    original_pub = cluster_routes.get_signing_public_key_b64
+    cluster_routes.get_node_config = lambda: {"role": "master"}
+    cluster_routes.get_signing_public_key_b64 = lambda: "PUBKEYB64"
+    try:
+        resp = asyncio.run(
+            cluster_routes.install_script(
+                _DummyRequest(headers={"host": "example.com:9000"})
+            )
+        )
+    finally:
+        cluster_routes.get_node_config = original_get_cfg
+        cluster_routes.get_signing_public_key_b64 = original_pub
+
+    body = resp.body.decode()
+    assert "INSTALL_CF" not in body
+    assert "Master has no Cloudflare config; enrolling as local-only worker." in body
+    assert "Master has Cloudflare configured; creating a local worker tunnel..." in body
+
+
 def test_install_package_requires_master_role():
     original_get_cfg = cluster_routes.get_node_config
     cluster_routes.get_node_config = lambda: {"role": "worker"}

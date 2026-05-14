@@ -599,8 +599,11 @@ def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():
     assert "/api/config/enroll-worker" in app_js
     assert "/api/nodes/enroll" not in app_js
     assert "worker-enroll" in app_js
+    assert "/api/cf/workers/setup" in app_js
+    assert "Sync Cloudflare to Workers" in app_js
     assert "setup-worker-progress" in index_html
     assert "init-worker-progress" in index_html
+    assert "worker-cf-sync-progress" in index_html
 
 
 if __name__ == "__main__":

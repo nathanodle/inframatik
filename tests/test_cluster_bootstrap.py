@@ -114,8 +114,14 @@ def test_enroll_worker_calls_master_server_side_and_saves_config():
 
     original_client = cluster_routes.httpx.AsyncClient
     original_address = cluster_routes._worker_address_for_master
+    original_progress = cluster_routes._send_worker_enroll_progress
+
+    async def fake_progress(step, message, done=False, error=False):
+        seen.setdefault("progress", []).append((step, done, error))
+
     cluster_routes.httpx.AsyncClient = lambda *a, **kw: _AsyncClient(on_post, *a, **kw)
     cluster_routes._worker_address_for_master = lambda master_url, request: "http://10.0.0.5:9000"
+    cluster_routes._send_worker_enroll_progress = fake_progress
     try:
         result = asyncio.run(
             cluster_routes.config_enroll_worker(
@@ -130,15 +136,14 @@ def test_enroll_worker_calls_master_server_side_and_saves_config():
     finally:
         cluster_routes.httpx.AsyncClient = original_client
         cluster_routes._worker_address_for_master = original_address
+        cluster_routes._send_worker_enroll_progress = original_progress
 
     cfg = node_config.get_node_config()
-    assert seen == {
-        "url": "http://192.168.166.186:9000/api/nodes/enroll",
-        "json": {
-            "token": "enroll-token",
-            "node_name": "worker-a",
-            "address": "http://10.0.0.5:9000",
-        },
+    assert seen["url"] == "http://192.168.166.186:9000/api/nodes/enroll"
+    assert seen["json"] == {
+        "token": "enroll-token",
+        "node_name": "worker-a",
+        "address": "http://10.0.0.5:9000",
     }
     assert result["role"] == "worker"
     assert result["master_url"] == "http://192.168.166.186:9000"
@@ -146,6 +151,13 @@ def test_enroll_worker_calls_master_server_side_and_saves_config():
     assert cfg["role"] == "worker"
     assert cfg["api_key"] == "worker-key"
     assert cfg["update_public_key"] == "pub"
+    assert "cf_tunnel" not in result
+    assert [entry[0] for entry in seen["progress"]] == [
+        "contacting_master",
+        "saving_worker_config",
+        "skipping_cloudflare",
+        "complete",
+    ]
 
 
 @_run_with_temp_config
@@ -354,6 +366,27 @@ def test_master_enrollment_response_includes_cf_config_when_configured():
         "team_domain": "team-a",
         "access_issuer": "https://team-a.cloudflareaccess.com",
     }
+
+
+@_run_with_temp_config
+def test_master_enrollment_response_omits_cf_config_when_local_only():
+    if cluster_routes is None:
+        return
+    node_config.init_as_master("master-a")
+    token = node_config.create_enrollment_token()
+
+    result = asyncio.run(
+        cluster_routes.enroll_worker(
+            cluster_routes.EnrollBody(
+                token=token,
+                node_name="worker-a",
+                address="http://10.0.0.5:9000",
+            )
+        )
+    )
+
+    assert result["status"] == "enrolled"
+    assert "cf_config" not in result
 
 
 @_run_with_temp_config

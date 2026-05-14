@@ -465,6 +465,10 @@ async def _configure_enrolled_worker_cloudflare(
     api_key: str,
 ) -> tuple[Optional[dict], Optional[str]]:
     if not _save_enrolled_cf_config(cf_config):
+        await _send_worker_enroll_progress(
+            "skipping_cloudflare",
+            "Master has no Cloudflare config; skipping worker tunnel setup.",
+        )
         return None, None
     try:
         await _send_worker_enroll_progress("saving_cloudflare_config", "Saving Cloudflare configuration...")

@@ -658,6 +658,7 @@ const WORKER_ENROLL_PROGRESS = {
     contacting_master: 10,
     saving_worker_config: 25,
     saving_cloudflare_config: 38,
+    skipping_cloudflare: 45,
     creating_tunnel: 50,
     initializing_tunnel: 58,
     getting_token: 66,
@@ -1291,7 +1292,8 @@ async function loadSettingsView() {
             document.getElementById('master-info-name').textContent = config.node_name;
             const liveNodes = await loadSettingsNodes();
             const localServices = await loadLocalServicesForSettings();
-            renderMasterWorkers(config.workers || {}, liveNodes);
+            renderMasterWorkers(config.workers || {}, liveNodes, config.cf_configured);
+            renderWorkerCfSyncActions(config.workers || {}, config.cf_configured);
             renderEnrollmentTokens(config.enrollment_tokens || []);
             renderCfSetup('master-cf-setup', config.cf_configured);
             renderServiceTokens('master-service-tokens', config.service_tokens || [], localServices);
@@ -1704,7 +1706,7 @@ function findWorkerNodeInfo(nodeId, worker, liveNodes) {
     );
 }
 
-function renderMasterWorkers(workers, liveNodes = nodes) {
+function renderMasterWorkers(workers, liveNodes = nodes, cfConfigured = false) {
     const el = document.getElementById('master-workers-list');
     const entries = Object.entries(workers);
     if (entries.length === 0) {
@@ -1718,7 +1720,9 @@ function renderMasterWorkers(workers, liveNodes = nodes) {
         const statusText = status === 'online' ? 'Online' : 'Offline';
         const cfBadge = w.tunnel_id
             ? '<span class="worker-cf-badge">CF</span>'
-            : `<button class="btn" onclick="setupWorkerTunnel('${esc(nodeId)}', '${esc(w.name)}')">Setup Tunnel</button>`;
+            : cfConfigured
+                ? `<button class="btn" onclick="setupWorkerTunnel('${esc(nodeId)}', '${esc(w.name)}')">Setup Tunnel</button>`
+                : '<span class="worker-status-label">Local only</span>';
         return `
         <div class="master-worker-row">
             <span class="status-dot ${statusClass}"></span>
@@ -1729,6 +1733,24 @@ function renderMasterWorkers(workers, liveNodes = nodes) {
             <button class="btn danger" onclick="removeWorker('${esc(nodeId)}', '${esc(w.name)}')">Remove</button>
         </div>`;
     }).join('');
+}
+
+function renderWorkerCfSyncActions(workers, cfConfigured) {
+    const actionsEl = document.getElementById('worker-cf-sync-actions');
+    const resultsEl = document.getElementById('worker-cf-sync-results');
+    if (!actionsEl) return;
+    if (resultsEl) resultsEl.innerHTML = '';
+
+    const missing = Object.values(workers || {}).filter(w => !w.tunnel_id);
+    if (!cfConfigured || missing.length === 0) {
+        actionsEl.innerHTML = '';
+        return;
+    }
+
+    actionsEl.innerHTML = `
+        <button class="btn primary" onclick="setupMissingWorkerTunnels()">
+            Sync Cloudflare to Workers
+        </button>`;
 }
 
 function renderEnrollmentTokens(tokens) {
@@ -2535,12 +2557,83 @@ async function removeCfPolicyMember(policyId, encodedValue) {
 
 async function setupWorkerTunnel(nodeId, nodeName) {
     if (!confirm(`Create a Cloudflare tunnel for "${nodeName}" and start cloudflared on the worker?`)) return;
+    bindWorkerCfSetupProgress();
+    showWorkerCfSetupProgress(`Setting up Cloudflare tunnel for ${nodeName}...`, 8);
     try {
         const result = await api('POST', `/api/nodes/${nodeId}/cf/setup`, {});
-        alert(`Tunnel created for ${nodeName}.\nTunnel ID: ${result.tunnel_id}`);
+        delete wsProgressCallbacks['worker-cf-setup'];
+        showWorkerCfSetupProgress(`Tunnel ready for ${nodeName}.`, 100);
         await loadSettingsView();
+        renderWorkerCfSetupResults({ [nodeId]: { ...result, name: nodeName } });
     } catch (e) {
-        alert('Tunnel setup failed: ' + e.message);
+        delete wsProgressCallbacks['worker-cf-setup'];
+        renderWorkerCfSetupError(e.message);
+    }
+}
+
+function showWorkerCfSetupProgress(message, pct) {
+    const progressEl = document.getElementById('worker-cf-sync-progress');
+    const textEl = document.getElementById('worker-cf-sync-progress-text');
+    const barEl = document.getElementById('worker-cf-sync-progress-bar');
+    if (!progressEl || !textEl || !barEl) return;
+    progressEl.style.display = '';
+    textEl.textContent = message;
+    if (pct !== undefined) barEl.style.width = pct + '%';
+}
+
+function hideWorkerCfSetupProgress() {
+    const progressEl = document.getElementById('worker-cf-sync-progress');
+    const barEl = document.getElementById('worker-cf-sync-progress-bar');
+    if (progressEl) progressEl.style.display = 'none';
+    if (barEl) barEl.style.width = '0%';
+}
+
+function bindWorkerCfSetupProgress() {
+    let stepCount = 0;
+    onWsProgress('worker-cf-setup', (msg) => {
+        stepCount += 1;
+        const pct = msg.done ? 100 : Math.min(10 + stepCount * 12, 92);
+        showWorkerCfSetupProgress(msg.message || 'Setting up worker Cloudflare...', pct);
+    });
+}
+
+function renderWorkerCfSetupResults(results) {
+    const el = document.getElementById('worker-cf-sync-results');
+    if (!el) return;
+    const entries = Object.entries(results || {});
+    if (entries.length === 0) {
+        el.innerHTML = '<div class="settings-desc">No workers needed Cloudflare setup.</div>';
+        return;
+    }
+    el.innerHTML = entries.map(([nodeId, result]) => {
+        const ok = result.status && result.status !== 'error';
+        const name = result.name || result.tunnel_name || nodeId;
+        const detail = ok
+            ? `Tunnel ${result.tunnel_id || 'ready'}`
+            : (result.detail || 'Setup failed');
+        return `<div class="settings-desc" style="color:${ok ? 'var(--green)' : 'var(--red)'}">${esc(name)}: ${esc(detail)}</div>`;
+    }).join('');
+}
+
+function renderWorkerCfSetupError(message) {
+    const el = document.getElementById('worker-cf-sync-results');
+    if (el) el.innerHTML = `<div class="settings-desc" style="color:var(--red)">${esc(message)}</div>`;
+}
+
+async function setupMissingWorkerTunnels() {
+    if (!confirm('Create Cloudflare tunnels for all workers missing one and start cloudflared on each worker?')) return;
+    bindWorkerCfSetupProgress();
+    showWorkerCfSetupProgress('Setting up Cloudflare on workers...', 5);
+    try {
+        const result = await api('POST', '/api/cf/workers/setup', {});
+        delete wsProgressCallbacks['worker-cf-setup'];
+        showWorkerCfSetupProgress('Worker Cloudflare setup finished.', 100);
+        await loadSettingsView();
+        renderWorkerCfSetupResults(result.workers || {});
+    } catch (e) {
+        delete wsProgressCallbacks['worker-cf-setup'];
+        hideWorkerCfSetupProgress();
+        renderWorkerCfSetupError(e.message);
     }
 }
 

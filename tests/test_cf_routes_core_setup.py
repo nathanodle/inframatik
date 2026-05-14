@@ -622,6 +622,7 @@ def test_api_setup_worker_tunnel_success_defaults_name_from_worker():
     with _Patch(
         [
             (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "_current_cf_config_payload", lambda: {"token": "tok", "account_id": "acct"}),
             (cf_routes, "get_worker_by_node_id", lambda _nid: {"name": "worker-a"}),
             (cf_routes, "create_tunnel", fake_create),
             (cf_routes, "get_tunnel_token", fake_get_token),
@@ -640,8 +641,48 @@ def test_api_setup_worker_tunnel_success_defaults_name_from_worker():
         "worker-1",
         "POST",
         "/api/cf/token",
-        {"tunnel_id": "tid-7", "token": "tok-7"},
+        {
+            "tunnel_id": "tid-7",
+            "token": "tok-7",
+            "cf_config": {"token": "tok", "account_id": "acct"},
+        },
     )
+
+
+def test_api_setup_missing_worker_tunnels_sets_up_only_missing_workers():
+    calls = []
+
+    async def fake_setup(node_id, body=None, send_progress=False):
+        calls.append((node_id, body, send_progress))
+        return {"status": "setup_complete", "tunnel_id": f"tid-{node_id}", "name": node_id}
+
+    async def fake_progress(step, message, done=False, error=False):
+        calls.append(("progress", step, done, error))
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (
+                cf_routes,
+                "get_node_config",
+                lambda: {
+                    "role": "master",
+                    "workers": {
+                        "w1": {"name": "worker-1"},
+                        "w2": {"name": "worker-2", "tunnel_id": "existing"},
+                    },
+                },
+            ),
+            (cf_routes, "_setup_worker_tunnel", fake_setup),
+            (cf_routes, "_send_worker_cf_setup_progress", fake_progress),
+        ]
+    ):
+        result = _run(cf_routes.api_setup_missing_worker_tunnels())
+
+    assert result["status"] == "setup_complete"
+    assert sorted(result["workers"].keys()) == ["w1"]
+    assert calls[0] == ("progress", "starting", False, False)
+    assert calls[1] == ("w1", None, True)
 
 
 def test_api_setup_worker_tunnel_uses_body_tunnel_name():

@@ -53,6 +53,45 @@ def _require_cf_config():
     cfg = _load_cf_config()
     if not cfg:
         raise HTTPException(400, "Cloudflare not configured. Set up in Settings → Cloudflare.")
+    return cfg
+
+
+def _current_cf_config_payload() -> dict | None:
+    """Return the CF config fields a worker needs for local tunnel management."""
+    config = get_node_config()
+    if not config:
+        return None
+    token = (config.get("cf_token") or "").strip()
+    account_id = (config.get("cf_account_id") or "").strip()
+    if not token or not account_id:
+        return None
+    payload = {
+        "token": token,
+        "account_id": account_id,
+        "zone_id": config.get("cf_zone_id"),
+        "default_policy_id": config.get("cf_default_policy_id"),
+        "team_domain": config.get("cf_team_domain"),
+        "access_issuer": config.get("cf_access_issuer"),
+    }
+    return {k: v for k, v in payload.items() if v}
+
+
+def _save_cf_config_payload(cf_config: Optional[dict]) -> bool:
+    if not isinstance(cf_config, dict):
+        return False
+    token = (cf_config.get("token") or "").strip()
+    account_id = (cf_config.get("account_id") or "").strip()
+    if not token or not account_id:
+        return False
+    save_cf_config(
+        token,
+        account_id,
+        (cf_config.get("zone_id") or "").strip(),
+        cf_config.get("default_policy_id"),
+        team_domain=cf_config.get("team_domain"),
+        access_issuer=cf_config.get("access_issuer"),
+    )
+    return True
 
 
 def _require_internal_api_key(request: Request):
@@ -322,10 +361,21 @@ class SetupWorkerTunnelBody(BaseModel):
     tunnel_name: Optional[str] = None
 
 
-@cf_router.post("/api/nodes/{node_id}/cf/setup")
-async def api_setup_worker_tunnel(node_id: str, body: SetupWorkerTunnelBody = None):
-    """Create a CF tunnel for a worker and push the token to it."""
-    _require_cf_config()
+async def _send_worker_cf_setup_progress(
+    step: str,
+    message: str,
+    *,
+    done: bool = False,
+    error: bool = False,
+):
+    try:
+        from ws_routes import send_progress
+        await send_progress("worker-cf-setup", step, message, done=done, error=error)
+    except Exception:
+        pass
+
+
+async def _setup_worker_tunnel(node_id: str, body: SetupWorkerTunnelBody = None, *, send_progress: bool = False):
     from proxy import proxy_to_node
 
     worker = get_worker_by_node_id(node_id)
@@ -337,25 +387,57 @@ async def api_setup_worker_tunnel(node_id: str, body: SetupWorkerTunnelBody = No
 
     try:
         # 1. Create tunnel
+        if send_progress:
+            await _send_worker_cf_setup_progress(
+                f"{node_id}:creating_tunnel",
+                f"Creating Cloudflare tunnel for {worker['name']}...",
+            )
         tunnel_result = await create_tunnel(tunnel_name)
         tid = tunnel_result["id"]
 
         # 2. Get connector token
+        if send_progress:
+            await _send_worker_cf_setup_progress(
+                f"{node_id}:getting_token",
+                f"Getting connector token for {worker['name']}...",
+            )
         token = await get_tunnel_token(tid)
 
         # 3. Init ingress config
+        if send_progress:
+            await _send_worker_cf_setup_progress(
+                f"{node_id}:initializing_tunnel",
+                f"Initializing tunnel config for {worker['name']}...",
+            )
         await init_tunnel_config(tid)
 
         # 4. Push token to worker. Only mark the worker configured after this
         # succeeds; otherwise the UI would hide the retry button while the
         # worker never received a connector token.
+        if send_progress:
+            await _send_worker_cf_setup_progress(
+                f"{node_id}:installing_cloudflared",
+                f"Installing and starting cloudflared on {worker['name']}...",
+            )
+        payload = {"tunnel_id": tid, "token": token}
+        cf_config = _current_cf_config_payload()
+        if cf_config:
+            payload["cf_config"] = cf_config
         push_result = await proxy_to_node(
-            node_id, "POST", "/api/cf/token",
-            {"tunnel_id": tid, "token": token}
+            node_id,
+            "POST",
+            "/api/cf/token",
+            payload,
         )
 
         # 5. Store tunnel_id in master's worker config
         set_worker_tunnel_id(node_id, tid)
+
+        if send_progress:
+            await _send_worker_cf_setup_progress(
+                f"{node_id}:complete",
+                f"Cloudflare tunnel ready for {worker['name']}.",
+            )
 
         return {
             "status": "setup_complete",
@@ -369,6 +451,69 @@ async def api_setup_worker_tunnel(node_id: str, body: SetupWorkerTunnelBody = No
         raise HTTPException(502, str(e))
 
 
+@cf_router.post("/api/nodes/{node_id}/cf/setup")
+async def api_setup_worker_tunnel(node_id: str, body: SetupWorkerTunnelBody = None):
+    """Create a CF tunnel for a worker and push the token to it."""
+    _require_cf_config()
+    return await _setup_worker_tunnel(node_id, body, send_progress=True)
+
+
+@cf_router.post("/api/cf/workers/setup")
+async def api_setup_missing_worker_tunnels():
+    """Create and push Cloudflare tunnels for workers missing tunnel config."""
+    _require_cf_config()
+    config = get_node_config()
+    if not config or config.get("role") != "master":
+        raise HTTPException(403, "Only master can set up worker tunnels")
+
+    workers = config.get("workers", {})
+    targets = [(node_id, worker) for node_id, worker in workers.items() if not worker.get("tunnel_id")]
+    results = {}
+    if not targets:
+        await _send_worker_cf_setup_progress("complete", "All workers already have Cloudflare tunnels.", done=True)
+        return {"status": "no_missing_workers", "workers": results}
+
+    await _send_worker_cf_setup_progress("starting", f"Setting up Cloudflare on {len(targets)} worker(s)...")
+    for node_id, worker in targets:
+        try:
+            results[node_id] = await _setup_worker_tunnel(node_id, send_progress=True)
+        except HTTPException as e:
+            results[node_id] = {
+                "status": "error",
+                "detail": str(e.detail),
+                "name": worker.get("name"),
+            }
+            await _send_worker_cf_setup_progress(
+                f"{node_id}:error",
+                f"{worker.get('name', node_id)} failed: {e.detail}",
+                error=True,
+            )
+        except Exception as e:
+            results[node_id] = {
+                "status": "error",
+                "detail": str(e),
+                "name": worker.get("name"),
+            }
+            await _send_worker_cf_setup_progress(
+                f"{node_id}:error",
+                f"{worker.get('name', node_id)} failed: {e}",
+                error=True,
+            )
+
+    failures = [r for r in results.values() if r.get("status") == "error"]
+    if failures:
+        await _send_worker_cf_setup_progress(
+            "complete",
+            "Worker Cloudflare setup finished with errors.",
+            done=True,
+            error=True,
+        )
+        return {"status": "partial", "workers": results}
+
+    await _send_worker_cf_setup_progress("complete", "Cloudflare tunnels are ready on all workers.", done=True)
+    return {"status": "setup_complete", "workers": results}
+
+
 # ---------------------------------------------------------------------------
 # Worker-side: receive tunnel token
 # ---------------------------------------------------------------------------
@@ -376,6 +521,7 @@ async def api_setup_worker_tunnel(node_id: str, body: SetupWorkerTunnelBody = No
 class ReceiveTunnelTokenBody(BaseModel):
     tunnel_id: str
     token: str
+    cf_config: Optional[dict] = None
 
 
 @cf_router.post("/api/cf/token")
@@ -385,6 +531,7 @@ async def api_receive_tunnel_token(body: ReceiveTunnelTokenBody, request: Reques
     config = get_node_config()
     if not api_key or not config or api_key != config.get("api_key"):
         raise HTTPException(401, "API key required")
+    _save_cf_config_payload(body.cf_config)
     set_tunnel_id(body.tunnel_id)
     try:
         await setup_cloudflared_user_service(body.token)

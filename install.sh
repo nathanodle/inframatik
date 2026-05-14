@@ -170,96 +170,7 @@ mkdir -p "$CONFIG_DIR"
 
 CURRENT_USER=$(whoami)
 
-# 4. Optional: Cloudflare tunnel support
-INSTALL_CF="${INSTALL_CF:-}"
-if [ -z "$INSTALL_CF" ]; then
-    if [ -t 0 ]; then
-        read -p "Install Cloudflare tunnel support? [y/N] " -n 1 -r
-        echo
-        [[ $REPLY =~ ^[Yy]$ ]] && INSTALL_CF=1
-    else
-        echo "==> Skipping Cloudflare setup (non-interactive)"
-        echo "    To include CF support: curl ... | INSTALL_CF=1 bash"
-    fi
-fi
-
-if [ -n "$INSTALL_CF" ]; then
-    CF_USER_BIN="$HOME/.local/bin/cloudflared"
-    if [ -x "$CF_USER_BIN" ]; then
-        echo "==> cloudflared already installed: $("$CF_USER_BIN" --version 2>&1 | head -1)"
-    else
-        echo "==> Installing cloudflared..."
-        ARCH=$(uname -m)
-        case "$ARCH" in
-            x86_64)  CF_ARCH="amd64" ;;
-            aarch64) CF_ARCH="arm64" ;;
-            armv7l)  CF_ARCH="arm" ;;
-            *)       echo "    Unsupported architecture: $ARCH"; exit 1 ;;
-        esac
-        CLOUDFLARED_VERSION="${CLOUDFLARED_VERSION:-2026.2.0}"
-        CF_BASE_URL="https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}"
-        CF_ASSET="cloudflared-linux-${CF_ARCH}"
-        CF_BIN_URL="${CF_BASE_URL}/${CF_ASSET}"
-        CF_API_URL="https://api.github.com/repos/cloudflare/cloudflared/releases/tags/${CLOUDFLARED_VERSION}"
-        TMP_BIN="$(mktemp)"
-        TMP_RELEASE="$(mktemp)"
-
-        if ! curl -fsSL -o "$TMP_BIN" "$CF_BIN_URL"; then
-            echo "ERROR: Failed to download cloudflared binary from ${CF_BIN_URL}"
-            rm -f "$TMP_BIN" "$TMP_RELEASE"
-            exit 1
-        fi
-
-        if ! curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            -H "User-Agent: inframatik-installer" \
-            -o "$TMP_RELEASE" \
-            "$CF_API_URL"; then
-            echo "ERROR: Failed to download cloudflared release metadata."
-            rm -f "$TMP_BIN" "$TMP_RELEASE"
-            exit 1
-        fi
-
-        if ! EXPECTED_SHA="$(python3 - "$TMP_RELEASE" "$CF_ASSET" <<'PY'
-import json
-import pathlib
-import re
-import sys
-
-release = json.loads(pathlib.Path(sys.argv[1]).read_text())
-asset_name = sys.argv[2]
-for asset in release.get("assets", []):
-    if isinstance(asset, dict) and asset.get("name") == asset_name:
-        digest = str(asset.get("digest") or "")
-        match = re.search(r"\b[a-fA-F0-9]{64}\b", digest)
-        if match:
-            print(match.group(0).lower())
-            raise SystemExit(0)
-        break
-raise SystemExit(1)
-PY
-)"; then
-            echo "ERROR: cloudflared release metadata did not include a SHA256 digest for ${CF_ASSET}."
-            rm -f "$TMP_BIN" "$TMP_RELEASE"
-            exit 1
-        fi
-        ACTUAL_SHA="$(sha256sum "$TMP_BIN" | awk '{print $1}')"
-        if [ -z "$EXPECTED_SHA" ] || [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
-            echo "ERROR: cloudflared checksum verification failed."
-            rm -f "$TMP_BIN" "$TMP_RELEASE"
-            exit 1
-        fi
-
-        mkdir -p "$HOME/.local/bin"
-        chmod 0755 "$TMP_BIN"
-        mv "$TMP_BIN" "$CF_USER_BIN"
-        rm -f "$TMP_BIN" "$TMP_RELEASE"
-        echo "    Installed cloudflared ${CLOUDFLARED_VERSION} to ${CF_USER_BIN}"
-    fi
-fi
-
-# 5. Add ports.env to .bashrc
+# 4. Add ports.env to .bashrc
 if ! grep -q 'inframatik/ports.env' "$HOME/.bashrc" 2>/dev/null; then
     echo '' >> "$HOME/.bashrc"
     echo '# inframatik service ports' >> "$HOME/.bashrc"
@@ -267,7 +178,7 @@ if ! grep -q 'inframatik/ports.env' "$HOME/.bashrc" 2>/dev/null; then
     echo "==> Added ports.env to .bashrc"
 fi
 
-# 6. Create systemd user service
+# 5. Create systemd user service
 echo "==> Setting up systemd service..."
 mkdir -p "$HOME/.config/systemd/user"
 cat > "$HOME/.config/systemd/user/${SERVICE_NAME}.service" << SVC_EOF
@@ -286,11 +197,11 @@ RestartSec=5s
 WantedBy=default.target
 SVC_EOF
 
-# 7. Enable linger so user services start at boot
+# 6. Enable linger so user services start at boot
 echo "==> Enabling linger for $CURRENT_USER..."
 sudo loginctl enable-linger "$CURRENT_USER"
 
-# 8. Install CLI
+# 7. Install CLI
 echo "==> Installing CLI..."
 chmod +x "$INSTALL_DIR/inframatik-cli.py"
 mkdir -p "$HOME/.local/bin"
@@ -300,13 +211,13 @@ if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
     echo "    Added ~/.local/bin to PATH (open a new terminal to use 'inframatik' command)"
 fi
 
-# 9. Enable and start the service
+# 8. Enable and start the service
 systemctl --user daemon-reload
 systemctl --user enable "$SERVICE_NAME"
 systemctl --user restart "$SERVICE_NAME"
 echo "==> inframatik started on port 9000"
 
-# 10. Set admin password
+# 9. Set admin password
 if [ -n "$ADMIN_PW" ]; then
     sleep 2
     PW_BODY=$(python3 -c "import json,sys; print(json.dumps({'password': sys.argv[1]}))" "$ADMIN_PW")
@@ -358,7 +269,7 @@ PY
     echo "==> Admin password set"
 fi
 
-# 11. Optional: enroll as worker with master
+# 10. Optional: enroll as worker with master
 if [ -n "$ENROLL_TOKEN" ]; then
     [ -z "$NODE_NAME" ] && NODE_NAME=$(hostname -s)
     echo "==> Enrolling with master as: $NODE_NAME"
@@ -377,8 +288,15 @@ if [ -n "$ENROLL_TOKEN" ]; then
 
     API_KEY=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || echo "")
     SIGNING_PUBLIC_KEY=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('signing_public_key',''))" 2>/dev/null || echo "")
+    HAS_CF_CONFIG=$(echo "$RESULT" | python3 -c "import sys,json; data=json.load(sys.stdin); print('1' if isinstance(data.get('cf_config'), dict) else '')" 2>/dev/null || echo "")
 
     if [ -n "$API_KEY" ]; then
+        if [ -n "$HAS_CF_CONFIG" ]; then
+            echo "==> Master has Cloudflare configured; creating a local worker tunnel..."
+        else
+            echo "==> Master has no Cloudflare config; enrolling as local-only worker."
+            echo "    If Cloudflare is configured later, sync worker tunnels from master Settings."
+        fi
         # Configure as worker locally with credentials from master
         CONFIG_BODY=$(RESULT_JSON="$RESULT" python3 -c "import json,os,sys; body={'name': sys.argv[1], 'master_url': sys.argv[2], 'api_key': sys.argv[3], 'update_public_key': sys.argv[4]}; data=json.loads(os.environ.get('RESULT_JSON','{}')); cf=data.get('cf_config') if isinstance(data, dict) else None; body.update({'cf_config': cf} if cf else {}); print(json.dumps(body))" "$NODE_NAME" "$MASTER_URL" "$API_KEY" "$SIGNING_PUBLIC_KEY")
         INIT_RESULT=$(curl -sS -X POST "http://127.0.0.1:9000/api/config/init-worker" \
