@@ -547,6 +547,9 @@ def test_app_js_node_selection_starts_priority_refresh_immediately():
                         if (path.includes('/node-a/')) {
                             return new Promise(() => {});
                         }
+                        if (path === '/api/nodes/node-b/snapshot') {
+                            return { system: {}, tunnel: {}, services: [] };
+                        }
                         return {};
                     };
 
@@ -555,14 +558,8 @@ def test_app_js_node_selection_starts_priority_refresh_immediately():
                     selectNode('node-b');
                     await new Promise(resolve => setTimeout(resolve, 0));
 
-                    if (!calls.includes('/api/nodes/node-b/system')) {
-                        throw new Error('node click should start system refresh immediately for selected node');
-                    }
-                    if (!calls.includes('/api/nodes/node-b/tunnel')) {
-                        throw new Error('node click should start tunnel refresh immediately for selected node');
-                    }
-                    if (!calls.includes('/api/nodes/node-b/services')) {
-                        throw new Error('node click should start services refresh immediately for selected node');
+                    if (!calls.includes('/api/nodes/node-b/snapshot')) {
+                        throw new Error('node click should start snapshot refresh immediately for selected node');
                     }
                     if (selectedNodeId !== 'node-b') {
                         throw new Error('selected node should update synchronously');

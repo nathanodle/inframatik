@@ -292,7 +292,32 @@ def test_handle_local_system_dispatch():
     assert result["cpu"]["percent"] == 10
 
 
-def test_handle_local_tunnel_dispatch_with_routes_error():
+def test_handle_local_tunnel_dispatch_skips_routes_by_default():
+    original_status = tunnel.get_tunnel_status
+    original_routes = tunnel.get_tunnel_routes
+    calls = {"routes": 0}
+
+    async def fake_status():
+        return {"connected": True}
+
+    async def fake_routes():
+        calls["routes"] += 1
+        raise ValueError("bad route parse")
+
+    tunnel.get_tunnel_status = fake_status
+    tunnel.get_tunnel_routes = fake_routes
+    try:
+        result = _run(proxy._handle_local("GET", "/api/tunnel"))
+    finally:
+        tunnel.get_tunnel_status = original_status
+        tunnel.get_tunnel_routes = original_routes
+
+    assert result["connected"] is True
+    assert "routes" not in result
+    assert calls["routes"] == 0
+
+
+def test_handle_local_tunnel_dispatch_with_routes_error_when_requested():
     original_status = tunnel.get_tunnel_status
     original_routes = tunnel.get_tunnel_routes
 
@@ -305,7 +330,7 @@ def test_handle_local_tunnel_dispatch_with_routes_error():
     tunnel.get_tunnel_status = fake_status
     tunnel.get_tunnel_routes = fake_routes
     try:
-        result = _run(proxy._handle_local("GET", "/api/tunnel"))
+        result = _run(proxy._handle_local("GET", "/api/tunnel?include_routes=true"))
     finally:
         tunnel.get_tunnel_status = original_status
         tunnel.get_tunnel_routes = original_routes

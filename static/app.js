@@ -890,8 +890,10 @@ async function refreshSystem(context = null) {
         const path = nodePathFor(context ? context.nodeId : selectedNodeId, '/api/system');
         const data = await api('GET', path);
         if (isRefreshCurrent(context)) renderSystem(data);
+        return data;
     } catch (e) {
         console.error('Failed to fetch system metrics:', e);
+        return null;
     }
 }
 
@@ -1098,8 +1100,10 @@ async function refreshTunnel(context = null) {
         const path = nodePathFor(context ? context.nodeId : selectedNodeId, '/api/tunnel');
         const data = await api('GET', path);
         if (isRefreshCurrent(context)) renderTunnel(data);
+        return data;
     } catch (e) {
         if (isRefreshCurrent(context)) renderTunnel({ connected: false, detail: 'unreachable' });
+        return null;
     }
 }
 
@@ -1117,8 +1121,10 @@ async function refreshServices(context = null) {
         const path = nodePathFor(context ? context.nodeId : selectedNodeId, '/api/services');
         const data = await api('GET', path);
         if (isRefreshCurrent(context)) renderServices(data);
+        return data;
     } catch (e) {
         console.error('Failed to fetch services:', e);
+        return null;
     }
 }
 
@@ -2090,7 +2096,7 @@ async function updateCurrentTunnelId(nodeId) {
     }
 }
 
-async function refreshCfSection(context = null) {
+async function refreshCfSection(context = null, options = {}) {
     if (!shouldShowLocalCfSection()) return;
     try {
         const nodeId = context ? context.nodeId : selectedNodeId;
@@ -2112,11 +2118,13 @@ async function refreshCfSection(context = null) {
         const activeTab = document.querySelector('.tunnel-tab-content.active');
         if (activeTab) activeTab.style.display = '';
 
-        let tunnelData;
-        try {
-            tunnelData = await api('GET', nodePathFor(nodeId, '/api/tunnel'));
-        } catch (e) {
-            tunnelData = { connected: false, connections: 0, detail: 'unreachable' };
+        let tunnelData = options.tunnelData || null;
+        if (!tunnelData) {
+            try {
+                tunnelData = await api('GET', nodePathFor(nodeId, '/api/tunnel'));
+            } catch (e) {
+                tunnelData = { connected: false, connections: 0, detail: 'unreachable' };
+            }
         }
         if (!isRefreshCurrent(context)) return;
         renderCfStatus(tunnelData);
@@ -2639,6 +2647,32 @@ async function deployRestart() {
 
 // ---- Refresh loop ----
 
+function renderNodeSnapshot(snapshot, context) {
+    if (!snapshot || !isRefreshCurrent(context)) return;
+    if (snapshot.system) renderSystem(snapshot.system);
+    if (snapshot.tunnel) renderTunnel(snapshot.tunnel);
+    if (Array.isArray(snapshot.services)) renderServices(snapshot.services);
+}
+
+async function refreshNodeData(context) {
+    if (isMaster && context && context.nodeId) {
+        try {
+            const snapshot = await api('GET', `/api/nodes/${context.nodeId}/snapshot`);
+            renderNodeSnapshot(snapshot, context);
+            return snapshot;
+        } catch (e) {
+            console.error('Failed to fetch node snapshot:', e);
+        }
+    }
+
+    const [system, tunnel, services] = await Promise.all([
+        refreshSystem(context),
+        refreshTunnel(context),
+        refreshServices(context),
+    ]);
+    return { system, tunnel, services };
+}
+
 async function refreshAll(options = {}) {
     if (currentAppView !== 'main') return;
     const priority = !!options.priority;
@@ -2653,14 +2687,11 @@ async function refreshAll(options = {}) {
     else refreshInFlight = true;
 
     try {
-        await Promise.all([
-            refreshSystem(context),
-            refreshTunnel(context),
-            refreshServices(context),
-        ]);
+        const snapshot = await refreshNodeData(context);
         if (isRefreshCurrent(context) && shouldShowLocalCfSection() && (!cfSectionLoaded || options.forceCf)) {
             cfSectionLoaded = true;
-            await refreshCfSection(context);
+            const cfRefresh = refreshCfSection(context, { tunnelData: snapshot ? snapshot.tunnel : null });
+            if (!priority) await cfRefresh;
         }
     } finally {
         if (priority) priorityRefreshes = Math.max(0, priorityRefreshes - 1);

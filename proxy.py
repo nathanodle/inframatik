@@ -74,6 +74,18 @@ def _query_int(query: dict[str, list[str]], key: str, default: int) -> int:
         return default
 
 
+def _query_bool(query: dict[str, list[str]], key: str, default: bool = False) -> bool:
+    values = query.get(key)
+    if not values:
+        return default
+    value = str(values[-1]).strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
 def _service_name_from_route(route_path: str) -> str:
     if not route_path.startswith("/api/services/"):
         raise ValueError("Invalid service route")
@@ -202,11 +214,12 @@ async def _handle_local(method: str, path: str, body: dict = None):
 
     if route_path == "/api/tunnel" and method == "GET":
         status = await get_tunnel_status()
-        try:
-            status["routes"] = await get_tunnel_routes()
-        except ValueError as e:
-            status["routes"] = []
-            status["routes_error"] = str(e)
+        if _query_bool(query, "include_routes"):
+            try:
+                status["routes"] = await get_tunnel_routes()
+            except ValueError as e:
+                status["routes"] = []
+                status["routes_error"] = str(e)
         return status
 
     cf_response = await _handle_local_cf_service(method, route_path, query, body)

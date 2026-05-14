@@ -50,6 +50,7 @@ from nodes import (
     get_all_nodes,
     unregister_node,
 )
+from node_snapshots import get_node_snapshot
 from proxy import proxy_to_node
 from updater import (
     get_version,
@@ -1109,6 +1110,14 @@ async def report_worker_tunnel(body: WorkerTunnelBody, request: Request):
 @cluster_router.get("/api/nodes")
 async def list_nodes():
     return await get_all_nodes()
+
+
+@cluster_router.get("/api/nodes/{node_id}/snapshot")
+async def node_snapshot(node_id: str):
+    try:
+        return await get_node_snapshot(node_id)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
 
 
 # ---------------------------------------------------------------------------

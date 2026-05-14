@@ -29,6 +29,7 @@ from cf_routes import cf_router
 from mcp_routes import mcp_router
 from ws_routes import ws_router
 from nodes import stale_checker_loop, heartbeat_sender_loop
+from node_snapshots import snapshot_collector_loop
 
 logger = logging.getLogger("inframatik.main")
 
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
     if config:
         if config.get("role") == "master":
             tasks.append(asyncio.create_task(stale_checker_loop()))
+            tasks.append(asyncio.create_task(snapshot_collector_loop()))
         elif config.get("role") == "worker":
             tasks.append(asyncio.create_task(heartbeat_sender_loop()))
     yield
