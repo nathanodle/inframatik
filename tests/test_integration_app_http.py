@@ -84,6 +84,19 @@ def test_public_node_info_bypasses_auth_check():
     assert called == []
 
 
+def test_asset_version_uses_deploy_metadata_for_cache_bust():
+    original_get_version = main.get_version
+    try:
+        main.get_version = lambda: {"commit": "abc1234", "deployed_at": 111}
+        first = main._get_asset_version()
+        main.get_version = lambda: {"commit": "abc1234", "deployed_at": 222}
+        second = main._get_asset_version()
+    finally:
+        main.get_version = original_get_version
+
+    assert first != second
+
+
 def test_protected_system_requires_auth():
     resp = _request("GET", "/api/system", patches=((auth, "check_auth", _auth_false),))
     assert resp.status_code == 401

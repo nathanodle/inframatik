@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import json
 import os
 import sys
 import tarfile
@@ -163,19 +164,49 @@ def test_build_package_includes_expected_and_excludes_sensitive(tmp_app: Path):
 
     pkg = updater.build_package()
     names = []
+    version_metadata = None
     with tarfile.open(fileobj=io.BytesIO(pkg), mode="r:gz") as tar:
         names = sorted(m.name for m in tar.getmembers() if m.isfile())
+        version_file = tar.extractfile(updater.DEPLOY_VERSION_FILENAME)
+        assert version_file is not None
+        version_metadata = json.loads(version_file.read().decode())
 
     assert "main.py" in names
     assert "install.sh" in names
     assert "requirements.txt" in names
     assert "requirements.lock" in names
     assert "static/app.js" in names
+    assert updater.DEPLOY_VERSION_FILENAME in names
+    assert version_metadata["source"] == "deploy-package"
+    assert isinstance(version_metadata["deployed_at"], int)
     assert "notes.txt" not in names
     assert "tests/should_not_ship.py" not in names
     assert "docs/guide.md" not in names
     assert ".git/config" not in names
     assert "venv/bin.py" not in names
+
+
+@_run_with_temp_app_dir
+def test_get_version_prefers_deploy_metadata(tmp_app: Path):
+    payload = {
+        "source": "deploy-package",
+        "commit": "abc1234",
+        "branch": "main",
+        "dirty": True,
+        "deployed_at": 123456789,
+    }
+    (tmp_app / updater.DEPLOY_VERSION_FILENAME).write_text(json.dumps(payload))
+
+    result = updater.get_version()
+
+    assert result == {
+        "commit": "abc1234",
+        "branch": "main",
+        "dirty": True,
+        "summary": "abc1234 (modified, deployed)",
+        "deployed": True,
+        "deployed_at": 123456789,
+    }
 
 
 def test_push_update_to_worker_rejects_invalid_address():

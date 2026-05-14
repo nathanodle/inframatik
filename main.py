@@ -1,6 +1,6 @@
 import asyncio
+import hashlib
 import logging
-import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -23,6 +23,7 @@ from services import (
 )
 from tunnel import get_tunnel_status, get_tunnel_routes
 from node_config import get_node_config, service_token_capability_allows
+from updater import get_version
 from cluster_routes import cluster_router
 from cf_routes import cf_router
 from mcp_routes import mcp_router
@@ -73,13 +74,13 @@ def _get_asset_version() -> str:
     except Exception:
         pass
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=3,
-            cwd=Path(__file__).parent,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return f"{result.stdout.strip()}-{latest_mtime}"
+        version = get_version()
+        parts = [
+            str(version.get("commit") or "unknown"),
+            str(version.get("deployed_at") or ""),
+            latest_mtime,
+        ]
+        return hashlib.sha256(":".join(parts).encode()).hexdigest()[:16]
     except Exception:
         pass
     return latest_mtime

@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import io
+import json
 import logging
 import os
 import subprocess
@@ -31,6 +32,7 @@ SIGNING_PUBLIC_KEY = SIGNING_DIR / "update_signing_key.pub.pem"
 
 # Never include these
 EXCLUDE = {"venv", "__pycache__", ".git", ".env", "node.json", "tests", "docs"}
+DEPLOY_VERSION_FILENAME = ".inframatik-version.json"
 
 
 def _secure_write_bytes(path: Path, payload: bytes, mode: int):
@@ -112,7 +114,37 @@ def verify_package_signature(data: bytes, signature_b64: str, public_key_pem: st
         return False
 
 
-def get_version() -> dict:
+def _version_summary(commit: str | None, dirty: bool, *, deployed: bool = False) -> str:
+    summary = commit or ("deployed package" if deployed else "unknown")
+    labels = []
+    if dirty:
+        labels.append("modified")
+    if deployed:
+        labels.append("deployed")
+    if labels:
+        summary += f" ({', '.join(labels)})"
+    return summary
+
+
+def _deploy_version_path() -> Path:
+    return APP_DIR / DEPLOY_VERSION_FILENAME
+
+
+def _read_deploy_version() -> dict | None:
+    path = _deploy_version_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, TypeError) as e:
+        logger.debug("Failed to read deploy version metadata: %s", e)
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _git_version_info() -> dict:
     """Return version info from git (if available) or fallback."""
     info = {"commit": None, "branch": None, "dirty": False, "summary": "unknown"}
     try:
@@ -133,12 +165,41 @@ def get_version() -> dict:
         info["dirty"] = bool(dirty_check.stdout.strip())
 
         if info["commit"]:
-            info["summary"] = info["commit"]
-            if info["dirty"]:
-                info["summary"] += " (modified)"
+            info["summary"] = _version_summary(info["commit"], info["dirty"])
     except (OSError, ValueError, subprocess.SubprocessError) as e:
         logger.debug("Failed to read git version metadata: %s", e)
     return info
+
+
+def get_version() -> dict:
+    """Return version info from deploy metadata, git, or fallback."""
+    deployed = _read_deploy_version()
+    if deployed:
+        commit = deployed.get("commit") if isinstance(deployed.get("commit"), str) else None
+        branch = deployed.get("branch") if isinstance(deployed.get("branch"), str) else None
+        dirty = bool(deployed.get("dirty"))
+        deployed_at = deployed.get("deployed_at")
+        return {
+            "commit": commit,
+            "branch": branch,
+            "dirty": dirty,
+            "summary": _version_summary(commit, dirty, deployed=True),
+            "deployed": True,
+            "deployed_at": deployed_at if isinstance(deployed_at, int) else None,
+        }
+    return _git_version_info()
+
+
+def _package_version_metadata() -> dict:
+    info = get_version()
+    return {
+        "source": "deploy-package",
+        "commit": info.get("commit"),
+        "branch": info.get("branch"),
+        "dirty": bool(info.get("dirty")),
+        "summary": info.get("summary", "unknown"),
+        "deployed_at": int(time.time()),
+    }
 
 
 def build_package() -> bytes:
@@ -156,6 +217,15 @@ def build_package() -> bytes:
             if (rel.suffix == ".py" or rel.parts[0] == "static"
                     or rel.name in ("requirements.txt", "requirements.lock", "install.sh")):
                 tar.add(path, arcname=str(rel))
+        version_payload = json.dumps(
+            _package_version_metadata(),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        info = tarfile.TarInfo(name=DEPLOY_VERSION_FILENAME)
+        info.size = len(version_payload)
+        info.mtime = int(time.time())
+        tar.addfile(info, io.BytesIO(version_payload))
     buf.seek(0)
     return buf.read()
 
