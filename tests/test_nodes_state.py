@@ -331,8 +331,10 @@ def test_get_all_nodes_includes_self_registered_and_unregistered_workers():
     assert result[0]["is_self"] is True
     assert result[0]["node_id"] == "master-1"
     by_id = {entry["node_id"]: entry for entry in result}
+    assert by_id["real-1"]["config_node_id"] == "w-reg"
     assert by_id["real-1"]["tunnel_id"] == "tw1"
     assert by_id["w-cfg"]["status"] == "offline"
+    assert by_id["w-cfg"]["config_node_id"] == "w-cfg"
     assert by_id["w-cfg"]["tunnel_id"] == "tw2"
 
 

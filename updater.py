@@ -202,6 +202,37 @@ def _package_version_metadata() -> dict:
     }
 
 
+def update_from_git() -> dict:
+    """Fast-forward the app checkout from its configured git remote."""
+    before = _git_version_info()
+    try:
+        result = subprocess.run(
+            ["git", "pull", "--ff-only"],
+            capture_output=True,
+            text=True,
+            cwd=APP_DIR,
+            timeout=60,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        raise RuntimeError(f"Failed to run git pull: {e}") from e
+
+    output = "\n".join(
+        part.strip()
+        for part in (result.stdout, result.stderr)
+        if part and part.strip()
+    )
+    if result.returncode != 0:
+        raise RuntimeError(output or f"git pull failed with exit code {result.returncode}")
+
+    after = _git_version_info()
+    return {
+        "status": "updated",
+        "before": before,
+        "after": after,
+        "detail": output or "Already up to date.",
+    }
+
+
 def build_package() -> bytes:
     """Create a tar.gz of the app source files. Returns bytes."""
     buf = io.BytesIO()

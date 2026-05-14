@@ -56,6 +56,7 @@ from updater import (
     build_package,
     apply_package,
     restart_service,
+    update_from_git,
     push_update_to_worker,
     sign_package,
     verify_package_signature,
@@ -1310,6 +1311,20 @@ async def deploy_self():
     """Restart this node (useful after local code changes on master)."""
     asyncio.get_event_loop().call_later(1, restart_service)
     return {"status": "restarting"}
+
+
+@cluster_router.post("/api/update/git")
+async def update_master_from_git():
+    """Master-only: update this checkout from git and restart."""
+    config = get_node_config()
+    if not config or config.get("role") != "master":
+        raise HTTPException(403, "Only master can update from git")
+    try:
+        result = update_from_git()
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    asyncio.get_event_loop().call_later(1, restart_service)
+    return {**result, "restart": "scheduled"}
 
 
 # ---------------------------------------------------------------------------

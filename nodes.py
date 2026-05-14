@@ -159,6 +159,7 @@ async def get_all_nodes() -> list[dict]:
         worker_cfg = workers_cfg.get(cfg_id, {})
         result.append({
             "node_id": node_id,
+            "config_node_id": cfg_id,
             "node_name": info["node_name"],
             "address": info["address"],
             "status": info["status"],
@@ -174,6 +175,7 @@ async def get_all_nodes() -> list[dict]:
                 status = await _check_health(worker["address"])
                 result.append({
                     "node_id": cfg_id,
+                    "config_node_id": cfg_id,
                     "node_name": worker["name"],
                     "address": worker["address"],
                     "status": status,

@@ -67,6 +67,21 @@ def test_app_js_cloudflare_section_gating_by_role():
             const document = {
                 cookie: '',
                 addEventListener() {},
+                createElement() {
+                    const el = makeElement('created');
+                    Object.defineProperty(el, 'textContent', {
+                        get() { return this._textContent || ''; },
+                        set(value) {
+                            this._textContent = String(value ?? '');
+                            this.innerHTML = this._textContent
+                                .replace(/&/g, '&amp;')
+                                .replace(/</g, '&lt;')
+                                .replace(/>/g, '&gt;')
+                                .replace(/"/g, '&quot;');
+                        },
+                    });
+                    return el;
+                },
                 getElementById(id) {
                     if (!elements.has(id)) elements.set(id, makeElement(id));
                     return elements.get(id);
@@ -236,6 +251,28 @@ def test_app_js_cloudflare_section_gating_by_role():
                     !cfSetupHtml.includes('https://dash.cloudflare.com'),
                     'Cloudflare wizard should not include dashboard token link'
                 );
+
+                const workersHtml = vm.runInContext(`
+                    renderMasterWorkers({
+                        'cfg-kitt': {
+                            name: 'kitt',
+                            address: 'http://192.168.166.150:9000',
+                            tunnel_id: 'tid-kitt',
+                        },
+                    }, [{
+                        node_id: 'real-kitt',
+                        config_node_id: 'cfg-kitt',
+                        node_name: 'kitt',
+                        address: 'http://192.168.166.150:9000',
+                        status: 'online',
+                    }]);
+                    document.getElementById('master-workers-list').innerHTML;
+                `, context);
+                assert(
+                    workersHtml.includes('worker-status-label green') &&
+                    workersHtml.includes('Online'),
+                    'settings workers should use live node status by config_node_id'
+                );
             })().catch((error) => {
                 console.error(error.stack || error.message);
                 process.exit(1);
@@ -256,6 +293,8 @@ def test_static_index_contains_setup_guidance_and_empty_state_copy():
     assert "DNS (Read/Edit)" in index_html
     assert "Zones (Read)" in index_html
     assert "dash.cloudflare.com/profile/api-tokens" not in index_html
+    assert 'id="settings-view"' in index_html
+    assert "Update Master from Git" in index_html
 
 
 def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():

@@ -43,11 +43,47 @@ let currentTunnelId = null;
 let cfPolicies = [];
 let cfSectionLoaded = false;
 let machineHostname = window.location.hostname || '';
+let currentAppView = 'main';
 
 // ---- Helpers ----
 
 function shouldShowLocalCfSection() {
     return nodeRole === 'master' || nodeRole === 'standalone';
+}
+
+function syncAppViewChrome() {
+    const mainView = document.getElementById('main-view');
+    const settingsView = document.getElementById('settings-view');
+    const mainTab = document.getElementById('main-view-tab');
+    const settingsTab = document.getElementById('settings-view-tab');
+    const appNav = document.getElementById('app-nav');
+    const sidebar = document.getElementById('sidebar');
+
+    if (mainView) mainView.style.display = currentAppView === 'main' ? '' : 'none';
+    if (settingsView) settingsView.style.display = currentAppView === 'settings' ? '' : 'none';
+    if (mainTab) {
+        if (currentAppView === 'main') mainTab.classList.add('active');
+        else mainTab.classList.remove('active');
+    }
+    if (settingsTab) {
+        if (currentAppView === 'settings') settingsTab.classList.add('active');
+        else settingsTab.classList.remove('active');
+    }
+    if (appNav) appNav.style.display = nodeRole && nodeRole !== 'unconfigured' ? '' : 'none';
+    if (sidebar) {
+        if (isMaster && currentAppView === 'main') sidebar.classList.add('visible');
+        else sidebar.classList.remove('visible');
+    }
+}
+
+async function showAppView(view) {
+    currentAppView = view === 'settings' ? 'settings' : 'main';
+    syncAppViewChrome();
+    if (currentAppView === 'settings') {
+        await loadSettingsView();
+    } else if (selectedNodeId) {
+        await refreshAll();
+    }
 }
 
 function formatBytes(bytes) {
@@ -151,6 +187,7 @@ async function initCluster() {
         if (info.role === 'unconfigured') {
             // First run — show setup modal
             document.getElementById('setup-modal').classList.add('active');
+            syncAppViewChrome();
             connectWs();
             return false;
         }
@@ -158,7 +195,7 @@ async function initCluster() {
             isMaster = true;
             selfNodeId = info.node_id;
             selectedNodeId = info.node_id;
-            document.getElementById('sidebar').classList.add('visible');
+            syncAppViewChrome();
             document.getElementById('topbar-title').innerHTML =
                 `${esc(info.node_name)} <span>/ inframatik</span>`;
             await refreshSidebar();
@@ -170,6 +207,7 @@ async function initCluster() {
             selectedNodeId = info.node_id;
             document.getElementById('topbar-title').innerHTML =
                 `${esc(info.node_name)} <span>/ inframatik</span>`;
+            syncAppViewChrome();
             if (info.role === 'standalone') {
                 await updateCurrentTunnelId(info.node_id);
             }
@@ -1132,16 +1170,15 @@ async function submitNewService() {
     }
 }
 
-// ---- Settings modal ----
+// ---- Settings page ----
 
 function openSettings() {
-    document.getElementById('settings-modal').classList.add('active');
     document.getElementById('settings-error').textContent = '';
-    loadSettingsView();
+    showAppView('settings');
 }
 
 function closeSettings() {
-    document.getElementById('settings-modal').classList.remove('active');
+    showAppView('main');
 }
 
 async function loadSettingsView() {
@@ -1155,11 +1192,17 @@ async function loadSettingsView() {
 
     try {
         const config = await api('GET', '/api/config');
+        const subtitleEl = document.getElementById('settings-page-subtitle');
+        if (subtitleEl) {
+            const label = config.node_name ? `${config.node_name} · ${config.role}` : config.role;
+            subtitleEl.textContent = label || 'Cluster, Cloudflare, tokens, and updates.';
+        }
 
         if (config.role === 'master') {
             document.getElementById('settings-master').style.display = 'block';
             document.getElementById('master-info-name').textContent = config.node_name;
-            renderMasterWorkers(config.workers || {});
+            const liveNodes = await loadSettingsNodes();
+            renderMasterWorkers(config.workers || {}, liveNodes);
             renderEnrollmentTokens(config.enrollment_tokens || []);
             renderCfSetup('master-cf-setup', config.cf_configured);
             renderServiceTokens('master-service-tokens', config.service_tokens || []);
@@ -1195,6 +1238,17 @@ async function loadSettingsView() {
         }
     } catch (e) {
         document.getElementById('settings-unconfigured').style.display = 'block';
+    }
+}
+
+async function loadSettingsNodes() {
+    try {
+        const liveNodes = await api('GET', '/api/nodes');
+        nodes = liveNodes;
+        renderSidebar(liveNodes);
+        return liveNodes;
+    } catch (e) {
+        return nodes || [];
     }
 }
 
@@ -1547,7 +1601,15 @@ async function disableDashboardAccess() {
     }
 }
 
-function renderMasterWorkers(workers) {
+function findWorkerNodeInfo(nodeId, worker, liveNodes) {
+    return (liveNodes || []).find(n =>
+        n.config_node_id === nodeId ||
+        n.node_id === nodeId ||
+        (worker.address && n.address === worker.address)
+    );
+}
+
+function renderMasterWorkers(workers, liveNodes = nodes) {
     const el = document.getElementById('master-workers-list');
     const entries = Object.entries(workers);
     if (entries.length === 0) {
@@ -1555,10 +1617,10 @@ function renderMasterWorkers(workers) {
         return;
     }
     el.innerHTML = entries.map(([nodeId, w]) => {
-        // Find online status from nodes list
-        const nodeInfo = nodes.find(n => n.node_id === nodeId);
+        const nodeInfo = findWorkerNodeInfo(nodeId, w, liveNodes);
         const status = nodeInfo ? nodeInfo.status : 'offline';
         const statusClass = status === 'online' ? 'green' : 'red';
+        const statusText = status === 'online' ? 'Online' : 'Offline';
         const cfBadge = w.tunnel_id
             ? '<span class="worker-cf-badge">CF</span>'
             : `<button class="btn" onclick="setupWorkerTunnel('${esc(nodeId)}', '${esc(w.name)}')">Setup Tunnel</button>`;
@@ -1567,6 +1629,7 @@ function renderMasterWorkers(workers) {
             <span class="status-dot ${statusClass}"></span>
             <span class="master-worker-name">${esc(w.name)}</span>
             <span class="master-worker-address">${esc(w.address)}</span>
+            <span class="worker-status-label ${statusClass}">${statusText}</span>
             ${cfBadge}
             <button class="btn danger" onclick="removeWorker('${esc(nodeId)}', '${esc(w.name)}')">Remove</button>
         </div>`;
@@ -2295,9 +2358,11 @@ async function setupWorkerTunnel(nodeId, nodeName) {
 async function loadDeployInfo() {
     try {
         const ver = await api('GET', '/api/node/version');
-        document.getElementById('deploy-version').textContent = ver.summary || 'unknown';
+        const el = document.getElementById('deploy-version');
+        if (el) el.textContent = ver.summary || 'unknown';
     } catch (e) {
-        document.getElementById('deploy-version').textContent = 'unknown';
+        const el = document.getElementById('deploy-version');
+        if (el) el.textContent = 'unknown';
     }
 }
 
@@ -2317,8 +2382,31 @@ async function deployToWorkers() {
             const msg = ok ? 'Updated, restarting' : (r.detail || 'Failed');
             return `<div class="master-worker-row"><span class="status-dot ${ok ? 'green' : 'red'}"></span><span class="master-worker-name">${esc(r.name)}</span><span class="master-worker-address" style="color:${color}">${msg}</span></div>`;
         }).join('');
+        setTimeout(() => loadSettingsView(), 3000);
     } catch (e) {
         resultsEl.innerHTML = `<div class="settings-desc" style="color:var(--red)">${esc(e.message)}</div>`;
+    }
+}
+
+async function updateMasterFromGit() {
+    if (!confirm('Update the master from git and restart inframatik?')) return;
+    const resultEl = document.getElementById('git-update-results');
+    if (resultEl) {
+        resultEl.innerHTML = '<div class="settings-desc" style="color:var(--accent)">Updating from git...</div>';
+    }
+    try {
+        const data = await api('POST', '/api/update/git');
+        const detail = esc(data.detail || 'Updated from git.');
+        if (resultEl) {
+            resultEl.innerHTML = `<div class="settings-desc" style="color:var(--green)">${detail}<br>Restarting master...</div>`;
+        }
+        setTimeout(() => location.reload(), 3000);
+    } catch (e) {
+        if (resultEl) {
+            resultEl.innerHTML = `<div class="settings-desc" style="color:var(--red)">${esc(e.message)}</div>`;
+        } else {
+            alert('Git update failed: ' + e.message);
+        }
     }
 }
 

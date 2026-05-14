@@ -351,6 +351,50 @@ def test_deploy_self_schedules_restart():
     assert seen["delay"] == 1
 
 
+def test_update_master_from_git_requires_master():
+    original_get_cfg = cluster_routes.get_node_config
+    cluster_routes.get_node_config = lambda: {"role": "worker"}
+    try:
+        exc = _assert_raises_async(HTTPException, cluster_routes.update_master_from_git)
+    finally:
+        cluster_routes.get_node_config = original_get_cfg
+    assert exc.status_code == 403
+
+
+def test_update_master_from_git_schedules_restart():
+    original_get_cfg = cluster_routes.get_node_config
+    original_update = cluster_routes.update_from_git
+    original_loop = cluster_routes.asyncio.get_event_loop
+    original_restart = cluster_routes.restart_service
+    seen = {}
+
+    class _Loop:
+        def call_later(self, delay, fn):
+            seen["delay"] = delay
+            seen["fn"] = fn
+
+    cluster_routes.get_node_config = lambda: {"role": "master"}
+    cluster_routes.update_from_git = lambda: {
+        "status": "updated",
+        "detail": "Already up to date.",
+        "before": {"commit": "a"},
+        "after": {"commit": "b"},
+    }
+    cluster_routes.restart_service = lambda: None
+    cluster_routes.asyncio.get_event_loop = lambda: _Loop()
+    try:
+        result = asyncio.run(cluster_routes.update_master_from_git())
+    finally:
+        cluster_routes.get_node_config = original_get_cfg
+        cluster_routes.update_from_git = original_update
+        cluster_routes.asyncio.get_event_loop = original_loop
+        cluster_routes.restart_service = original_restart
+
+    assert result["status"] == "updated"
+    assert result["restart"] == "scheduled"
+    assert seen["delay"] == 1
+
+
 def test_proxy_cf_service_update_normalizes_non_dict_body():
     original_proxy = cluster_routes.proxy_to_node
     seen = {}
