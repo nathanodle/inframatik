@@ -80,8 +80,35 @@ def test_setup_cloudflared_user_service_writes_files_and_reloads_systemd(_tmp_ho
 
 
 @_run_with_temp_paths
-def test_setup_cloudflared_user_service_requires_binary(_tmp_home: Path):
-    _assert_raises_async(RuntimeError, cloudflared.setup_cloudflared_user_service, "token-123")
+def test_setup_cloudflared_user_service_auto_installs_missing_binary(_tmp_home: Path):
+    calls = []
+
+    async def fake_ensure_binary():
+        calls.append("ensure")
+        cloudflared.CLOUDFLARED_BINARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        cloudflared.CLOUDFLARED_BINARY_PATH.write_text("#!/bin/sh\nexit 0\n")
+        os.chmod(cloudflared.CLOUDFLARED_BINARY_PATH, 0o755)
+
+    async def fake_run(cmd: list[str]) -> tuple[int, str]:
+        calls.append(cmd)
+        return 0, "ok"
+
+    original_ensure = cloudflared.ensure_cloudflared_binary
+    original_run = cloudflared._run
+    cloudflared.ensure_cloudflared_binary = fake_ensure_binary
+    cloudflared._run = fake_run
+    try:
+        asyncio.run(cloudflared.setup_cloudflared_user_service("token-123"))
+    finally:
+        cloudflared.ensure_cloudflared_binary = original_ensure
+        cloudflared._run = original_run
+
+    assert calls == [
+        "ensure",
+        ["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "--user", "enable", "--now", "cloudflared.service"],
+    ]
+    assert cloudflared.CLOUDFLARED_TOKEN_PATH.read_text().strip() == "token-123"
 
 
 def test_setup_cloudflared_user_service_requires_token():

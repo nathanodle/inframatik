@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -27,6 +28,39 @@ def _run_with_temp_config(fn):
                 node_config.invalidate_cache()
     wrapper.__name__ = fn.__name__
     return wrapper
+
+
+class _DummyRequest:
+    def __init__(self, url=None):
+        self.url = url or types.SimpleNamespace(hostname="worker.local", port=9000)
+
+
+class _Resp:
+    def __init__(self, status_code=200, payload=None, json_exc=None):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {}
+        self._json_exc = json_exc
+
+    def json(self):
+        if self._json_exc:
+            raise self._json_exc
+        return self._payload
+
+
+class _AsyncClient:
+    def __init__(self, on_post, *args, **kwargs):
+        self.on_post = on_post
+        self.args = args
+        self.kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, _exc_type, _exc, _tb):
+        return False
+
+    async def post(self, url, json=None):
+        return self.on_post(url, json=json)
 
 
 @_run_with_temp_config
@@ -61,6 +95,111 @@ def test_init_standalone_from_bootstrap_preserves_password_hash():
     assert cfg is not None
     assert cfg["role"] == "standalone"
     assert cfg.get("admin_password_hash") == "hash"
+
+
+@_run_with_temp_config
+def test_enroll_worker_calls_master_server_side_and_saves_config():
+    if cluster_routes is None:
+        return
+    seen = {}
+
+    def on_post(url, json=None):
+        seen["url"] = url
+        seen["json"] = json
+        return _Resp(200, {"api_key": "worker-key", "signing_public_key": "pub"})
+
+    original_client = cluster_routes.httpx.AsyncClient
+    original_address = cluster_routes._worker_address_for_master
+    cluster_routes.httpx.AsyncClient = lambda *a, **kw: _AsyncClient(on_post, *a, **kw)
+    cluster_routes._worker_address_for_master = lambda master_url, request: "http://10.0.0.5:9000"
+    try:
+        result = asyncio.run(
+            cluster_routes.config_enroll_worker(
+                cluster_routes.EnrollWorkerBody(
+                    name="worker-a",
+                    master_url="http://192.168.166.186:9000/",
+                    token="enroll-token",
+                ),
+                _DummyRequest(),
+            )
+        )
+    finally:
+        cluster_routes.httpx.AsyncClient = original_client
+        cluster_routes._worker_address_for_master = original_address
+
+    cfg = node_config.get_node_config()
+    assert seen == {
+        "url": "http://192.168.166.186:9000/api/nodes/enroll",
+        "json": {
+            "token": "enroll-token",
+            "node_name": "worker-a",
+            "address": "http://10.0.0.5:9000",
+        },
+    }
+    assert result["role"] == "worker"
+    assert result["master_url"] == "http://192.168.166.186:9000"
+    assert result["address"] == "http://10.0.0.5:9000"
+    assert cfg["role"] == "worker"
+    assert cfg["api_key"] == "worker-key"
+    assert cfg["update_public_key"] == "pub"
+
+
+@_run_with_temp_config
+def test_enroll_worker_propagates_master_enrollment_error():
+    if cluster_routes is None:
+        return
+
+    def on_post(_url, json=None):
+        return _Resp(401, {"detail": "Invalid or expired enrollment token"})
+
+    original_client = cluster_routes.httpx.AsyncClient
+    original_address = cluster_routes._worker_address_for_master
+    cluster_routes.httpx.AsyncClient = lambda *a, **kw: _AsyncClient(on_post, *a, **kw)
+    cluster_routes._worker_address_for_master = lambda master_url, request: "http://10.0.0.5:9000"
+    try:
+        try:
+            asyncio.run(
+                cluster_routes.config_enroll_worker(
+                    cluster_routes.EnrollWorkerBody(
+                        name="worker-a",
+                        master_url="http://192.168.166.186:9000",
+                        token="bad-token",
+                    ),
+                    _DummyRequest(),
+                )
+            )
+        except cluster_routes.HTTPException as exc:
+            assert exc.status_code == 401
+            assert exc.detail == "Invalid or expired enrollment token"
+        else:
+            raise AssertionError("Expected HTTPException")
+    finally:
+        cluster_routes.httpx.AsyncClient = original_client
+        cluster_routes._worker_address_for_master = original_address
+
+    assert node_config.get_node_config() is None
+
+
+@_run_with_temp_config
+def test_enroll_worker_rejects_master_url_with_path():
+    if cluster_routes is None:
+        return
+    try:
+        asyncio.run(
+            cluster_routes.config_enroll_worker(
+                cluster_routes.EnrollWorkerBody(
+                    name="worker-a",
+                    master_url="http://192.168.166.186:9000/path",
+                    token="enroll-token",
+                ),
+                _DummyRequest(),
+            )
+        )
+    except cluster_routes.HTTPException as exc:
+        assert exc.status_code == 400
+        assert "base URL" in str(exc.detail)
+    else:
+        raise AssertionError("Expected HTTPException")
 
 
 def run_tests():

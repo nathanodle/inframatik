@@ -4,10 +4,13 @@ import logging
 import os
 import platform
 import re
+import socket
 import tarfile
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
@@ -309,6 +312,49 @@ class InitWorkerBody(BaseModel):
     update_public_key: Optional[str] = None
 
 
+class EnrollWorkerBody(BaseModel):
+    name: str
+    master_url: str
+    token: str
+
+
+def _normalize_master_url(master_url: str) -> str:
+    master_url = (master_url or "").strip().rstrip("/")
+    parsed = urlparse(master_url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(400, "Master address must use http or https")
+    if not parsed.hostname:
+        raise HTTPException(400, "Master address must include a host")
+    if parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment:
+        raise HTTPException(400, "Master address must be a base URL without path/query/fragment")
+    return master_url
+
+
+def _worker_address_for_master(master_url: str, request: Request) -> str:
+    parsed = urlparse(master_url)
+    master_host = parsed.hostname
+    master_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    local_ip = None
+
+    if master_host:
+        try:
+            family = socket.AF_INET6 if ":" in master_host else socket.AF_INET
+            with socket.socket(family, socket.SOCK_DGRAM) as sock:
+                sock.connect((master_host, master_port))
+                local_ip = sock.getsockname()[0]
+        except OSError:
+            local_ip = None
+
+    if not local_ip:
+        local_ip = request.url.hostname
+    if not local_ip:
+        raise HTTPException(400, "Unable to determine worker address for master")
+
+    worker_port = request.url.port or 9000
+    host_part = f"[{local_ip}]" if ":" in local_ip and not local_ip.startswith("[") else local_ip
+    return f"http://{host_part}:{worker_port}"
+
+
 @cluster_router.post("/api/config/init-worker")
 async def config_init_worker(body: InitWorkerBody):
     config = get_node_config()
@@ -327,6 +373,57 @@ async def config_init_worker(body: InitWorkerBody):
         "role": "worker",
         "api_key": new_config["api_key"],
         "master_url": new_config["master_url"],
+    }
+
+
+@cluster_router.post("/api/config/enroll-worker")
+async def config_enroll_worker(body: EnrollWorkerBody, request: Request):
+    config = get_node_config()
+    role = _configured_role(config)
+    if role not in ("standalone", None):
+        raise HTTPException(400, "Node already configured. Reset first.")
+
+    master_url = _normalize_master_url(body.master_url)
+    token = (body.token or "").strip()
+    if not token:
+        raise HTTPException(400, "Enrollment token is required")
+
+    worker_address = _worker_address_for_master(master_url, request)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{master_url}/api/nodes/enroll",
+                json={
+                    "token": token,
+                    "node_name": body.name,
+                    "address": worker_address,
+                },
+            )
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {}
+    except httpx.HTTPError as e:
+        raise HTTPException(400, f"Failed to reach master: {e}") from e
+
+    if resp.status_code >= 400:
+        detail = data.get("detail") if isinstance(data, dict) else None
+        raise HTTPException(resp.status_code, detail or "Enrollment failed")
+    if not isinstance(data, dict) or not data.get("api_key"):
+        raise HTTPException(400, "Master returned an invalid enrollment response")
+
+    new_config = init_as_worker(
+        body.name,
+        master_url,
+        api_key=data["api_key"],
+        update_public_key=data.get("signing_public_key"),
+    )
+    return {
+        "node_id": new_config["node_id"],
+        "node_name": new_config["node_name"],
+        "role": "worker",
+        "master_url": new_config["master_url"],
+        "address": worker_address,
     }
 
 

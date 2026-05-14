@@ -658,27 +658,10 @@ async function submitSetupWorker() {
     if (regBtn) { regBtn.disabled = true; regBtn.textContent = 'Registering...'; }
 
     try {
-        // Determine our address for the master
-        const address = `http://${window.location.hostname}:9000`;
-
-        // Enroll with master — master validates token and returns api_key
-        const resp = await fetch(`${master_url}/api/nodes/enroll`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token, node_name: name, address }),
-        });
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(err.detail || 'Enrollment failed');
-        }
-        const result = await resp.json();
-
-        // Configure locally as worker with credentials from master
-        await api('POST', '/api/config/init-worker', {
+        await api('POST', '/api/config/enroll-worker', {
             name,
             master_url,
-            api_key: result.api_key,
-            update_public_key: result.signing_public_key || null,
+            token,
         });
         location.reload();
     } catch (e) {
@@ -1722,26 +1705,10 @@ async function submitInitWorker() {
     if (!name || !master_url || !token) { errEl.textContent = 'All fields are required.'; return; }
 
     try {
-        const address = `http://${window.location.hostname}:9000`;
-
-        // Enroll with master
-        const resp = await fetch(`${master_url}/api/nodes/enroll`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token, node_name: name, address }),
-        });
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(err.detail || 'Enrollment failed');
-        }
-        const result = await resp.json();
-
-        // Configure locally
-        await api('POST', '/api/config/init-worker', {
+        await api('POST', '/api/config/enroll-worker', {
             name,
             master_url,
-            api_key: result.api_key,
-            update_public_key: result.signing_public_key || null,
+            token,
         });
         location.reload();
     } catch (e) {
