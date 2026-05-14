@@ -44,6 +44,12 @@ let cfPolicies = [];
 let cfSectionLoaded = false;
 let machineHostname = window.location.hostname || '';
 let currentAppView = 'main';
+let lastSystemData = null;
+let refreshInFlight = false;
+let refreshQueued = false;
+let refreshQueuedForceCf = false;
+let refreshGeneration = 0;
+let priorityRefreshes = 0;
 
 // ---- Helpers ----
 
@@ -126,6 +132,38 @@ function tempColor(c) {
     return 'var(--green)';
 }
 
+function setHtmlIfChanged(el, html) {
+    if (!el || el._inframatikHtml === html) return;
+    el.innerHTML = html;
+    el._inframatikHtml = html;
+}
+
+function setElementHtml(id, html) {
+    setHtmlIfChanged(document.getElementById(id), html);
+}
+
+function setElementText(id, text) {
+    const el = document.getElementById(id);
+    const value = String(text ?? '');
+    if (!el || el.textContent === value) return;
+    el.textContent = value;
+    el._inframatikHtml = null;
+}
+
+function makeRefreshContext() {
+    return {
+        generation: ++refreshGeneration,
+        nodeId: selectedNodeId,
+    };
+}
+
+function isRefreshCurrent(context) {
+    if (!context) return currentAppView === 'main';
+    return currentAppView === 'main'
+        && context.generation === refreshGeneration
+        && context.nodeId === selectedNodeId;
+}
+
 async function api(method, path, body, extraHeaders) {
     const headers = { 'Content-Type': 'application/json', ...extraHeaders };
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
@@ -145,8 +183,8 @@ async function api(method, path, body, extraHeaders) {
 }
 
 // Build the API path, rewriting through the proxy when viewing a remote node on the master
-function nodePath(path) {
-    if (isMaster && selectedNodeId && selectedNodeId !== selfNodeId) {
+function nodePathFor(nodeId, path) {
+    if (isMaster && nodeId && nodeId !== selfNodeId) {
         // Rewrite /api/system -> /api/nodes/{id}/system
         // Rewrite /api/services -> /api/nodes/{id}/services
         // Rewrite /api/services/foo/start -> /api/nodes/{id}/services/foo/start
@@ -155,10 +193,14 @@ function nodePath(path) {
         if (path.startsWith('/api/system') || path.startsWith('/api/services') || path.startsWith('/api/tunnel')) {
             // Strip /api prefix: /api/system -> /system, then build /api/nodes/{id}/system
             const subpath = path.slice(4); // remove '/api'
-            return `/api/nodes/${selectedNodeId}${subpath}`;
+            return `/api/nodes/${nodeId}${subpath}`;
         }
     }
     return path;
+}
+
+function nodePath(path) {
+    return nodePathFor(selectedNodeId, path);
 }
 
 // ---- Tabs ----
@@ -168,7 +210,10 @@ document.addEventListener('click', (e) => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
         e.target.classList.add('active');
-        document.getElementById('tab-' + e.target.dataset.tab).classList.add('active');
+        const tabName = e.target.dataset.tab;
+        const panel = document.getElementById('tab-' + tabName);
+        if (panel) panel.classList.add('active');
+        renderActiveSystemTab(tabName);
     }
     if (e.target.classList.contains('tunnel-tab')) {
         document.querySelectorAll('.tunnel-tab').forEach(t => t.classList.remove('active'));
@@ -204,8 +249,7 @@ async function initCluster() {
             selfNodeId = info.node_id;
             selectedNodeId = info.node_id;
             syncAppViewChrome();
-            document.getElementById('topbar-title').innerHTML =
-                `${esc(info.node_name)} <span>/ inframatik</span>`;
+            setElementHtml('topbar-title', `${esc(info.node_name)} <span>/ inframatik</span>`);
             await refreshSidebar();
             sidebarInterval = setInterval(refreshSidebar, 15000);
             await updateCurrentTunnelId(info.node_id);
@@ -213,8 +257,7 @@ async function initCluster() {
             // Standalone or worker — show node name in topbar
             selfNodeId = info.node_id;
             selectedNodeId = info.node_id;
-            document.getElementById('topbar-title').innerHTML =
-                `${esc(info.node_name)} <span>/ inframatik</span>`;
+            setElementHtml('topbar-title', `${esc(info.node_name)} <span>/ inframatik</span>`);
             syncAppViewChrome();
             if (info.role === 'standalone') {
                 await updateCurrentTunnelId(info.node_id);
@@ -788,7 +831,7 @@ async function refreshSidebar() {
 
 function renderSidebar(nodeList) {
     const el = document.getElementById('sidebar-nodes');
-    el.innerHTML = nodeList.map(node => {
+    setHtmlIfChanged(el, nodeList.map(node => {
         const isSelected = node.node_id === selectedNodeId;
         const statusClass = node.status === 'online' ? 'green' : 'red';
         const tag = node.is_self ? 'local' : '';
@@ -798,7 +841,7 @@ function renderSidebar(nodeList) {
             <span class="sidebar-node-name">${esc(node.node_name)}</span>
             ${tag ? `<span class="sidebar-node-tag">${tag}</span>` : ''}
         </div>`;
-    }).join('');
+    }).join(''));
 }
 
 function selectNode(nodeId) {
@@ -815,40 +858,59 @@ function selectNode(nodeId) {
     // Update topbar title
     const node = nodes.find(n => n.node_id === nodeId);
     if (node) {
-        document.getElementById('topbar-title').innerHTML =
-            `${esc(node.node_name)} <span>/ inframatik</span>`;
+        setElementHtml('topbar-title', `${esc(node.node_name)} <span>/ inframatik</span>`);
     }
 
-    refreshAll();
-    if (cfSectionLoaded) refreshCfSection();
+    cfSectionLoaded = false;
+    showNodeSwitchPendingState();
+    refreshAll({ forceCf: true, priority: true });
+}
+
+function showNodeSwitchPendingState() {
+    setElementText('uptime', 'Loading...');
+    setElementHtml('host-bar', '<span>Loading node...</span>');
+    setElementHtml('services-list', '<div class="empty-state">Loading services...</div>');
+
+    const tunnelDot = document.getElementById('tunnel-dot');
+    const tunnelText = document.getElementById('tunnel-text');
+    if (tunnelDot) tunnelDot.className = 'status-dot yellow';
+    if (tunnelText) tunnelText.textContent = 'Tunnel: loading...';
+
+    const cfStatus = document.getElementById('cf-tunnel-status');
+    if (cfStatus) {
+        cfStatus.textContent = 'Loading';
+        cfStatus.style.color = 'var(--yellow)';
+    }
 }
 
 // ---- System metrics ----
 
-async function refreshSystem() {
+async function refreshSystem(context = null) {
     try {
-        const data = await api('GET', nodePath('/api/system'));
-        renderSystem(data);
+        const path = nodePathFor(context ? context.nodeId : selectedNodeId, '/api/system');
+        const data = await api('GET', path);
+        if (isRefreshCurrent(context)) renderSystem(data);
     } catch (e) {
         console.error('Failed to fetch system metrics:', e);
     }
 }
 
 function renderSystem(d) {
-    document.getElementById('uptime').textContent = d.uptime;
+    lastSystemData = d;
+    setElementText('uptime', d.uptime);
 
     // Host info bar
     if (d.host) {
-        document.getElementById('host-bar').innerHTML =
+        setElementHtml('host-bar',
             `<span>${d.host.distro}</span>` +
             `<span>${d.host.cpu_model}</span>` +
             `<span>${d.cpu.count} cores</span>` +
-            `<span>${formatBytes(d.memory.total)} RAM</span>`;
+            `<span>${formatBytes(d.memory.total)} RAM</span>`);
     }
 
     // CPU
-    document.getElementById('cpu-value').innerHTML = `${d.cpu.percent}<span class="unit">%</span>`;
-    document.getElementById('cpu-sub').textContent = `${d.cpu.count} cores @ ${d.cpu.freq_mhz || '?'} MHz`;
+    setElementHtml('cpu-value', `${d.cpu.percent}<span class="unit">%</span>`);
+    setElementText('cpu-sub', `${d.cpu.count} cores @ ${d.cpu.freq_mhz || '?'} MHz`);
     const cpuBar = document.getElementById('cpu-bar');
     cpuBar.style.width = d.cpu.percent + '%';
     cpuBar.className = 'progress-fill ' + progressColor(d.cpu.percent);
@@ -856,23 +918,23 @@ function renderSystem(d) {
     // CPU per-core
     const coresEl = document.getElementById('cpu-cores');
     if (d.cpu.per_cpu) {
-        coresEl.innerHTML = d.cpu.per_cpu.map(pct =>
+        setHtmlIfChanged(coresEl, d.cpu.per_cpu.map(pct =>
             `<div class="cpu-core-bar" style="height:${Math.max(pct, 3)}%;background:${coreColor(pct)}" title="${pct}%"></div>`
-        ).join('');
+        ).join(''));
     }
 
     // Memory
-    document.getElementById('mem-value').innerHTML = `${d.memory.percent}<span class="unit">%</span>`;
-    document.getElementById('mem-sub').textContent = `${formatBytes(d.memory.used)} / ${formatBytes(d.memory.total)}`;
+    setElementHtml('mem-value', `${d.memory.percent}<span class="unit">%</span>`);
+    setElementText('mem-sub', `${formatBytes(d.memory.used)} / ${formatBytes(d.memory.total)}`);
     const memBar = document.getElementById('mem-bar');
     memBar.style.width = d.memory.percent + '%';
     memBar.className = 'progress-fill ' + progressColor(d.memory.percent);
 
     // Disk (primary /)
-    const rootDisk = d.disks.find(dk => dk.mount === '/');
+    const rootDisk = (d.disks || []).find(dk => dk.mount === '/');
     if (rootDisk) {
-        document.getElementById('disk-value').innerHTML = `${rootDisk.percent}<span class="unit">%</span>`;
-        document.getElementById('disk-sub').textContent = `${formatBytes(rootDisk.used)} / ${formatBytes(rootDisk.total)}`;
+        setElementHtml('disk-value', `${rootDisk.percent}<span class="unit">%</span>`);
+        setElementText('disk-sub', `${formatBytes(rootDisk.used)} / ${formatBytes(rootDisk.total)}`);
         const diskBar = document.getElementById('disk-bar');
         diskBar.style.width = rootDisk.percent + '%';
         diskBar.className = 'progress-fill ' + progressColor(rootDisk.percent);
@@ -885,40 +947,51 @@ function renderSystem(d) {
         if (dt > 0) {
             const upRate = (d.network.bytes_sent - prevNet.bytes_sent) / dt;
             const downRate = (d.network.bytes_recv - prevNet.bytes_recv) / dt;
-            document.getElementById('net-rate').innerHTML = `<span style="font-size:16px">&darr;</span> ${formatRate(downRate)}`;
-            document.getElementById('net-rate-sub').innerHTML = `<span>&uarr;</span> ${formatRate(upRate)} &middot; ${formatBytes(d.network.bytes_recv)} total`;
+            setElementHtml('net-rate', `<span style="font-size:16px">&darr;</span> ${formatRate(downRate)}`);
+            setElementHtml('net-rate-sub', `<span>&uarr;</span> ${formatRate(upRate)} &middot; ${formatBytes(d.network.bytes_recv)} total`);
         }
     } else {
-        document.getElementById('net-rate').innerHTML = `<span style="font-size:16px">&darr;</span> ${formatBytes(d.network.bytes_recv)}`;
-        document.getElementById('net-rate-sub').innerHTML = `<span>&uarr;</span> ${formatBytes(d.network.bytes_sent)} total`;
+        setElementHtml('net-rate', `<span style="font-size:16px">&darr;</span> ${formatBytes(d.network.bytes_recv)}`);
+        setElementHtml('net-rate-sub', `<span>&uarr;</span> ${formatBytes(d.network.bytes_sent)} total`);
     }
     prevNet = d.network;
     prevNetTime = now;
 
     // Load
-    document.getElementById('load-value').textContent = d.load['1min'].toFixed(2);
-    document.getElementById('load-sub').textContent = `${d.load['5min'].toFixed(2)} / ${d.load['15min'].toFixed(2)} (5m/15m)`;
+    setElementText('load-value', d.load['1min'].toFixed(2));
+    setElementText('load-sub', `${d.load['5min'].toFixed(2)} / ${d.load['15min'].toFixed(2)} (5m/15m)`);
 
     // Temperatures
     if (d.temps && d.temps.cpu !== undefined) {
         const cpuTemp = d.temps.cpu;
-        document.getElementById('temp-value').innerHTML = `${cpuTemp.toFixed(0)}<span class="unit">&deg;C</span>`;
+        setElementHtml('temp-value', `${cpuTemp.toFixed(0)}<span class="unit">&deg;C</span>`);
         let sub = `CPU ${cpuTemp.toFixed(1)}&deg;C`;
         if (d.temps.nvme !== undefined) sub += ` &middot; NVMe ${d.temps.nvme.toFixed(0)}&deg;C`;
-        document.getElementById('temp-sub').innerHTML = sub;
+        setElementHtml('temp-sub', sub);
     }
 
-    // GPUs tab
-    renderGpus(d.gpus || []);
+    renderActiveSystemTab();
+}
 
-    // Processes tab
-    renderProcesses(d.processes || []);
+function getActiveSystemTab() {
+    const tab = document.querySelector('.tab.active');
+    if (tab && tab.dataset && tab.dataset.tab) return tab.dataset.tab;
+    return 'overview';
+}
 
-    // Network tab
-    renderNetInterfaces(d.network.interfaces || []);
+function renderActiveSystemTab(tabName) {
+    if (!lastSystemData) return;
 
-    // Storage tab
-    renderStorage(d.disks || []);
+    const activeTab = tabName || getActiveSystemTab();
+    if (activeTab === 'gpus') {
+        renderGpus(lastSystemData.gpus || []);
+    } else if (activeTab === 'processes') {
+        renderProcesses(lastSystemData.processes || []);
+    } else if (activeTab === 'network') {
+        renderNetInterfaces((lastSystemData.network && lastSystemData.network.interfaces) || []);
+    } else if (activeTab === 'storage') {
+        renderStorage(lastSystemData.disks || []);
+    }
 }
 
 // ---- GPUs ----
@@ -926,10 +999,10 @@ function renderSystem(d) {
 function renderGpus(gpus) {
     const el = document.getElementById('gpu-cards');
     if (gpus.length === 0) {
-        el.innerHTML = '<div class="empty-state">No GPUs detected</div>';
+        setHtmlIfChanged(el, '<div class="empty-state">No GPUs detected</div>');
         return;
     }
-    el.innerHTML = gpus.map(gpu => {
+    setHtmlIfChanged(el, gpus.map(gpu => {
         const memPct = gpu.mem_total_mb > 0 ? (gpu.mem_used_mb / gpu.mem_total_mb * 100) : 0;
         return `
         <div class="metric-card gpu-card">
@@ -951,7 +1024,7 @@ function renderGpus(gpus) {
                 </div>
             </div>
         </div>`;
-    }).join('');
+    }).join(''));
 }
 
 // ---- Processes ----
@@ -959,10 +1032,10 @@ function renderGpus(gpus) {
 function renderProcesses(procs) {
     const el = document.getElementById('process-table');
     if (procs.length === 0) {
-        el.innerHTML = '<div class="empty-state">No process data</div>';
+        setHtmlIfChanged(el, '<div class="empty-state">No process data</div>');
         return;
     }
-    el.innerHTML = `
+    setHtmlIfChanged(el, `
         <div class="proc-header">
             <span class="proc-pid">PID</span>
             <span class="proc-name">Name</span>
@@ -976,7 +1049,7 @@ function renderProcesses(procs) {
             <span class="proc-cpu">${p.cpu.toFixed(1)}</span>
             <span class="proc-mem">${p.mem.toFixed(1)}</span>
         </div>`).join('')}
-    `;
+    `);
 }
 
 // ---- Network interfaces ----
@@ -984,10 +1057,10 @@ function renderProcesses(procs) {
 function renderNetInterfaces(interfaces) {
     const el = document.getElementById('net-cards');
     if (interfaces.length === 0) {
-        el.innerHTML = '<div class="empty-state">No active network interfaces</div>';
+        setHtmlIfChanged(el, '<div class="empty-state">No active network interfaces</div>');
         return;
     }
-    el.innerHTML = interfaces.map(iface => `
+    setHtmlIfChanged(el, interfaces.map(iface => `
         <div class="metric-card">
             <div class="metric-label">${esc(iface.name)}</div>
             <div class="metric-value" style="font-size:18px">${iface.ip || 'No IP'}</div>
@@ -997,7 +1070,7 @@ function renderNetInterfaces(interfaces) {
                 <span>&uarr; ${formatBytes(iface.bytes_sent)}</span>
             </div>
         </div>
-    `).join('');
+    `).join(''));
 }
 
 // ---- Storage ----
@@ -1005,27 +1078,28 @@ function renderNetInterfaces(interfaces) {
 function renderStorage(disks) {
     const el = document.getElementById('storage-cards');
     if (disks.length === 0) {
-        el.innerHTML = '<div class="empty-state">No disks found</div>';
+        setHtmlIfChanged(el, '<div class="empty-state">No disks found</div>');
         return;
     }
-    el.innerHTML = disks.map(dk => `
+    setHtmlIfChanged(el, disks.map(dk => `
         <div class="metric-card">
             <div class="metric-label">${esc(dk.mount)} <span style="color:var(--text-muted);font-size:10px">${esc(dk.device)}</span></div>
             <div class="metric-value">${dk.percent}<span class="unit">%</span></div>
             <div class="metric-sub">${formatBytes(dk.used)} / ${formatBytes(dk.total)} (${dk.fstype})</div>
             <div class="progress-bar"><div class="progress-fill ${progressColor(dk.percent)}" style="width:${dk.percent}%"></div></div>
         </div>
-    `).join('');
+    `).join(''));
 }
 
 // ---- Tunnel ----
 
-async function refreshTunnel() {
+async function refreshTunnel(context = null) {
     try {
-        const data = await api('GET', nodePath('/api/tunnel'));
-        renderTunnel(data);
+        const path = nodePathFor(context ? context.nodeId : selectedNodeId, '/api/tunnel');
+        const data = await api('GET', path);
+        if (isRefreshCurrent(context)) renderTunnel(data);
     } catch (e) {
-        renderTunnel({ connected: false, detail: 'unreachable' });
+        if (isRefreshCurrent(context)) renderTunnel({ connected: false, detail: 'unreachable' });
     }
 }
 
@@ -1038,10 +1112,11 @@ function renderTunnel(d) {
 
 // ---- Services ----
 
-async function refreshServices() {
+async function refreshServices(context = null) {
     try {
-        const data = await api('GET', nodePath('/api/services'));
-        renderServices(data);
+        const path = nodePathFor(context ? context.nodeId : selectedNodeId, '/api/services');
+        const data = await api('GET', path);
+        if (isRefreshCurrent(context)) renderServices(data);
     } catch (e) {
         console.error('Failed to fetch services:', e);
     }
@@ -1050,11 +1125,11 @@ async function refreshServices() {
 function renderServices(services) {
     const el = document.getElementById('services-list');
     if (services.length === 0) {
-        el.innerHTML = "<div class=\"empty-state\">No services registered yet. Add one to get started or use 'inframatik init' in the root directory of your repo.</div>";
+        setHtmlIfChanged(el, "<div class=\"empty-state\">No services registered yet. Add one to get started or use 'inframatik init' in the root directory of your repo.</div>");
         return;
     }
 
-    el.innerHTML = services.map(svc => {
+    setHtmlIfChanged(el, services.map(svc => {
         const statusClass = svc.status === 'active' ? 'active' : svc.status === 'failed' ? 'failed' : 'inactive';
         const link = svc.hostname
             ? `<a href="https://${svc.hostname}" target="_blank">${svc.hostname}</a>`
@@ -1084,7 +1159,7 @@ function renderServices(services) {
                 <button class="btn danger" onclick="deleteSvc('${esc(svc.name)}')">Remove</button>
             </div>
         </div>`;
-    }).join('');
+    }).join(''));
 }
 
 function esc(s) {
@@ -2015,16 +2090,21 @@ async function updateCurrentTunnelId(nodeId) {
     }
 }
 
-async function refreshCfSection() {
+async function refreshCfSection(context = null) {
     if (!shouldShowLocalCfSection()) return;
     try {
+        const nodeId = context ? context.nodeId : selectedNodeId;
+        let tunnelId = null;
         if (isMaster) {
             // Resolve tunnel_id from the nodes list (includes tunnel_id for all nodes)
-            const node = nodes.find(n => n.node_id === selectedNodeId);
-            currentTunnelId = node ? (node.tunnel_id || null) : null;
+            const node = nodes.find(n => n.node_id === nodeId);
+            tunnelId = node ? (node.tunnel_id || null) : null;
         } else {
             await updateCurrentTunnelId(selfNodeId);
+            tunnelId = currentTunnelId;
         }
+        if (!isRefreshCurrent(context)) return;
+        currentTunnelId = tunnelId;
 
         // Show the section header
         document.getElementById('tunnel-section-header').style.display = '';
@@ -2034,12 +2114,14 @@ async function refreshCfSection() {
 
         let tunnelData;
         try {
-            tunnelData = await api('GET', nodePath('/api/tunnel'));
+            tunnelData = await api('GET', nodePathFor(nodeId, '/api/tunnel'));
         } catch (e) {
             tunnelData = { connected: false, connections: 0, detail: 'unreachable' };
         }
+        if (!isRefreshCurrent(context)) return;
         renderCfStatus(tunnelData);
-        await refreshCfServiceControl();
+        await refreshCfServiceControl(context);
+        if (!isRefreshCurrent(context)) return;
 
         const accessAppsPromise = api('GET', '/api/cf/access/apps');
         const policiesPromise = api('GET', '/api/cf/access/policies');
@@ -2048,6 +2130,7 @@ async function refreshCfSection() {
         if (!currentTunnelId) {
             renderCfRoutes([]);
             const [accessApps, policies] = await Promise.all([accessAppsPromise, policiesPromise]);
+            if (!isRefreshCurrent(context)) return;
             loadCfPolicies(policies);
             renderCfAccessApps(accessApps);
             return;
@@ -2058,6 +2141,7 @@ async function refreshCfSection() {
             accessAppsPromise,
             policiesPromise,
         ]);
+        if (!isRefreshCurrent(context)) return;
         loadCfPolicies(policies);
         renderCfRoutes(routes);
         renderCfAccessApps(accessApps);
@@ -2078,10 +2162,10 @@ function renderCfStatus(d) {
         currentTunnelId ? `Tunnel ${currentTunnelId.slice(0, 8)}...` : '--';
 }
 
-function cfServiceEndpoint(kind, lines = null) {
+function cfServiceEndpoint(kind, lines = null, nodeId = selectedNodeId) {
     let base = `/api/cf/service/${kind}`;
-    if (isMaster && selectedNodeId && selectedNodeId !== selfNodeId) {
-        base = `/api/nodes/${selectedNodeId}/cf/service/${kind}`;
+    if (isMaster && nodeId && nodeId !== selfNodeId) {
+        base = `/api/nodes/${nodeId}/cf/service/${kind}`;
     }
     if (lines !== null) {
         return `${base}?lines=${encodeURIComponent(lines)}`;
@@ -2115,23 +2199,25 @@ function renderCfServiceStatus(status) {
     pidEl.textContent = status.main_pid ? String(status.main_pid) : '--';
 }
 
-async function refreshCfServiceControl() {
+async function refreshCfServiceControl(context = null) {
     const errEl = document.getElementById('cf-service-error');
     const logsEl = document.getElementById('cf-service-logs');
     if (!errEl || !logsEl) return;
 
     errEl.textContent = '';
+    const nodeId = context ? context.nodeId : selectedNodeId;
     try {
-        const status = await api('GET', cfServiceEndpoint('status'));
-        renderCfServiceStatus(status);
+        const status = await api('GET', cfServiceEndpoint('status', null, nodeId));
+        if (isRefreshCurrent(context)) renderCfServiceStatus(status);
     } catch (e) {
-        errEl.textContent = `Status unavailable: ${e.message}`;
+        if (isRefreshCurrent(context)) errEl.textContent = `Status unavailable: ${e.message}`;
     }
 
     try {
-        const data = await api('GET', cfServiceEndpoint('logs', 80));
-        logsEl.textContent = data.logs || 'No recent logs.';
+        const data = await api('GET', cfServiceEndpoint('logs', 80, nodeId));
+        if (isRefreshCurrent(context)) logsEl.textContent = data.logs || 'No recent logs.';
     } catch (e) {
+        if (!isRefreshCurrent(context)) return;
         logsEl.textContent = 'Logs unavailable.';
         errEl.textContent = errEl.textContent
             ? `${errEl.textContent} Logs unavailable: ${e.message}`
@@ -2553,12 +2639,46 @@ async function deployRestart() {
 
 // ---- Refresh loop ----
 
-async function refreshAll() {
-    await Promise.all([refreshSystem(), refreshTunnel(), refreshServices()]);
-    if (shouldShowLocalCfSection() && !cfSectionLoaded) {
-        cfSectionLoaded = true;
-        await refreshCfSection();
+async function refreshAll(options = {}) {
+    if (currentAppView !== 'main') return;
+    const priority = !!options.priority;
+    if (!priority && (refreshInFlight || priorityRefreshes > 0)) {
+        refreshQueued = true;
+        refreshQueuedForceCf = refreshQueuedForceCf || !!options.forceCf;
+        return;
     }
+
+    const context = makeRefreshContext();
+    if (priority) priorityRefreshes += 1;
+    else refreshInFlight = true;
+
+    try {
+        await Promise.all([
+            refreshSystem(context),
+            refreshTunnel(context),
+            refreshServices(context),
+        ]);
+        if (isRefreshCurrent(context) && shouldShowLocalCfSection() && (!cfSectionLoaded || options.forceCf)) {
+            cfSectionLoaded = true;
+            await refreshCfSection(context);
+        }
+    } finally {
+        if (priority) priorityRefreshes = Math.max(0, priorityRefreshes - 1);
+        else refreshInFlight = false;
+
+        if (!refreshInFlight && priorityRefreshes === 0 && refreshQueued) {
+            const forceCf = refreshQueuedForceCf;
+            refreshQueued = false;
+            refreshQueuedForceCf = false;
+            await refreshAll({ forceCf });
+        }
+    }
+}
+
+function startRefreshLoop() {
+    if (refreshInterval) clearInterval(refreshInterval);
+    refreshAll();
+    refreshInterval = setInterval(refreshAll, 5000);
 }
 
 async function loadVersionTag() {
@@ -2621,8 +2741,7 @@ async function checkAuthAndInit() {
     if (configured) {
         loadVersionTag();
         loadUserInfo();
-        refreshAll();
-        refreshInterval = setInterval(refreshAll, 5000);
+        startRefreshLoop();
     }
 }
 
@@ -2644,9 +2763,8 @@ async function submitLogin() {
         const configured = await initCluster();
         if (configured) {
             loadVersionTag();
-        loadUserInfo();
-            refreshAll();
-            refreshInterval = setInterval(refreshAll, 5000);
+            loadUserInfo();
+            startRefreshLoop();
         }
     } catch (e) {
         errEl.textContent = e.message;
@@ -2682,9 +2800,8 @@ async function submitSetPassword() {
         const configured = await initCluster();
         if (configured) {
             loadVersionTag();
-        loadUserInfo();
-            refreshAll();
-            refreshInterval = setInterval(refreshAll, 5000);
+            loadUserInfo();
+            startRefreshLoop();
         }
     } catch (e) {
         errEl.textContent = e.message;

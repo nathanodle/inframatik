@@ -42,7 +42,7 @@ def test_api_tunnel_includes_routes_when_available():
     main.get_tunnel_status = fake_status
     main.get_tunnel_routes = fake_routes
     try:
-        result = _run(main.api_tunnel())
+        result = _run(main.api_tunnel(include_routes=True))
     finally:
         main.get_tunnel_status = original_status
         main.get_tunnel_routes = original_routes
@@ -64,7 +64,7 @@ def test_api_tunnel_handles_route_fetch_errors():
     main.get_tunnel_status = fake_status
     main.get_tunnel_routes = fake_routes
     try:
-        result = _run(main.api_tunnel())
+        result = _run(main.api_tunnel(include_routes=True))
     finally:
         main.get_tunnel_status = original_status
         main.get_tunnel_routes = original_routes
@@ -72,6 +72,30 @@ def test_api_tunnel_handles_route_fetch_errors():
     assert result["connected"] is False
     assert result["routes"] == []
     assert "route parse failed" in result["routes_error"]
+
+
+def test_api_tunnel_skips_routes_by_default():
+    original_status = main.get_tunnel_status
+    original_routes = main.get_tunnel_routes
+    calls = {"routes": 0}
+
+    async def fake_status():
+        return {"connected": True}
+
+    async def fake_routes():
+        calls["routes"] += 1
+        return [{"hostname": "app.example.com"}]
+
+    main.get_tunnel_status = fake_status
+    main.get_tunnel_routes = fake_routes
+    try:
+        result = _run(main.api_tunnel())
+    finally:
+        main.get_tunnel_status = original_status
+        main.get_tunnel_routes = original_routes
+
+    assert result == {"connected": True}
+    assert calls["routes"] == 0
 
 
 def test_api_next_port_returns_503_when_unavailable():

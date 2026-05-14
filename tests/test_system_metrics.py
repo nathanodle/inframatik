@@ -176,10 +176,11 @@ def test_get_net_interfaces_skips_loopback_and_down_interfaces():
 def test_get_system_metrics_aggregates_helpers_and_formats_uptime():
     cpu_percent_calls = []
 
-    def fake_cpu_percent(interval=0, percpu=False):
+    def fake_cpu_percent(interval=None, percpu=False):
         cpu_percent_calls.append((interval, percpu))
         return [10.0, 20.0] if percpu else 42.0
 
+    system._reset_metrics_cache_for_tests()
     with _Patch([
         (system, "_cpu_model", None),
         (system, "_get_cpu_model", lambda: "Test CPU"),
@@ -204,7 +205,7 @@ def test_get_system_metrics_aggregates_helpers_and_formats_uptime():
     ]):
         result = system.get_system_metrics()
 
-    assert cpu_percent_calls == [(0.5, False), (0, True)]
+    assert cpu_percent_calls == [(None, False), (None, True)]
     assert result["host"] == {
         "hostname": "host-a",
         "os": "Linux 6.1",
@@ -222,6 +223,72 @@ def test_get_system_metrics_aggregates_helpers_and_formats_uptime():
     assert result["load"] == {"1min": 1.0, "5min": 2.0, "15min": 3.0}
     assert result["uptime"] == "1d 1h 1m"
     assert result["uptime_seconds"] == 90061
+
+
+def test_get_system_metrics_caches_slow_helpers_between_fast_refreshes():
+    now = {"monotonic": 100.0}
+    calls = {"disks": 0, "interfaces": 0, "temps": 0, "gpus": 0, "processes": 0, "cpu": 0}
+
+    def fake_cpu_percent(interval=None, percpu=False):
+        calls["cpu"] += 1
+        return [5.0, 6.0] if percpu else 11.0
+
+    def fake_disks():
+        calls["disks"] += 1
+        return [{"mount": "/"}]
+
+    def fake_interfaces():
+        calls["interfaces"] += 1
+        return [{"name": "eth0"}]
+
+    def fake_temps():
+        calls["temps"] += 1
+        return {"cpu": 40.0}
+
+    def fake_gpus():
+        calls["gpus"] += 1
+        return []
+
+    def fake_processes():
+        calls["processes"] += 1
+        return []
+
+    system._reset_metrics_cache_for_tests()
+    with _Patch([
+        (system, "_cpu_model", "Test CPU"),
+        (system, "_get_distro", lambda: "Test Distro"),
+        (system, "_get_disks", fake_disks),
+        (system, "_get_net_interfaces", fake_interfaces),
+        (system, "_get_temperatures", fake_temps),
+        (system, "_get_gpus", fake_gpus),
+        (system, "_get_top_processes", fake_processes),
+        (system.time, "monotonic", lambda: now["monotonic"]),
+        (system.time, "time", lambda: 1100),
+        (system.psutil, "cpu_percent", fake_cpu_percent),
+        (system.psutil, "cpu_freq", lambda: types.SimpleNamespace(current=2400)),
+        (system.psutil, "cpu_count", lambda: 2),
+        (system.psutil, "virtual_memory", lambda: types.SimpleNamespace(total=10, used=4, available=6, percent=40.0)),
+        (system.psutil, "swap_memory", lambda: types.SimpleNamespace(total=2, used=1, percent=50.0)),
+        (system.psutil, "net_io_counters", lambda: types.SimpleNamespace(bytes_sent=111, bytes_recv=222)),
+        (system.psutil, "getloadavg", lambda: (1.0, 2.0, 3.0)),
+        (system.psutil, "boot_time", lambda: 1000),
+        (system.platform, "node", lambda: "host-a"),
+        (system.platform, "system", lambda: "Linux"),
+        (system.platform, "release", lambda: "6.1"),
+    ]):
+        first = system.get_system_metrics()
+        second = system.get_system_metrics()
+        now["monotonic"] += system.SYSTEM_METRICS_CACHE_TTL + 0.1
+        third = system.get_system_metrics()
+
+    assert first is second
+    assert third["disks"] == [{"mount": "/"}]
+    assert calls["cpu"] == 4
+    assert calls["disks"] == 1
+    assert calls["interfaces"] == 1
+    assert calls["temps"] == 1
+    assert calls["gpus"] == 1
+    assert calls["processes"] == 1
 
 
 if __name__ == "__main__":

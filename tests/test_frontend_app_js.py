@@ -306,6 +306,277 @@ def test_app_js_cloudflare_section_gating_by_role():
     )
 
 
+def test_app_js_system_render_limits_hidden_tab_dom_writes():
+    _run_node(
+        textwrap.dedent(
+            r"""
+            const fs = require('fs');
+            const vm = require('vm');
+
+            function makeElement(id) {
+                const el = {
+                    id,
+                    style: {},
+                    dataset: {},
+                    value: '',
+                    textContent: '',
+                    disabled: false,
+                    selectedIndex: 0,
+                    options: [],
+                    className: '',
+                    classList: {
+                        add() {},
+                        remove() {},
+                        contains() { return false; },
+                    },
+                    addEventListener() {},
+                    querySelectorAll() { return []; },
+                    querySelector() { return null; },
+                    htmlWrites: 0,
+                };
+                let html = '';
+                Object.defineProperty(el, 'innerHTML', {
+                    get() { return html; },
+                    set(value) {
+                        html = String(value ?? '');
+                        el.htmlWrites += 1;
+                    },
+                });
+                return el;
+            }
+
+            const elements = new Map();
+            const state = { activeTab: 'overview' };
+            const document = {
+                cookie: '',
+                addEventListener() {},
+                createElement() {
+                    const el = makeElement('created');
+                    Object.defineProperty(el, 'textContent', {
+                        get() { return this._textContent || ''; },
+                        set(value) {
+                            this._textContent = String(value ?? '');
+                            this.innerHTML = this._textContent
+                                .replace(/&/g, '&amp;')
+                                .replace(/</g, '&lt;')
+                                .replace(/>/g, '&gt;')
+                                .replace(/"/g, '&quot;');
+                        },
+                    });
+                    return el;
+                },
+                getElementById(id) {
+                    if (!elements.has(id)) elements.set(id, makeElement(id));
+                    return elements.get(id);
+                },
+                querySelectorAll() { return []; },
+                querySelector(selector) {
+                    if (selector === '.tab.active') {
+                        return { dataset: { tab: state.activeTab } };
+                    }
+                    return makeElement('query-result');
+                },
+            };
+
+            const context = {
+                console,
+                document,
+                window: { location: { hostname: 'localhost' } },
+                location: { protocol: 'http:', host: 'localhost' },
+                WebSocket: function WebSocket() { return {}; },
+                fetch: async () => { throw new Error('fetch should not run'); },
+                setTimeout,
+                clearTimeout,
+                setInterval: () => 1,
+                clearInterval: () => {},
+                calls: null,
+            };
+            context.globalThis = context;
+
+            vm.createContext(context);
+            vm.runInContext(fs.readFileSync('static/app.js', 'utf8'), context, {
+                filename: 'static/app.js',
+            });
+
+            function assert(condition, message) {
+                if (!condition) throw new Error(message);
+            }
+
+            context.state = state;
+            context.assert = assert;
+            context.sample = {
+                uptime: '1h',
+                host: { distro: 'Test Linux', cpu_model: 'Test CPU' },
+                cpu: { percent: 10, count: 2, freq_mhz: 2400, per_cpu: [5, 15] },
+                memory: { total: 1000, used: 500, percent: 50 },
+                disks: [{ mount: '/', device: '/dev/sda1', fstype: 'ext4', used: 400, total: 1000, percent: 40 }],
+                network: { bytes_sent: 100, bytes_recv: 200, interfaces: [{ name: 'eth0', ip: '10.0.0.2', speed_mbps: 1000, bytes_sent: 100, bytes_recv: 200 }] },
+                load: { '1min': 0.1, '5min': 0.2, '15min': 0.3 },
+                temps: { cpu: 42 },
+                gpus: [{ index: 0, name: 'GPU', util_percent: 20, mem_used_mb: 100, mem_total_mb: 1000, temp_c: 50, power_w: 75 }],
+                processes: [{ pid: 1, name: 'proc', cpu: 1.2, mem: 3.4 }],
+            };
+
+            vm.runInContext(`
+                calls = { gpus: 0, processes: 0, network: 0, storage: 0 };
+                renderGpus = function() { calls.gpus += 1; };
+                renderProcesses = function() { calls.processes += 1; };
+                renderNetInterfaces = function() { calls.network += 1; };
+                renderStorage = function() { calls.storage += 1; };
+
+                state.activeTab = 'overview';
+                renderSystem(sample);
+                assert(calls.gpus === 0, 'overview render should not repaint GPU tab');
+                assert(calls.processes === 0, 'overview render should not repaint process tab');
+                assert(calls.network === 0, 'overview render should not repaint network tab');
+                assert(calls.storage === 0, 'overview render should not repaint storage tab');
+
+                state.activeTab = 'processes';
+                renderSystem(sample);
+                assert(calls.processes === 1, 'active process tab should repaint');
+                assert(calls.gpus === 0 && calls.network === 0 && calls.storage === 0, 'inactive system tabs should stay untouched');
+
+                renderServices([]);
+                renderServices([]);
+                assert(
+                    document.getElementById('services-list').htmlWrites === 1,
+                    'unchanged service markup should not rewrite the service list'
+                );
+            `, context);
+            """
+        )
+    )
+
+
+def test_app_js_node_selection_starts_priority_refresh_immediately():
+    _run_node(
+        textwrap.dedent(
+            r"""
+            const fs = require('fs');
+            const vm = require('vm');
+
+            function makeElement(id) {
+                return {
+                    id,
+                    style: {},
+                    dataset: {},
+                    value: '',
+                    textContent: '',
+                    innerHTML: '',
+                    disabled: false,
+                    selectedIndex: 0,
+                    options: [],
+                    className: '',
+                    classList: {
+                        add() {},
+                        remove() {},
+                        contains() { return false; },
+                    },
+                    addEventListener() {},
+                    querySelectorAll() { return []; },
+                    querySelector() { return null; },
+                };
+            }
+
+            const elements = new Map();
+            const document = {
+                cookie: '',
+                addEventListener() {},
+                createElement() {
+                    const el = makeElement('created');
+                    Object.defineProperty(el, 'textContent', {
+                        get() { return this._textContent || ''; },
+                        set(value) {
+                            this._textContent = String(value ?? '');
+                            this.innerHTML = this._textContent
+                                .replace(/&/g, '&amp;')
+                                .replace(/</g, '&lt;')
+                                .replace(/>/g, '&gt;')
+                                .replace(/"/g, '&quot;');
+                        },
+                    });
+                    return el;
+                },
+                getElementById(id) {
+                    if (!elements.has(id)) elements.set(id, makeElement(id));
+                    return elements.get(id);
+                },
+                querySelectorAll() { return []; },
+                querySelector() { return { dataset: { tab: 'overview' } }; },
+            };
+
+            const context = {
+                console,
+                document,
+                window: { location: { hostname: 'localhost' } },
+                location: { protocol: 'http:', host: 'localhost' },
+                WebSocket: function WebSocket() { return {}; },
+                fetch: async () => { throw new Error('fetch should not run'); },
+                setTimeout,
+                clearTimeout,
+                setInterval: () => 1,
+                clearInterval: () => {},
+            };
+            context.globalThis = context;
+
+            vm.createContext(context);
+            vm.runInContext(fs.readFileSync('static/app.js', 'utf8'), context, {
+                filename: 'static/app.js',
+            });
+
+            vm.runInContext(`
+                (async () => {
+                    const calls = [];
+                    isMaster = true;
+                    nodeRole = 'master';
+                    selfNodeId = 'master';
+                    selectedNodeId = 'node-a';
+                    currentAppView = 'main';
+                    nodes = [
+                        { node_id: 'node-a', node_name: 'Node A', status: 'online' },
+                        { node_id: 'node-b', node_name: 'Node B', status: 'online' },
+                    ];
+                    renderSystem = function() {};
+                    renderTunnel = function() {};
+                    renderServices = function() {};
+                    refreshCfSection = async function(context) {
+                        calls.push('cf:' + context.nodeId);
+                    };
+                    api = async function(_method, path) {
+                        calls.push(path);
+                        if (path.includes('/node-a/')) {
+                            return new Promise(() => {});
+                        }
+                        return {};
+                    };
+
+                    refreshAll();
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                    selectNode('node-b');
+                    await new Promise(resolve => setTimeout(resolve, 0));
+
+                    if (!calls.includes('/api/nodes/node-b/system')) {
+                        throw new Error('node click should start system refresh immediately for selected node');
+                    }
+                    if (!calls.includes('/api/nodes/node-b/tunnel')) {
+                        throw new Error('node click should start tunnel refresh immediately for selected node');
+                    }
+                    if (!calls.includes('/api/nodes/node-b/services')) {
+                        throw new Error('node click should start services refresh immediately for selected node');
+                    }
+                    if (selectedNodeId !== 'node-b') {
+                        throw new Error('selected node should update synchronously');
+                    }
+                })().catch((error) => {
+                    console.error(error.stack || error.message);
+                    process.exit(1);
+                });
+            `, context);
+            """
+        )
+    )
+
+
 def test_static_index_contains_setup_guidance_and_empty_state_copy():
     index_html = (ROOT / "static" / "index.html").read_text()
 
@@ -338,6 +609,8 @@ def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():
 if __name__ == "__main__":
     print("Running frontend app.js tests...\n")
     test_app_js_cloudflare_section_gating_by_role()
+    test_app_js_system_render_limits_hidden_tab_dom_writes()
+    test_app_js_node_selection_starts_priority_refresh_immediately()
     test_static_index_contains_setup_guidance_and_empty_state_copy()
     test_worker_enrollment_ui_uses_same_origin_backend_endpoint()
     print("ok")

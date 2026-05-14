@@ -8,6 +8,14 @@ import psutil
 
 logger = logging.getLogger("inframatik.system")
 
+SYSTEM_METRICS_CACHE_TTL = 1.0
+SYSTEM_SLOW_METRICS_CACHE_TTL = 10.0
+
+_system_metrics_cache = None
+_system_metrics_cache_at = 0.0
+_system_slow_metrics_cache = None
+_system_slow_metrics_cache_at = 0.0
+
 
 def _get_cpu_model() -> str:
     try:
@@ -200,15 +208,55 @@ def _get_distro() -> str:
 _cpu_model = None
 
 
-def get_system_metrics() -> dict:
-    global _cpu_model
+def _reset_metrics_cache_for_tests():
+    global _system_metrics_cache, _system_metrics_cache_at
+    global _system_slow_metrics_cache, _system_slow_metrics_cache_at
+    _system_metrics_cache = None
+    _system_metrics_cache_at = 0.0
+    _system_slow_metrics_cache = None
+    _system_slow_metrics_cache_at = 0.0
+
+
+def _get_slow_metrics(now: float, force_refresh: bool = False) -> dict:
+    global _system_slow_metrics_cache, _system_slow_metrics_cache_at
+
+    if (
+        not force_refresh
+        and _system_slow_metrics_cache is not None
+        and now - _system_slow_metrics_cache_at < SYSTEM_SLOW_METRICS_CACHE_TTL
+    ):
+        return _system_slow_metrics_cache
+
+    _system_slow_metrics_cache = {
+        "disks": _get_disks(),
+        "interfaces": _get_net_interfaces(),
+        "temps": _get_temperatures(),
+        "gpus": _get_gpus(),
+        "processes": _get_top_processes(),
+    }
+    _system_slow_metrics_cache_at = now
+    return _system_slow_metrics_cache
+
+
+def get_system_metrics(force_refresh: bool = False) -> dict:
+    global _cpu_model, _system_metrics_cache, _system_metrics_cache_at
+
+    now = time.monotonic()
+    if (
+        not force_refresh
+        and _system_metrics_cache is not None
+        and now - _system_metrics_cache_at < SYSTEM_METRICS_CACHE_TTL
+    ):
+        return _system_metrics_cache
+
     if _cpu_model is None:
         _cpu_model = _get_cpu_model()
 
-    cpu_percent = psutil.cpu_percent(interval=0.5)
+    # interval=None reports since the last call without blocking the request thread.
+    cpu_percent = psutil.cpu_percent(interval=None)
     cpu_freq = psutil.cpu_freq()
     cpu_count = psutil.cpu_count()
-    per_cpu = psutil.cpu_percent(interval=0, percpu=True)
+    per_cpu = psutil.cpu_percent(interval=None, percpu=True)
 
     mem = psutil.virtual_memory()
     swap = psutil.swap_memory()
@@ -216,6 +264,7 @@ def get_system_metrics() -> dict:
     load = psutil.getloadavg()
     boot_time = psutil.boot_time()
     uptime_seconds = int(time.time() - boot_time)
+    slow = _get_slow_metrics(now, force_refresh=force_refresh)
 
     days, remainder = divmod(uptime_seconds, 86400)
     hours, remainder = divmod(remainder, 3600)
@@ -227,7 +276,7 @@ def get_system_metrics() -> dict:
     else:
         uptime_str = f"{minutes}m"
 
-    return {
+    _system_metrics_cache = {
         "host": {
             "hostname": platform.node(),
             "os": f"{platform.system()} {platform.release()}",
@@ -251,15 +300,15 @@ def get_system_metrics() -> dict:
             "used": swap.used,
             "percent": swap.percent,
         },
-        "disks": _get_disks(),
+        "disks": slow["disks"],
         "network": {
             "bytes_sent": net.bytes_sent,
             "bytes_recv": net.bytes_recv,
-            "interfaces": _get_net_interfaces(),
+            "interfaces": slow["interfaces"],
         },
-        "temps": _get_temperatures(),
-        "gpus": _get_gpus(),
-        "processes": _get_top_processes(),
+        "temps": slow["temps"],
+        "gpus": slow["gpus"],
+        "processes": slow["processes"],
         "load": {
             "1min": load[0],
             "5min": load[1],
@@ -268,3 +317,5 @@ def get_system_metrics() -> dict:
         "uptime": uptime_str,
         "uptime_seconds": uptime_seconds,
     }
+    _system_metrics_cache_at = now
+    return _system_metrics_cache

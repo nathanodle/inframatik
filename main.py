@@ -195,13 +195,14 @@ async def api_system():
 # --- Tunnel ---
 
 @app.get("/api/tunnel")
-async def api_tunnel():
+async def api_tunnel(include_routes: bool = False):
     status = await get_tunnel_status()
-    try:
-        status["routes"] = await get_tunnel_routes()
-    except ValueError as e:
-        status["routes"] = []
-        status["routes_error"] = str(e)
+    if include_routes:
+        try:
+            status["routes"] = await get_tunnel_routes()
+        except ValueError as e:
+            status["routes"] = []
+            status["routes_error"] = str(e)
     return status
 
 
