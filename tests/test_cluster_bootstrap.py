@@ -191,10 +191,14 @@ def test_enroll_worker_copies_cf_config_and_sets_up_local_tunnel():
     async def fake_setup_cloudflared(token):
         seen["cloudflared_token"] = token
 
+    async def fake_progress(step, message, done=False, error=False):
+        seen.setdefault("progress", []).append((step, message, done, error))
+
     originals = (
         cluster_routes.httpx.AsyncClient,
         cluster_routes._worker_address_for_master,
         cluster_routes.setup_cloudflared_user_service,
+        cluster_routes._send_worker_enroll_progress,
         tunnel.create_tunnel,
         tunnel.init_tunnel_config,
         tunnel.get_tunnel_token,
@@ -202,6 +206,7 @@ def test_enroll_worker_copies_cf_config_and_sets_up_local_tunnel():
     cluster_routes.httpx.AsyncClient = lambda *a, **kw: _AsyncClient(on_post, *a, **kw)
     cluster_routes._worker_address_for_master = lambda master_url, request: "http://10.0.0.5:9000"
     cluster_routes.setup_cloudflared_user_service = fake_setup_cloudflared
+    cluster_routes._send_worker_enroll_progress = fake_progress
     tunnel.create_tunnel = fake_create_tunnel
     tunnel.init_tunnel_config = fake_init_tunnel
     tunnel.get_tunnel_token = fake_get_token
@@ -221,6 +226,7 @@ def test_enroll_worker_copies_cf_config_and_sets_up_local_tunnel():
             cluster_routes.httpx.AsyncClient,
             cluster_routes._worker_address_for_master,
             cluster_routes.setup_cloudflared_user_service,
+            cluster_routes._send_worker_enroll_progress,
             tunnel.create_tunnel,
             tunnel.init_tunnel_config,
             tunnel.get_tunnel_token,
@@ -241,6 +247,19 @@ def test_enroll_worker_copies_cf_config_and_sets_up_local_tunnel():
     assert seen["cloudflared_token"] == "connector-token"
     assert seen["report"]["headers"]["X-Api-Key"] == "worker-key"
     assert seen["report"]["json"] == {"tunnel_id": "tid-1"}
+    assert [entry[0] for entry in seen["progress"]] == [
+        "contacting_master",
+        "saving_worker_config",
+        "saving_cloudflare_config",
+        "creating_tunnel",
+        "initializing_tunnel",
+        "getting_token",
+        "installing_cloudflared",
+        "cloudflared_ready",
+        "reporting_master",
+        "complete",
+    ]
+    assert seen["progress"][-1] == ("complete", "Worker registration complete", True, False)
 
 
 @_run_with_temp_config

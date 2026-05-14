@@ -207,6 +207,11 @@ function showSetupForm(role) {
         document.getElementById('setup-worker-master').value = '';
         document.getElementById('setup-worker-token').value = '';
         document.getElementById('setup-worker-error').textContent = '';
+        hideWorkerEnrollProgress('setup-worker');
+        const backBtn = document.getElementById('setup-worker-back-btn');
+        const submitBtn = document.querySelector('#setup-worker .btn.primary');
+        if (backBtn) backBtn.disabled = false;
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Register'; }
     } else {
         // Standalone or Master → CF prompt
         const title = role === 'master' ? 'Set as Master' : 'Standalone Setup';
@@ -560,6 +565,45 @@ function setupNameBack() {
     showSetupCfPrompt();
 }
 
+const WORKER_ENROLL_PROGRESS = {
+    contacting_master: 10,
+    saving_worker_config: 25,
+    saving_cloudflare_config: 38,
+    creating_tunnel: 50,
+    initializing_tunnel: 58,
+    getting_token: 66,
+    installing_cloudflared: 80,
+    cloudflared_ready: 88,
+    reporting_master: 94,
+    complete: 100,
+};
+
+function showWorkerEnrollProgress(prefix, message, pct) {
+    const progressEl = document.getElementById(`${prefix}-progress`);
+    const textEl = document.getElementById(`${prefix}-progress-text`);
+    const barEl = document.getElementById(`${prefix}-progress-bar`);
+    if (!progressEl || !textEl || !barEl) return;
+    progressEl.style.display = '';
+    textEl.textContent = message;
+    if (pct !== undefined) barEl.style.width = pct + '%';
+}
+
+function hideWorkerEnrollProgress(prefix) {
+    const progressEl = document.getElementById(`${prefix}-progress`);
+    const barEl = document.getElementById(`${prefix}-progress-bar`);
+    if (progressEl) progressEl.style.display = 'none';
+    if (barEl) barEl.style.width = '0%';
+}
+
+function bindWorkerEnrollProgress(prefix) {
+    let fallbackPct = 10;
+    onWsProgress('worker-enroll', (msg) => {
+        const mappedPct = WORKER_ENROLL_PROGRESS[msg.step];
+        fallbackPct = mappedPct !== undefined ? mappedPct : Math.min(fallbackPct + 8, 95);
+        showWorkerEnrollProgress(prefix, msg.message, msg.done && !msg.error ? 100 : fallbackPct);
+    });
+}
+
 async function submitSetupFinal() {
     const errEl = document.getElementById('setup-error');
     errEl.textContent = '';
@@ -655,7 +699,11 @@ async function submitSetupWorker() {
     if (!name || !master_url || !token) { errEl.textContent = 'All fields are required.'; return; }
 
     const regBtn = document.querySelector('#setup-worker .btn.primary');
+    const backBtn = document.getElementById('setup-worker-back-btn');
     if (regBtn) { regBtn.disabled = true; regBtn.textContent = 'Registering...'; }
+    if (backBtn) backBtn.disabled = true;
+    bindWorkerEnrollProgress('setup-worker');
+    showWorkerEnrollProgress('setup-worker', 'Contacting master...', 5);
 
     try {
         const result = await api('POST', '/api/config/enroll-worker', {
@@ -663,15 +711,22 @@ async function submitSetupWorker() {
             master_url,
             token,
         });
+        delete wsProgressCallbacks['worker-enroll'];
         if (result.cf_tunnel_error) {
+            showWorkerEnrollProgress('setup-worker', 'Registered, but Cloudflare tunnel setup needs attention.', 100);
             errEl.textContent = 'Registered, but Cloudflare tunnel setup needs attention: ' + result.cf_tunnel_error;
             setTimeout(() => location.reload(), 3000);
             return;
         }
+        showWorkerEnrollProgress('setup-worker', 'Done! Redirecting to dashboard...', 100);
+        await new Promise(r => setTimeout(r, 600));
         location.reload();
     } catch (e) {
+        delete wsProgressCallbacks['worker-enroll'];
+        hideWorkerEnrollProgress('setup-worker');
         errEl.textContent = e.message;
         if (regBtn) { regBtn.disabled = false; regBtn.textContent = 'Register'; }
+        if (backBtn) backBtn.disabled = false;
     }
 }
 
@@ -1684,6 +1739,11 @@ function showInitWorker() {
     document.getElementById('init-worker-master').value = '';
     document.getElementById('init-worker-token').value = '';
     document.getElementById('settings-error').textContent = '';
+    hideWorkerEnrollProgress('init-worker');
+    document.getElementById('init-worker-back-btn').disabled = false;
+    const btn = document.getElementById('init-worker-submit-btn');
+    btn.disabled = false;
+    btn.textContent = 'Register';
 }
 
 async function submitInitMaster() {
@@ -1708,6 +1768,13 @@ async function submitInitWorker() {
     const errEl = document.getElementById('settings-error');
     errEl.textContent = '';
     if (!name || !master_url || !token) { errEl.textContent = 'All fields are required.'; return; }
+    const backBtn = document.getElementById('init-worker-back-btn');
+    const submitBtn = document.getElementById('init-worker-submit-btn');
+    backBtn.disabled = true;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Registering...';
+    bindWorkerEnrollProgress('init-worker');
+    showWorkerEnrollProgress('init-worker', 'Contacting master...', 5);
 
     try {
         const result = await api('POST', '/api/config/enroll-worker', {
@@ -1715,14 +1782,23 @@ async function submitInitWorker() {
             master_url,
             token,
         });
+        delete wsProgressCallbacks['worker-enroll'];
         if (result.cf_tunnel_error) {
+            showWorkerEnrollProgress('init-worker', 'Registered, but Cloudflare tunnel setup needs attention.', 100);
             errEl.textContent = 'Registered, but Cloudflare tunnel setup needs attention: ' + result.cf_tunnel_error;
             setTimeout(() => location.reload(), 3000);
             return;
         }
+        showWorkerEnrollProgress('init-worker', 'Done! Redirecting to dashboard...', 100);
+        await new Promise(r => setTimeout(r, 600));
         location.reload();
     } catch (e) {
+        delete wsProgressCallbacks['worker-enroll'];
+        hideWorkerEnrollProgress('init-worker');
         errEl.textContent = e.message;
+        backBtn.disabled = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Register';
     }
 }
 

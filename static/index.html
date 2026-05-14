@@ -423,9 +423,15 @@
                 <label>Enrollment Token</label>
                 <input type="text" id="init-worker-token" placeholder="enroll-..." autocomplete="off">
             </div>
+            <div id="init-worker-progress" style="display:none;margin:12px 0">
+                <div class="settings-desc" id="init-worker-progress-text" style="color:var(--accent);margin-bottom:8px"></div>
+                <div class="progress-bar" style="height:6px">
+                    <div class="progress-fill green" id="init-worker-progress-bar" style="width:0%;transition:width 0.3s ease"></div>
+                </div>
+            </div>
             <div class="form-actions">
-                <button class="btn" onclick="showSettingsHome()">Back</button>
-                <button class="btn primary" onclick="submitInitWorker()">Register</button>
+                <button class="btn" id="init-worker-back-btn" onclick="showSettingsHome()">Back</button>
+                <button class="btn primary" id="init-worker-submit-btn" onclick="submitInitWorker()">Register</button>
             </div>
         </div>
 
@@ -652,9 +658,15 @@
                 <label>Node Name</label>
                 <input type="text" id="setup-worker-name" placeholder="e.g. gpu-server" autocomplete="off">
             </div>
+            <div id="setup-worker-progress" style="display:none;margin:12px 0">
+                <div class="settings-desc" id="setup-worker-progress-text" style="color:var(--accent);margin-bottom:8px"></div>
+                <div class="progress-bar" style="height:6px">
+                    <div class="progress-fill green" id="setup-worker-progress-bar" style="width:0%;transition:width 0.3s ease"></div>
+                </div>
+            </div>
             <div class="form-error" id="setup-worker-error"></div>
             <div class="form-actions">
-                <button class="btn" onclick="showSetupChoose()">Back</button>
+                <button class="btn" id="setup-worker-back-btn" onclick="showSetupChoose()">Back</button>
                 <button class="btn primary" onclick="submitSetupWorker()">Register</button>
             </div>
         </div>

@@ -27,7 +27,7 @@ except Exception:
     if [ "$HAS_CF" = "yes" ]; then
         echo "==> Cloudflare resources detected"
         echo ""
-        read -p "  Clean up Cloudflare resources (tunnel, DNS, Access apps)? [Y/n] " -r
+        read -p "  Clean up Cloudflare resources in Cloudflare (tunnel, DNS, Access apps)? [Y/n] " -r
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
             echo ""
             python3 "$REPO_DIR/cf_cleanup.py" "$CONFIG_FILE"

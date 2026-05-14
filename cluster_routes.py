@@ -399,6 +399,20 @@ def _save_enrolled_cf_config(cf_config: Optional[dict]) -> bool:
     return True
 
 
+async def _send_worker_enroll_progress(
+    step: str,
+    message: str,
+    *,
+    done: bool = False,
+    error: bool = False,
+):
+    try:
+        from ws_routes import send_progress
+        await send_progress("worker-enroll", step, message, done=done, error=error)
+    except Exception as e:
+        logger.debug("Failed to send worker enrollment progress: %s", e)
+
+
 async def _report_worker_tunnel_to_master(master_url: str, api_key: str, tunnel_id: str):
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
@@ -418,17 +432,23 @@ async def _report_worker_tunnel_to_master(master_url: str, api_key: str, tunnel_
 async def _setup_enrolled_worker_tunnel(node_name: str, master_url: str, api_key: str) -> dict:
     from tunnel import create_tunnel, get_tunnel_token, init_tunnel_config
 
+    await _send_worker_enroll_progress("creating_tunnel", "Creating worker Cloudflare tunnel...")
     tunnel_result = await create_tunnel(node_name)
     tunnel_id = tunnel_result["id"]
+    await _send_worker_enroll_progress("initializing_tunnel", "Initializing worker tunnel routing...")
     await init_tunnel_config(tunnel_id)
+    await _send_worker_enroll_progress("getting_token", "Getting tunnel connector token...")
     token = await get_tunnel_token(tunnel_id)
+    await _send_worker_enroll_progress("installing_cloudflared", "Installing and starting cloudflared...")
     await setup_cloudflared_user_service(token)
+    await _send_worker_enroll_progress("cloudflared_ready", "cloudflared is running")
     set_tunnel_id(tunnel_id)
     result = {
         "tunnel_id": tunnel_id,
         "tunnel_name": tunnel_result.get("name") or node_name,
     }
     try:
+        await _send_worker_enroll_progress("reporting_master", "Reporting tunnel to master...")
         await _report_worker_tunnel_to_master(master_url, api_key, tunnel_id)
     except (RuntimeError, httpx.HTTPError, OSError) as e:
         logger.warning("Worker tunnel created but master report failed: %s", e)
@@ -445,9 +465,16 @@ async def _configure_enrolled_worker_cloudflare(
     if not _save_enrolled_cf_config(cf_config):
         return None, None
     try:
+        await _send_worker_enroll_progress("saving_cloudflare_config", "Saving Cloudflare configuration...")
         return await _setup_enrolled_worker_tunnel(node_name, master_url, api_key), None
     except (ValueError, RuntimeError, httpx.HTTPError, OSError) as e:
         logger.warning("Worker Cloudflare tunnel setup failed during enrollment: %s", e)
+        await _send_worker_enroll_progress(
+            "cloudflare_error",
+            f"Cloudflare tunnel setup needs attention: {e}",
+            done=True,
+            error=True,
+        )
         return None, str(e)
 
 
@@ -457,6 +484,7 @@ async def config_init_worker(body: InitWorkerBody):
     role = _configured_role(config)
     if role not in ("standalone", None):
         raise HTTPException(400, "Node already configured. Reset first.")
+    await _send_worker_enroll_progress("saving_worker_config", "Saving worker configuration...")
     new_config = init_as_worker(
         body.name,
         body.master_url,
@@ -480,6 +508,8 @@ async def config_init_worker(body: InitWorkerBody):
         result["cf_tunnel"] = cf_tunnel
     if cf_tunnel_error:
         result["cf_tunnel_error"] = cf_tunnel_error
+    if not cf_tunnel_error:
+        await _send_worker_enroll_progress("complete", "Worker registration complete", done=True)
     return result
 
 
@@ -496,6 +526,7 @@ async def config_enroll_worker(body: EnrollWorkerBody, request: Request):
         raise HTTPException(400, "Enrollment token is required")
 
     worker_address = _worker_address_for_master(master_url, request)
+    await _send_worker_enroll_progress("contacting_master", "Contacting master...")
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
@@ -511,14 +542,33 @@ async def config_enroll_worker(body: EnrollWorkerBody, request: Request):
             except ValueError:
                 data = {}
     except httpx.HTTPError as e:
+        await _send_worker_enroll_progress(
+            "enrollment_error",
+            f"Failed to reach master: {e}",
+            done=True,
+            error=True,
+        )
         raise HTTPException(400, f"Failed to reach master: {e}") from e
 
     if resp.status_code >= 400:
         detail = data.get("detail") if isinstance(data, dict) else None
+        await _send_worker_enroll_progress(
+            "enrollment_error",
+            detail or "Enrollment failed",
+            done=True,
+            error=True,
+        )
         raise HTTPException(resp.status_code, detail or "Enrollment failed")
     if not isinstance(data, dict) or not data.get("api_key"):
+        await _send_worker_enroll_progress(
+            "enrollment_error",
+            "Master returned an invalid enrollment response",
+            done=True,
+            error=True,
+        )
         raise HTTPException(400, "Master returned an invalid enrollment response")
 
+    await _send_worker_enroll_progress("saving_worker_config", "Saving worker configuration...")
     new_config = init_as_worker(
         body.name,
         master_url,
@@ -542,6 +592,8 @@ async def config_enroll_worker(body: EnrollWorkerBody, request: Request):
         result["cf_tunnel"] = cf_tunnel
     if cf_tunnel_error:
         result["cf_tunnel_error"] = cf_tunnel_error
+    if not cf_tunnel_error:
+        await _send_worker_enroll_progress("complete", "Worker registration complete", done=True)
     return result
 
 

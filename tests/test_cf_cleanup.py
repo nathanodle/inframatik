@@ -221,6 +221,25 @@ def test_cf_cleanup_deletes_only_owned_resources_and_unused_policies():
     assert {token for _method, _url, token, _body in calls} == {"tok"}
 
 
+def test_cf_cleanup_deletes_tunnel_without_dns_or_hostnames():
+    output, calls = _run_main(
+        {
+            "cf_token": "tok",
+            "cf_account_id": "acct",
+            "tunnel_id": "tun-1",
+        },
+        services={},
+        answer="yes",
+    )
+
+    delete_urls = [url for method, url, _token, _body in calls if method == "DELETE"]
+    assert "Tunnel:  tun-1" in output
+    assert delete_urls == [
+        "https://api.cloudflare.com/client/v4/accounts/acct/cfd_tunnel/tun-1/connections",
+        "https://api.cloudflare.com/client/v4/accounts/acct/cfd_tunnel/tun-1",
+    ]
+
+
 def test_cf_cleanup_confirmation_decline_skips_deletions():
     output, calls = _run_main(
         {
@@ -244,6 +263,7 @@ if __name__ == "__main__":
         test_cf_request_returns_cloudflare_json_error_response,
         test_cf_cleanup_exits_when_config_has_no_cloudflare_credentials,
         test_cf_cleanup_deletes_only_owned_resources_and_unused_policies,
+        test_cf_cleanup_deletes_tunnel_without_dns_or_hostnames,
         test_cf_cleanup_confirmation_decline_skips_deletions,
     ]
     failed = 0

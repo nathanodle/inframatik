@@ -260,9 +260,13 @@ def test_static_index_contains_setup_guidance_and_empty_state_copy():
 
 def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():
     app_js = (ROOT / "static" / "app.js").read_text()
+    index_html = (ROOT / "static" / "index.html").read_text()
 
     assert "/api/config/enroll-worker" in app_js
     assert "/api/nodes/enroll" not in app_js
+    assert "worker-enroll" in app_js
+    assert "setup-worker-progress" in index_html
+    assert "init-worker-progress" in index_html
 
 
 if __name__ == "__main__":
