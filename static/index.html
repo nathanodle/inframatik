@@ -294,7 +294,7 @@
         </div>
 
         <div class="services-list" id="services-list">
-            <div class="empty-state">No services registered yet. Add one to get started.</div>
+            <div class="empty-state">No services registered yet. Add one to get started or use 'inframatik init' in the root directory of your repo.</div>
         </div>
 
     </div>
@@ -565,7 +565,13 @@
         <!-- Step 2c: CF token validation -->
         <div id="setup-cf-config" style="display:none">
             <h3>Cloudflare API Token</h3>
-            <p class="settings-desc">Create a token in the <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" style="color:var(--accent)">Cloudflare dashboard</a> → Create Token → Custom Token.</p>
+            <div class="cf-token-instructions">
+                <p>In the Cloudflare dashboard, go to Manage Account → Account API Tokens, then click Create Token.</p>
+                <ol>
+                    <li>Add an account policy for Entire Account: Access (Read/Edit), Access: Organizations, Identity Providers, and Groups (Read/Edit), Argo Tunnel (Legacy) (Read/Edit).</li>
+                    <li>Add a domain policy, changing the Entire Account dropdown to All Domains or Specified Domains: DNS (Read/Edit), Zones (Read).</li>
+                </ol>
+            </div>
             <div class="form-group">
                 <label>API Token</label>
                 <input type="password" id="setup-cf-token" placeholder="Paste your token here" autocomplete="off">

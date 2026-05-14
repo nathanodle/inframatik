@@ -34,6 +34,7 @@ function onWsProgress(task, callback) {
 
 // ---- Cluster state ----
 let isMaster = false;
+let nodeRole = null;
 let selfNodeId = null;
 let selectedNodeId = null;
 let nodes = [];
@@ -44,6 +45,10 @@ let cfSectionLoaded = false;
 let machineHostname = window.location.hostname || '';
 
 // ---- Helpers ----
+
+function shouldShowLocalCfSection() {
+    return nodeRole === 'master' || nodeRole === 'standalone';
+}
 
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
@@ -139,6 +144,7 @@ document.addEventListener('click', (e) => {
 async function initCluster() {
     try {
         const info = await api('GET', '/api/node/info');
+        nodeRole = info.role || null;
         if (info.machine_hostname && typeof info.machine_hostname === 'string') {
             machineHostname = info.machine_hostname.trim();
         }
@@ -161,8 +167,12 @@ async function initCluster() {
         } else if (info.node_name) {
             // Standalone or worker — show node name in topbar
             selfNodeId = info.node_id;
+            selectedNodeId = info.node_id;
             document.getElementById('topbar-title').innerHTML =
                 `${esc(info.node_name)} <span>/ inframatik</span>`;
+            if (info.role === 'standalone') {
+                await updateCurrentTunnelId(info.node_id);
+            }
         }
     } catch (e) {
         // Endpoint not available — just continue
@@ -951,7 +961,7 @@ async function refreshServices() {
 function renderServices(services) {
     const el = document.getElementById('services-list');
     if (services.length === 0) {
-        el.innerHTML = '<div class="empty-state">No services registered yet. Add one to get started.</div>';
+        el.innerHTML = "<div class=\"empty-state\">No services registered yet. Add one to get started or use 'inframatik init' in the root directory of your repo.</div>";
         return;
     }
 
@@ -1167,10 +1177,16 @@ function renderCfSetup(containerId, isConfigured) {
     el.innerHTML = `
         <div class="settings-subsection-header">Cloudflare</div>
         <p class="settings-desc">Connect to Cloudflare for tunnels, DNS, and Zero Trust Access.</p>
+        <div class="cf-token-instructions">
+            <p>In the Cloudflare dashboard, go to Manage Account → Account API Tokens, then click Create Token.</p>
+            <ol>
+                <li>Add an account policy for Entire Account: Access (Read/Edit), Access: Organizations, Identity Providers, and Groups (Read/Edit), Argo Tunnel (Legacy) (Read/Edit).</li>
+                <li>Add a domain policy, changing the Entire Account dropdown to All Domains or Specified Domains: DNS (Read/Edit), Zones (Read).</li>
+            </ol>
+        </div>
         <div class="form-group">
             <label>API Token</label>
             <input type="password" id="cf-wiz-token" placeholder="Paste your Cloudflare API token" autocomplete="off">
-            <div class="label-hint" style="margin-top:4px">Needs permissions: Tunnel Edit, Access Edit, DNS Edit</div>
         </div>
         <div class="form-actions">
             <button class="btn primary" onclick="cfWizardValidateToken('${containerId}')">Validate</button>
@@ -1787,11 +1803,15 @@ async function updateCurrentTunnelId(nodeId) {
 }
 
 async function refreshCfSection() {
-    if (!isMaster) return;
+    if (!shouldShowLocalCfSection()) return;
     try {
-        // Resolve tunnel_id from the nodes list (includes tunnel_id for all nodes)
-        const node = nodes.find(n => n.node_id === selectedNodeId);
-        currentTunnelId = node ? (node.tunnel_id || null) : null;
+        if (isMaster) {
+            // Resolve tunnel_id from the nodes list (includes tunnel_id for all nodes)
+            const node = nodes.find(n => n.node_id === selectedNodeId);
+            currentTunnelId = node ? (node.tunnel_id || null) : null;
+        } else {
+            await updateCurrentTunnelId(selfNodeId);
+        }
 
         // Show the section header
         document.getElementById('tunnel-section-header').style.display = '';
@@ -2263,7 +2283,7 @@ async function deployRestart() {
 
 async function refreshAll() {
     await Promise.all([refreshSystem(), refreshTunnel(), refreshServices()]);
-    if (isMaster && !cfSectionLoaded) {
+    if (shouldShowLocalCfSection() && !cfSectionLoaded) {
         cfSectionLoaded = true;
         await refreshCfSection();
     }

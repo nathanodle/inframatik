@@ -695,6 +695,26 @@ body {
     margin-bottom: 20px;
 }
 
+.cf-token-instructions {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    margin-bottom: 18px;
+}
+
+.cf-token-instructions p {
+    margin: 0 0 8px;
+}
+
+.cf-token-instructions ol {
+    margin: 0;
+    padding-left: 20px;
+}
+
+.cf-token-instructions li + li {
+    margin-top: 6px;
+}
+
 .settings-actions-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
