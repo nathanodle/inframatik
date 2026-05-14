@@ -1202,10 +1202,11 @@ async function loadSettingsView() {
             document.getElementById('settings-master').style.display = 'block';
             document.getElementById('master-info-name').textContent = config.node_name;
             const liveNodes = await loadSettingsNodes();
+            const localServices = await loadLocalServicesForSettings();
             renderMasterWorkers(config.workers || {}, liveNodes);
             renderEnrollmentTokens(config.enrollment_tokens || []);
             renderCfSetup('master-cf-setup', config.cf_configured);
-            renderServiceTokens('master-service-tokens', config.service_tokens || []);
+            renderServiceTokens('master-service-tokens', config.service_tokens || [], localServices);
             await renderDashboardAccess(
                 'master-dashboard-access',
                 config.dashboard_hostname,
@@ -1223,8 +1224,9 @@ async function loadSettingsView() {
         } else if (config.role === 'standalone') {
             document.getElementById('settings-standalone').style.display = 'block';
             document.getElementById('standalone-info-name').textContent = config.node_name;
+            const localServices = await loadLocalServicesForSettings();
             renderCfSetup('standalone-cf-setup', config.cf_configured);
-            renderServiceTokens('standalone-service-tokens', config.service_tokens || []);
+            renderServiceTokens('standalone-service-tokens', config.service_tokens || [], localServices);
             await renderDashboardAccess(
                 'standalone-dashboard-access',
                 config.dashboard_hostname,
@@ -1238,6 +1240,14 @@ async function loadSettingsView() {
         }
     } catch (e) {
         document.getElementById('settings-unconfigured').style.display = 'block';
+    }
+}
+
+async function loadLocalServicesForSettings() {
+    try {
+        return await api('GET', '/api/services');
+    } catch (e) {
+        return [];
     }
 }
 
@@ -1714,37 +1724,157 @@ async function cancelEnrollmentToken(token) {
 
 // ---- Service Tokens ----
 
-function renderServiceTokens(containerId, tokens) {
+function normalizeServiceTokenItems(tokens) {
+    return (tokens || [])
+        .map((entry) => {
+            if (!entry || typeof entry !== 'object') return null;
+            const service = typeof entry.service === 'string' ? entry.service : '';
+            if (!service) return null;
+            return {
+                service,
+                token_id: typeof entry.token_id === 'string' ? entry.token_id : '',
+                capability: typeof entry.capability === 'string' ? entry.capability : 'deploy',
+                created_at: entry.created_at ?? null,
+                expires_at: entry.expires_at ?? null,
+            };
+        })
+        .filter(Boolean);
+}
+
+function serviceTokenDate(ts) {
+    return ts ? new Date(ts * 1000).toLocaleDateString() : '--';
+}
+
+function serviceTokenArg(value) {
+    return encodeURIComponent(value || '');
+}
+
+function renderServiceTokenItem(containerId, t) {
+    const createdDate = serviceTokenDate(t.created_at);
+    const expiresDate = serviceTokenDate(t.expires_at);
+    return `
+        <div class="service-token-item">
+            <span class="service-token-pill">${esc(t.capability)}</span>
+            <span class="master-worker-address">created ${esc(createdDate)} · expires ${esc(expiresDate)}</span>
+            <button class="btn danger" onclick="revokeServiceToken('${containerId}', '${esc(t.token_id || '')}', '${serviceTokenArg(t.service)}', true)">Revoke</button>
+        </div>`;
+}
+
+function renderGeneratedServiceTokens(containerId, results) {
+    const box = document.getElementById(`${containerId}-new-token`);
+    if (!box) return;
+    const generated = Array.isArray(results) ? results : [results];
+    box.style.display = '';
+    box.innerHTML = `
+        <p class="settings-desc">Copy ${generated.length === 1 ? 'this token' : 'these tokens'} now. Token values will not be shown again.</p>
+        ${generated.map((r) => `
+            <div class="service-token-secret-row">
+                <span class="service-token-name">${esc(r.service || 'service')}</span>
+                <code>${esc(r.token || '')}</code>
+                <button class="btn" onclick="copyText(this.parentElement.querySelector('code').textContent, this)">Copy</button>
+            </div>
+        `).join('')}`;
+}
+
+function renderServiceTokens(containerId, tokens, services = []) {
     const el = document.getElementById(containerId);
     if (!el) return;
 
-    const tokenRows = tokens.map(t => {
-        const createdDate = t.created_at ? new Date(t.created_at * 1000).toLocaleDateString() : '--';
-        return `
-        <div class="master-worker-row">
-            <span>${esc(t.service)}</span>
-            <span class="master-worker-address">${createdDate}</span>
-            <button class="btn danger" onclick="revokeServiceToken('${containerId}', '${esc(t.token_id || '')}', '${esc(t.service || '')}')">Revoke</button>
+    const items = normalizeServiceTokenItems(tokens);
+    const serviceRows = (services || [])
+        .filter((svc) => svc && typeof svc.name === 'string' && svc.name)
+        .map((svc) => {
+            const serviceTokens = items.filter((t) => t.service === svc.name);
+            const status = svc.status || 'unknown';
+            const statusClass = status === 'active' ? 'green' : 'red';
+            const tokenHtml = serviceTokens.length > 0
+                ? serviceTokens.map((t) => renderServiceTokenItem(containerId, t)).join('')
+                : `<div class="service-token-item empty">
+                    <span class="master-worker-address">No token generated</span>
+                    <button class="btn primary" onclick="generateServiceTokenForService('${containerId}', '${serviceTokenArg(svc.name)}', true)">Generate Token</button>
+                </div>`;
+            return `
+                <div class="service-token-row">
+                    <div class="service-token-main">
+                        <span class="status-dot ${statusClass}"></span>
+                        <span class="service-token-name">${esc(svc.name)}</span>
+                        <span class="service-token-status">${esc(status)}</span>
+                    </div>
+                    <div class="service-token-list">${tokenHtml}</div>
+                </div>`;
+        })
+        .join('');
+
+    const serviceNames = new Set((services || []).map((svc) => svc && svc.name).filter(Boolean));
+    const orphanTokens = items.filter((t) => !serviceNames.has(t.service));
+    const orphanRows = orphanTokens.map((t) => `
+        <div class="service-token-row">
+            <div class="service-token-main">
+                <span class="status-dot red"></span>
+                <span class="service-token-name">${esc(t.service)}</span>
+                <span class="service-token-status">not registered</span>
+            </div>
+            <div class="service-token-list">${renderServiceTokenItem(containerId, t)}</div>
         </div>
-    `;
-    }).join('');
+    `).join('');
+
+    const hasMissing = (services || []).some((svc) => svc && svc.name && !items.some((t) => t.service === svc.name));
+
+    const emptyText = services.length === 0 && items.length === 0
+        ? '<p class="settings-desc">No services are registered on this node yet.</p>'
+        : '';
 
     el.innerHTML = `
         <div class="settings-subsection-header">Service Tokens</div>
-        ${tokens.length > 0 ? tokenRows : '<p class="settings-desc">No service tokens. Generate one to let AI agents manage a service.</p>'}
-        <div id="${containerId}-new-token" style="display:none">
-            <div class="master-worker-row" style="background:var(--bg-input);padding:12px;border-radius:var(--radius-sm);margin:8px 0">
-                <code id="${containerId}-token-value" style="word-break:break-all"></code>
-                <button class="btn" onclick="copyText(document.getElementById('${containerId}-token-value').textContent, this)">Copy</button>
-            </div>
-            <p class="settings-desc">Copy this token now — it won't be shown again.</p>
+        <p class="settings-desc">Tokens are scoped to a service and stay valid whether that service is running or stopped.</p>
+        <div id="${containerId}-new-token" class="service-token-secret" style="display:none"></div>
+        ${emptyText}
+        <div class="service-token-rows">
+            ${serviceRows}
+            ${orphanRows}
         </div>
-        <div class="form-group" style="margin-top:8px">
-            <input type="text" id="${containerId}-service-name" placeholder="Service name" autocomplete="off">
+        <div class="form-group" style="margin-top:12px">
+            <input type="text" id="${containerId}-service-name" placeholder="Manual service name" autocomplete="off">
         </div>
         <div class="form-actions">
-            <button class="btn primary" onclick="generateServiceToken('${containerId}')">Generate Token</button>
+            ${hasMissing ? `<button class="btn" onclick="generateMissingServiceTokens('${containerId}')">Generate Missing Tokens</button>` : ''}
+            <button class="btn primary" onclick="generateServiceToken('${containerId}')">Generate Manual Token</button>
         </div>`;
+}
+
+async function generateServiceTokenForService(containerId, service, encoded = false) {
+    if (encoded) service = decodeURIComponent(service);
+    if (!service) { alert('Service name is required.'); return; }
+    try {
+        const result = await api('POST', '/api/config/service-tokens', { service });
+        await loadSettingsView();
+        renderGeneratedServiceTokens(containerId, result);
+    } catch (e) {
+        alert('Failed to generate token: ' + e.message);
+    }
+}
+
+async function generateMissingServiceTokens(containerId) {
+    try {
+        const [config, services] = await Promise.all([
+            api('GET', '/api/config'),
+            api('GET', '/api/services'),
+        ]);
+        const existing = new Set((config.service_tokens || []).map((t) => t.service).filter(Boolean));
+        const missing = (services || []).filter((svc) => svc && svc.name && !existing.has(svc.name));
+        if (missing.length === 0) {
+            alert('All registered services already have a token.');
+            return;
+        }
+        const results = [];
+        for (const svc of missing) {
+            results.push(await api('POST', '/api/config/service-tokens', { service: svc.name }));
+        }
+        await loadSettingsView();
+        renderGeneratedServiceTokens(containerId, results);
+    } catch (e) {
+        alert('Failed to generate missing tokens: ' + e.message);
+    }
 }
 
 async function generateServiceToken(containerId) {
@@ -1753,17 +1883,16 @@ async function generateServiceToken(containerId) {
     if (!service) { alert('Service name is required.'); return; }
     try {
         const result = await api('POST', '/api/config/service-tokens', { service });
-        // Show the token once
-        const tokenDisplay = document.getElementById(`${containerId}-new-token`);
-        document.getElementById(`${containerId}-token-value`).textContent = result.token;
-        tokenDisplay.style.display = '';
         nameEl.value = '';
+        await loadSettingsView();
+        renderGeneratedServiceTokens(containerId, result);
     } catch (e) {
         alert('Failed to generate token: ' + e.message);
     }
 }
 
-async function revokeServiceToken(containerId, tokenId, serviceName) {
+async function revokeServiceToken(containerId, tokenId, serviceName, encoded = false) {
+    if (encoded) serviceName = decodeURIComponent(serviceName);
     if (!tokenId) {
         alert('This token cannot be revoked from the dashboard because it has no token ID.');
         return;

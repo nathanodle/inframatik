@@ -959,6 +959,102 @@ body {
     color: var(--red);
 }
 
+.service-token-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.service-token-row {
+    display: grid;
+    grid-template-columns: minmax(170px, 0.8fr) minmax(0, 1.6fr);
+    gap: 12px;
+    align-items: stretch;
+    padding: 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.service-token-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.service-token-name {
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.service-token-status {
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-left: auto;
+}
+
+.service-token-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.service-token-item,
+.service-token-secret-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.service-token-item.empty {
+    justify-content: flex-end;
+}
+
+.service-token-pill {
+    color: var(--accent);
+    background: var(--accent-glow);
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.service-token-secret {
+    margin-bottom: 12px;
+    padding: 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.service-token-secret-row + .service-token-secret-row {
+    margin-top: 8px;
+}
+
+.service-token-secret-row code {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
 /* ---- Empty state ---- */
 .empty-state {
     text-align: center;
@@ -1004,6 +1100,9 @@ body {
     .settings-grid,
     .settings-summary-row { grid-template-columns: 1fr; }
     .master-worker-row { flex-wrap: wrap; }
+    .service-token-row { grid-template-columns: 1fr; }
+    .service-token-item,
+    .service-token-secret-row { flex-wrap: wrap; }
 }
 
 @media (max-width: 480px) {

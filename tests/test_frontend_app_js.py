@@ -273,6 +273,29 @@ def test_app_js_cloudflare_section_gating_by_role():
                     workersHtml.includes('Online'),
                     'settings workers should use live node status by config_node_id'
                 );
+
+                const serviceTokenHtml = vm.runInContext(`
+                    renderServiceTokens('service-token-panel', [{
+                        service: 'uderp',
+                        token_id: 'tok-1',
+                        capability: 'deploy',
+                        created_at: 1710000000,
+                        expires_at: 1711000000,
+                    }], [
+                        { name: 'disco', status: 'active' },
+                        { name: 'uderp', status: 'inactive' },
+                    ]);
+                    document.getElementById('service-token-panel').innerHTML;
+                `, context);
+                assert(
+                    serviceTokenHtml.includes('disco') &&
+                    serviceTokenHtml.includes('No token generated') &&
+                    serviceTokenHtml.includes('Generate Missing Tokens') &&
+                    serviceTokenHtml.includes('uderp') &&
+                    serviceTokenHtml.includes('deploy') &&
+                    serviceTokenHtml.includes('inactive'),
+                    'service token settings should show every service, not only existing tokens'
+                );
             })().catch((error) => {
                 console.error(error.stack || error.message);
                 process.exit(1);
