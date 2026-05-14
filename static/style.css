@@ -115,18 +115,6 @@ body {
     letter-spacing: 0.5px;
 }
 
-.settings-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px;
-    line-height: 1;
-}
-
-.settings-btn svg {
-    display: block;
-}
-
 .status-dot {
     width: 8px;
     height: 8px;
@@ -746,6 +734,10 @@ body {
 
 .settings-page-content {
     min-width: 0;
+}
+
+.settings-page a {
+    color: var(--text-primary);
 }
 
 .settings-grid {

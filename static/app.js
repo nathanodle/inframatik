@@ -52,6 +52,11 @@ function shouldShowLocalCfSection() {
 }
 
 function syncAppViewChrome() {
+    const settingsAvailable = nodeRole && nodeRole !== 'unconfigured' && nodeRole !== 'worker';
+    if (!settingsAvailable && currentAppView === 'settings') {
+        currentAppView = 'main';
+    }
+
     const mainView = document.getElementById('main-view');
     const settingsView = document.getElementById('settings-view');
     const mainTab = document.getElementById('main-view-tab');
@@ -69,7 +74,7 @@ function syncAppViewChrome() {
         if (currentAppView === 'settings') settingsTab.classList.add('active');
         else settingsTab.classList.remove('active');
     }
-    if (appNav) appNav.style.display = nodeRole && nodeRole !== 'unconfigured' ? '' : 'none';
+    if (appNav) appNav.style.display = settingsAvailable ? '' : 'none';
     if (sidebar) {
         if (isMaster && currentAppView === 'main') sidebar.classList.add('visible');
         else sidebar.classList.remove('visible');
@@ -77,6 +82,9 @@ function syncAppViewChrome() {
 }
 
 async function showAppView(view) {
+    if (view === 'settings' && nodeRole === 'worker') {
+        view = 'main';
+    }
     currentAppView = view === 'settings' ? 'settings' : 'main';
     syncAppViewChrome();
     if (currentAppView === 'settings') {
@@ -1187,7 +1195,6 @@ async function loadSettingsView() {
     document.getElementById('settings-standalone').style.display = 'none';
     document.getElementById('settings-init-master').style.display = 'none';
     document.getElementById('settings-init-worker').style.display = 'none';
-    document.getElementById('settings-worker-key').style.display = 'none';
     document.getElementById('settings-master').style.display = 'none';
 
     try {
@@ -1217,10 +1224,7 @@ async function loadSettingsView() {
             );
             loadDeployInfo();
         } else if (config.role === 'worker') {
-            document.getElementById('settings-worker-key').style.display = 'block';
-            document.getElementById('worker-key-value').textContent = config.api_key;
-            document.getElementById('worker-info-name').textContent = config.node_name;
-            document.getElementById('worker-info-master').textContent = config.master_url;
+            await showAppView('main');
         } else if (config.role === 'standalone') {
             document.getElementById('settings-standalone').style.display = 'block';
             document.getElementById('standalone-info-name').textContent = config.node_name;
@@ -1818,8 +1822,6 @@ function renderServiceTokens(containerId, tokens, services = []) {
         </div>
     `).join('');
 
-    const hasMissing = (services || []).some((svc) => svc && svc.name && !items.some((t) => t.service === svc.name));
-
     const emptyText = services.length === 0 && items.length === 0
         ? '<p class="settings-desc">No services are registered on this node yet.</p>'
         : '';
@@ -1837,7 +1839,6 @@ function renderServiceTokens(containerId, tokens, services = []) {
             <input type="text" id="${containerId}-service-name" placeholder="Manual service name" autocomplete="off">
         </div>
         <div class="form-actions">
-            ${hasMissing ? `<button class="btn" onclick="generateMissingServiceTokens('${containerId}')">Generate Missing Tokens</button>` : ''}
             <button class="btn primary" onclick="generateServiceToken('${containerId}')">Generate Manual Token</button>
         </div>`;
 }
@@ -1851,29 +1852,6 @@ async function generateServiceTokenForService(containerId, service, encoded = fa
         renderGeneratedServiceTokens(containerId, result);
     } catch (e) {
         alert('Failed to generate token: ' + e.message);
-    }
-}
-
-async function generateMissingServiceTokens(containerId) {
-    try {
-        const [config, services] = await Promise.all([
-            api('GET', '/api/config'),
-            api('GET', '/api/services'),
-        ]);
-        const existing = new Set((config.service_tokens || []).map((t) => t.service).filter(Boolean));
-        const missing = (services || []).filter((svc) => svc && svc.name && !existing.has(svc.name));
-        if (missing.length === 0) {
-            alert('All registered services already have a token.');
-            return;
-        }
-        const results = [];
-        for (const svc of missing) {
-            results.push(await api('POST', '/api/config/service-tokens', { service: svc.name }));
-        }
-        await loadSettingsView();
-        renderGeneratedServiceTokens(containerId, results);
-    } catch (e) {
-        alert('Failed to generate missing tokens: ' + e.message);
     }
 }
 
@@ -1993,16 +1971,6 @@ async function submitInitWorker() {
         submitBtn.textContent = 'Register';
     }
 }
-
-function copyWorkerKey(btn) {
-    const key = document.getElementById('worker-key-value').textContent;
-    navigator.clipboard.writeText(key).then(() => {
-        const orig = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(() => btn.textContent = orig, 1500);
-    });
-}
-
 
 async function removeWorker(nodeId, name) {
     if (!confirm(`Remove worker "${name}"?`)) return;
@@ -2508,12 +2476,46 @@ async function deployToWorkers() {
         resultsEl.innerHTML = entries.map(([id, r]) => {
             const ok = r.status === 'updated';
             const color = ok ? 'var(--green)' : 'var(--red)';
-            const msg = ok ? 'Updated, restarting' : (r.detail || 'Failed');
+            const msg = ok ? 'Update sent, restarting' : (r.detail || 'Failed');
             return `<div class="master-worker-row"><span class="status-dot ${ok ? 'green' : 'red'}"></span><span class="master-worker-name">${esc(r.name)}</span><span class="master-worker-address" style="color:${color}">${msg}</span></div>`;
         }).join('');
-        setTimeout(() => loadSettingsView(), 3000);
+        setTimeout(() => refreshDeployWorkerStatuses(entries), 3000);
     } catch (e) {
         resultsEl.innerHTML = `<div class="settings-desc" style="color:var(--red)">${esc(e.message)}</div>`;
+    }
+}
+
+async function refreshDeployWorkerStatuses(entries, attempt = 0) {
+    const resultsEl = document.getElementById('deploy-results');
+    if (!resultsEl) return;
+    try {
+        const [config, liveNodes] = await Promise.all([
+            api('GET', '/api/config'),
+            loadSettingsNodes(),
+        ]);
+        if (config.role === 'master') {
+            renderMasterWorkers(config.workers || {}, liveNodes);
+        }
+        let waiting = false;
+        resultsEl.innerHTML = entries.map(([id, r]) => {
+            if (r.status !== 'updated') {
+                return `<div class="master-worker-row"><span class="status-dot red"></span><span class="master-worker-name">${esc(r.name)}</span><span class="master-worker-address" style="color:var(--red)">${esc(r.detail || 'Failed')}</span></div>`;
+            }
+            const node = (liveNodes || []).find(n => n.config_node_id === id || n.node_id === id);
+            const online = node && node.status === 'online';
+            if (!online && attempt < 6) waiting = true;
+            const statusClass = online ? 'green' : 'yellow';
+            const color = online ? 'var(--green)' : 'var(--yellow)';
+            const msg = online ? 'Online after restart' : 'Waiting for heartbeat';
+            return `<div class="master-worker-row"><span class="status-dot ${statusClass}"></span><span class="master-worker-name">${esc(r.name)}</span><span class="master-worker-address" style="color:${color}">${msg}</span></div>`;
+        }).join('');
+        if (waiting) {
+            setTimeout(() => refreshDeployWorkerStatuses(entries, attempt + 1), 3000);
+        }
+    } catch (e) {
+        if (attempt < 6) {
+            setTimeout(() => refreshDeployWorkerStatuses(entries, attempt + 1), 3000);
+        }
     }
 }
 

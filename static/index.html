@@ -69,12 +69,6 @@
         <span>up <span id="uptime">--</span></span>
         <span class="version-tag" id="version-tag"></span>
         <span class="label-hint" id="user-email" style="display:none"></span>
-        <button class="btn settings-btn" onclick="openSettings()" title="Settings">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-            </svg>
-        </button>
     </div>
 </header>
 
@@ -360,7 +354,6 @@
                 <h2>Settings</h2>
                 <p id="settings-page-subtitle">Cluster, Cloudflare, tokens, and updates.</p>
             </div>
-            <button class="btn" onclick="closeSettings()">Back to Main</button>
         </div>
 
         <div class="settings-page-content">
@@ -440,25 +433,6 @@
             <div class="form-actions">
                 <button class="btn" id="init-worker-back-btn" onclick="showSettingsHome()">Back</button>
                 <button class="btn primary" id="init-worker-submit-btn" onclick="submitInitWorker()">Register</button>
-            </div>
-        </div>
-
-        <!-- Worker config display (shown after registering as worker) -->
-        <div id="settings-worker-key" style="display:none">
-            <p class="settings-desc">This node is registered as a worker. Copy the API key below and paste it into the master's settings.</p>
-            <div class="form-group">
-                <label>API Key (paste this on the master)</label>
-                <div class="key-display">
-                    <code id="worker-key-value">--</code>
-                    <button class="btn" onclick="copyWorkerKey(this)">Copy</button>
-                </div>
-            </div>
-            <div class="settings-info">
-                <div><span class="settings-info-label">Node Name:</span> <span id="worker-info-name">--</span></div>
-                <div><span class="settings-info-label">Master:</span> <span id="worker-info-master">--</span></div>
-            </div>
-            <div class="form-actions">
-                <button class="btn danger" onclick="resetNode()">Reset to Standalone</button>
             </div>
         </div>
 

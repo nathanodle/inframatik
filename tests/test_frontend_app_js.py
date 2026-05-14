@@ -291,7 +291,7 @@ def test_app_js_cloudflare_section_gating_by_role():
                 assert(
                     serviceTokenHtml.includes('disco') &&
                     serviceTokenHtml.includes('No token generated') &&
-                    serviceTokenHtml.includes('Generate Missing Tokens') &&
+                    !serviceTokenHtml.includes('Generate Missing Tokens') &&
                     serviceTokenHtml.includes('uderp') &&
                     serviceTokenHtml.includes('deploy') &&
                     serviceTokenHtml.includes('inactive'),
@@ -319,6 +319,9 @@ def test_static_index_contains_setup_guidance_and_empty_state_copy():
     assert "dash.cloudflare.com/profile/api-tokens" not in index_html
     assert 'id="settings-view"' in index_html
     assert "Update Master from Git" in index_html
+    assert "settings-btn" not in index_html
+    assert "Back to Main" not in index_html
+    assert "worker-key-value" not in index_html
 
 
 def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():
