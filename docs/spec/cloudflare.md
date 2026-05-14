@@ -244,15 +244,23 @@ Dedicated flow to place the inframatik dashboard (port 9000) behind CF Access:
 
 ## Worker Tunnel Setup
 
-Master-initiated flow to create and configure a tunnel for a remote worker:
+Enrollment flow for workers:
+
+1. Master includes its saved `cf_token`, `cf_account_id`, selected zone, and Access metadata in the enrollment response when Cloudflare is configured.
+2. Worker saves that config locally.
+3. Worker creates its own Cloudflare tunnel using its local config.
+4. Worker initializes tunnel ingress config, gets the connector token, starts its local cloudflared user service, and stores `tunnel_id` in its own node.json.
+5. Worker reports `tunnel_id` to the master via `POST /api/nodes/tunnel`, and heartbeats continue to include `tunnel_id`.
+
+Manual fallback for already-enrolled or older workers:
 
 ### `POST /api/nodes/{node_id}/cf/setup`
 
 1. Create tunnel (named after worker)
 2. Get connector token from CF API
 3. Initialize tunnel ingress config (catch-all 404)
-4. Store `tunnel_id` in master's worker config
-5. Push token to worker: proxy `POST /api/cf/token {tunnel_id, token}` to worker
+4. Push token to worker: proxy `POST /api/cf/token {tunnel_id, token}` to worker
+5. Store `tunnel_id` in master's worker config after the worker accepts the token
 
 ### Worker Token Receiver (`POST /api/cf/token`)
 
@@ -363,7 +371,8 @@ If cloudflared is unreachable (connect error or timeout):
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/nodes/{id}/cf/setup` | POST | Create tunnel for worker and push token |
+| `/api/nodes/tunnel` | POST | Worker reports its local tunnel ID to master (X-Api-Key auth) |
+| `/api/nodes/{id}/cf/setup` | POST | Manual fallback: create tunnel for worker and push connector token |
 | `/api/cf/token` | POST | Worker receives tunnel token (X-Api-Key auth) |
 
 ### Tunnel Status (combined with routes)

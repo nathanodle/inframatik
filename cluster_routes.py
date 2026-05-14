@@ -24,7 +24,9 @@ from node_config import (
     add_worker,
     remove_worker,
     set_tunnel_id,
+    set_worker_tunnel_id_for_api_key,
     set_dashboard_hostname,
+    save_cf_config,
     generate_api_key,
     create_service_token,
     rotate_service_token,
@@ -310,12 +312,17 @@ class InitWorkerBody(BaseModel):
     master_url: str
     api_key: Optional[str] = None
     update_public_key: Optional[str] = None
+    cf_config: Optional[dict] = None
 
 
 class EnrollWorkerBody(BaseModel):
     name: str
     master_url: str
     token: str
+
+
+class WorkerTunnelBody(BaseModel):
+    tunnel_id: str
 
 
 def _normalize_master_url(master_url: str) -> str:
@@ -355,6 +362,95 @@ def _worker_address_for_master(master_url: str, request: Request) -> str:
     return f"http://{host_part}:{worker_port}"
 
 
+def _master_cf_config_for_enrollment(config: Optional[dict]) -> Optional[dict]:
+    """Return the CF config fields a worker needs to manage its own tunnel."""
+    if not config:
+        return None
+    token = (config.get("cf_token") or "").strip()
+    account_id = (config.get("cf_account_id") or "").strip()
+    if not token or not account_id:
+        return None
+    payload = {
+        "token": token,
+        "account_id": account_id,
+        "zone_id": config.get("cf_zone_id"),
+        "default_policy_id": config.get("cf_default_policy_id"),
+        "team_domain": config.get("cf_team_domain"),
+        "access_issuer": config.get("cf_access_issuer"),
+    }
+    return {k: v for k, v in payload.items() if v}
+
+
+def _save_enrolled_cf_config(cf_config: Optional[dict]) -> bool:
+    if not isinstance(cf_config, dict):
+        return False
+    token = (cf_config.get("token") or "").strip()
+    account_id = (cf_config.get("account_id") or "").strip()
+    if not token or not account_id:
+        return False
+    save_cf_config(
+        token,
+        account_id,
+        (cf_config.get("zone_id") or "").strip(),
+        cf_config.get("default_policy_id"),
+        team_domain=cf_config.get("team_domain"),
+        access_issuer=cf_config.get("access_issuer"),
+    )
+    return True
+
+
+async def _report_worker_tunnel_to_master(master_url: str, api_key: str, tunnel_id: str):
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{master_url}/api/nodes/tunnel",
+            headers={"X-Api-Key": api_key, "Content-Type": "application/json"},
+            json={"tunnel_id": tunnel_id},
+        )
+        if resp.status_code >= 400:
+            try:
+                data = resp.json()
+                detail = data.get("detail", resp.text) if isinstance(data, dict) else str(data)
+            except ValueError:
+                detail = resp.text
+            raise RuntimeError(f"Master rejected worker tunnel report: {detail}")
+
+
+async def _setup_enrolled_worker_tunnel(node_name: str, master_url: str, api_key: str) -> dict:
+    from tunnel import create_tunnel, get_tunnel_token, init_tunnel_config
+
+    tunnel_result = await create_tunnel(node_name)
+    tunnel_id = tunnel_result["id"]
+    await init_tunnel_config(tunnel_id)
+    token = await get_tunnel_token(tunnel_id)
+    await setup_cloudflared_user_service(token)
+    set_tunnel_id(tunnel_id)
+    result = {
+        "tunnel_id": tunnel_id,
+        "tunnel_name": tunnel_result.get("name") or node_name,
+    }
+    try:
+        await _report_worker_tunnel_to_master(master_url, api_key, tunnel_id)
+    except (RuntimeError, httpx.HTTPError, OSError) as e:
+        logger.warning("Worker tunnel created but master report failed: %s", e)
+        result["master_report_error"] = str(e)
+    return result
+
+
+async def _configure_enrolled_worker_cloudflare(
+    cf_config: Optional[dict],
+    node_name: str,
+    master_url: str,
+    api_key: str,
+) -> tuple[Optional[dict], Optional[str]]:
+    if not _save_enrolled_cf_config(cf_config):
+        return None, None
+    try:
+        return await _setup_enrolled_worker_tunnel(node_name, master_url, api_key), None
+    except (ValueError, RuntimeError, httpx.HTTPError, OSError) as e:
+        logger.warning("Worker Cloudflare tunnel setup failed during enrollment: %s", e)
+        return None, str(e)
+
+
 @cluster_router.post("/api/config/init-worker")
 async def config_init_worker(body: InitWorkerBody):
     config = get_node_config()
@@ -367,13 +463,24 @@ async def config_init_worker(body: InitWorkerBody):
         api_key=body.api_key,
         update_public_key=body.update_public_key,
     )
-    return {
+    cf_tunnel, cf_tunnel_error = await _configure_enrolled_worker_cloudflare(
+        body.cf_config,
+        new_config["node_name"],
+        new_config["master_url"],
+        new_config["api_key"],
+    )
+    result = {
         "node_id": new_config["node_id"],
         "node_name": new_config["node_name"],
         "role": "worker",
         "api_key": new_config["api_key"],
         "master_url": new_config["master_url"],
     }
+    if cf_tunnel:
+        result["cf_tunnel"] = cf_tunnel
+    if cf_tunnel_error:
+        result["cf_tunnel_error"] = cf_tunnel_error
+    return result
 
 
 @cluster_router.post("/api/config/enroll-worker")
@@ -418,13 +525,24 @@ async def config_enroll_worker(body: EnrollWorkerBody, request: Request):
         api_key=data["api_key"],
         update_public_key=data.get("signing_public_key"),
     )
-    return {
+    cf_tunnel, cf_tunnel_error = await _configure_enrolled_worker_cloudflare(
+        data.get("cf_config"),
+        new_config["node_name"],
+        new_config["master_url"],
+        new_config["api_key"],
+    )
+    result = {
         "node_id": new_config["node_id"],
         "node_name": new_config["node_name"],
         "role": "worker",
         "master_url": new_config["master_url"],
         "address": worker_address,
     }
+    if cf_tunnel:
+        result["cf_tunnel"] = cf_tunnel
+    if cf_tunnel_error:
+        result["cf_tunnel_error"] = cf_tunnel_error
+    return result
 
 
 @cluster_router.post("/api/config/reset")
@@ -858,11 +976,15 @@ async def enroll_worker(body: EnrollBody):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    return {
+    result = {
         "status": "enrolled",
         "api_key": worker_api_key,
         "signing_public_key": signing_public_key,
     }
+    cf_config = _master_cf_config_for_enrollment(config)
+    if cf_config:
+        result["cf_config"] = cf_config
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -873,6 +995,7 @@ class RegisterBody(BaseModel):
     node_id: str
     node_name: str
     address: str
+    tunnel_id: Optional[str] = None
 
 
 @cluster_router.post("/api/nodes/register")
@@ -883,11 +1006,17 @@ async def register(body: RegisterBody, request: Request):
     ok = register_node(body.node_id, body.node_name, body.address, api_key)
     if not ok:
         raise HTTPException(401, "Unknown API key")
+    if body.tunnel_id:
+        try:
+            set_worker_tunnel_id_for_api_key(api_key, body.tunnel_id)
+        except ValueError as e:
+            logger.warning("Failed to record worker tunnel during register: %s", e)
     return {"status": "registered"}
 
 
 class HeartbeatBody(BaseModel):
     node_id: str
+    tunnel_id: Optional[str] = None
 
 
 @cluster_router.post("/api/nodes/heartbeat")
@@ -900,7 +1029,24 @@ async def heartbeat(body: HeartbeatBody, request: Request):
     ok = heartbeat_node(body.node_id)
     if not ok:
         raise HTTPException(404, "Node not registered — re-register required")
+    if body.tunnel_id:
+        try:
+            set_worker_tunnel_id_for_api_key(api_key, body.tunnel_id)
+        except ValueError as e:
+            logger.warning("Failed to record worker tunnel during heartbeat: %s", e)
     return {"status": "ok"}
+
+
+@cluster_router.post("/api/nodes/tunnel")
+async def report_worker_tunnel(body: WorkerTunnelBody, request: Request):
+    api_key = request.headers.get("X-Api-Key")
+    if not api_key:
+        raise HTTPException(401, "API key required")
+    try:
+        set_worker_tunnel_id_for_api_key(api_key, body.tunnel_id)
+    except ValueError as e:
+        raise HTTPException(401, str(e))
+    return {"status": "updated", "tunnel_id": body.tunnel_id}
 
 
 # ---------------------------------------------------------------------------

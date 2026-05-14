@@ -70,10 +70,12 @@ Master and worker roles cannot transition directly to each other without a reset
    -> Master validates token (one-time, consumed on use)
    -> Master generates api_key for the worker
    -> Master stores worker in its config (workers dict)
-   -> Returns {api_key}
+   -> Returns {api_key, signing_public_key, cf_config?}
 
 4. Worker configures itself locally:
-   POST /api/config/init-worker {name, master_url, api_key}
+   POST /api/config/init-worker {name, master_url, api_key, cf_config?}
+   -> If cf_config is present, worker saves it, creates its own CF tunnel,
+      starts local cloudflared, and reports tunnel_id back to the master.
 
 5. Worker process restarts, heartbeat_sender_loop begins
 ```

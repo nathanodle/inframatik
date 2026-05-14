@@ -121,6 +121,7 @@ These paths have their own authentication logic inside the route handler:
 _SELF_AUTH_PATHS = {
     "/api/nodes/register", "/api/nodes/heartbeat", "/api/node/update",
     "/api/cf/token", "/api/config/reset", "/api/nodes/enroll",
+    "/api/nodes/tunnel",
 }
 ```
 

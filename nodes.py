@@ -266,12 +266,18 @@ async def heartbeat_sender_loop():
         local_ip = socket.gethostname()
     worker_address = f"http://{local_ip}:{listen_port}"
 
+    def current_tunnel_id():
+        current = get_node_config() or config
+        return current.get("tunnel_id")
+
     register_payload = {
         "node_id": config["node_id"],
         "node_name": config["node_name"],
         "address": worker_address,
     }
-    heartbeat_payload = {"node_id": config["node_id"]}
+    tunnel_id = current_tunnel_id()
+    if tunnel_id:
+        register_payload["tunnel_id"] = tunnel_id
 
     # Initial registration (retry with backoff)
     backoff = 5
@@ -301,6 +307,11 @@ async def heartbeat_sender_loop():
     while True:
         await asyncio.sleep(15)
         try:
+            heartbeat_payload = {"node_id": config["node_id"]}
+            tunnel_id = current_tunnel_id()
+            if tunnel_id:
+                heartbeat_payload["tunnel_id"] = tunnel_id
+                register_payload["tunnel_id"] = tunnel_id
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.post(
                     f"{master_url}/api/nodes/heartbeat",

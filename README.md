@@ -50,7 +50,7 @@ FastAPI backend (Python)  ←→  Vanilla JS frontend
 |------|-------------|
 | **Standalone** | Single machine. System monitoring + service management. No clustering. |
 | **Master** | Central node. Monitors workers via sidebar, proxies API calls, deploys updates, manages CF tunnels. |
-| **Worker** | Connects to a master via heartbeats. Receives updates and CF tunnel tokens from master. |
+| **Worker** | Connects to a master via heartbeats. Receives updates and, when the master has Cloudflare configured, creates its own local CF tunnel during enrollment. |
 
 ## Multi-Node Setup
 
@@ -95,7 +95,7 @@ Guided setup — no manual config files needed.
 
 - **Service hostnames** — register a service with a hostname (e.g. `myapp.example.com`) and inframatik creates the tunnel route, DNS record, and Access app automatically
 - **Dashboard access** — put the dashboard itself behind CF Access (Settings → Dashboard Access)
-- **Worker tunnels** — master can create and push CF tunnels to worker nodes
+- **Worker tunnels** — enrolled workers copy the master's saved CF config, create their own tunnel, and run cloudflared locally
 
 ## Authentication
 

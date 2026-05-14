@@ -658,11 +658,16 @@ async function submitSetupWorker() {
     if (regBtn) { regBtn.disabled = true; regBtn.textContent = 'Registering...'; }
 
     try {
-        await api('POST', '/api/config/enroll-worker', {
+        const result = await api('POST', '/api/config/enroll-worker', {
             name,
             master_url,
             token,
         });
+        if (result.cf_tunnel_error) {
+            errEl.textContent = 'Registered, but Cloudflare tunnel setup needs attention: ' + result.cf_tunnel_error;
+            setTimeout(() => location.reload(), 3000);
+            return;
+        }
         location.reload();
     } catch (e) {
         errEl.textContent = e.message;
@@ -1705,11 +1710,16 @@ async function submitInitWorker() {
     if (!name || !master_url || !token) { errEl.textContent = 'All fields are required.'; return; }
 
     try {
-        await api('POST', '/api/config/enroll-worker', {
+        const result = await api('POST', '/api/config/enroll-worker', {
             name,
             master_url,
             token,
         });
+        if (result.cf_tunnel_error) {
+            errEl.textContent = 'Registered, but Cloudflare tunnel setup needs attention: ' + result.cf_tunnel_error;
+            setTimeout(() => location.reload(), 3000);
+            return;
+        }
         location.reload();
     } catch (e) {
         errEl.textContent = e.message;
@@ -2194,7 +2204,7 @@ async function removeCfPolicyMember(policyId, encodedValue) {
 }
 
 async function setupWorkerTunnel(nodeId, nodeName) {
-    if (!confirm(`Create a Cloudflare tunnel for "${nodeName}" and push the token?`)) return;
+    if (!confirm(`Create a Cloudflare tunnel for "${nodeName}" and start cloudflared on the worker?`)) return;
     try {
         const result = await api('POST', `/api/nodes/${nodeId}/cf/setup`, {});
         alert(`Tunnel created for ${nodeName}.\nTunnel ID: ${result.tunnel_id}`);

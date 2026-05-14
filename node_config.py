@@ -753,3 +753,20 @@ def set_worker_tunnel_id(node_id: str, tunnel_id: str):
         raise ValueError(f"Worker '{node_id}' not found")
     worker["tunnel_id"] = tunnel_id
     save_node_config(config)
+
+
+def set_worker_tunnel_id_for_api_key(api_key: str, tunnel_id: str):
+    """Set tunnel_id for the worker identified by its API key."""
+    config = get_node_config()
+    if not config or config.get("role") != "master":
+        raise ValueError("Only master can set worker tunnel_id")
+    if not api_key:
+        raise ValueError("API key required")
+    if not tunnel_id:
+        raise ValueError("Tunnel ID required")
+    for worker in config.get("workers", {}).values():
+        if worker.get("api_key") == api_key:
+            worker["tunnel_id"] = tunnel_id
+            save_node_config(config)
+            return
+    raise ValueError("Unknown API key")

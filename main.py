@@ -96,6 +96,7 @@ _PUBLIC_PATHS = {
 _SELF_AUTH_PATHS = {
     "/api/nodes/register", "/api/nodes/heartbeat", "/api/node/update",
     "/api/cf/token", "/api/config/reset", "/api/nodes/enroll",
+    "/api/nodes/tunnel",
     "/api/internal/cf/service/status",
     "/api/internal/cf/service/logs",
     "/api/internal/cf/service/restart",

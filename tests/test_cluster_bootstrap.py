@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import node_config
+import tunnel
 try:
     import cluster_routes
 except ModuleNotFoundError:
@@ -59,8 +60,11 @@ class _AsyncClient:
     async def __aexit__(self, _exc_type, _exc, _tb):
         return False
 
-    async def post(self, url, json=None):
-        return self.on_post(url, json=json)
+    async def post(self, url, json=None, headers=None):
+        try:
+            return self.on_post(url, json=json, headers=headers)
+        except TypeError:
+            return self.on_post(url, json=json)
 
 
 @_run_with_temp_config
@@ -145,6 +149,101 @@ def test_enroll_worker_calls_master_server_side_and_saves_config():
 
 
 @_run_with_temp_config
+def test_enroll_worker_copies_cf_config_and_sets_up_local_tunnel():
+    if cluster_routes is None:
+        return
+    seen = {}
+
+    def on_post(url, json=None, headers=None):
+        if url.endswith("/api/nodes/enroll"):
+            return _Resp(
+                200,
+                {
+                    "api_key": "worker-key",
+                    "signing_public_key": "pub",
+                    "cf_config": {
+                        "token": "cf-token",
+                        "account_id": "acct-1",
+                        "zone_id": "zone-1",
+                        "default_policy_id": "pol-1",
+                        "team_domain": "team-a",
+                        "access_issuer": "https://team-a.cloudflareaccess.com",
+                    },
+                },
+            )
+        if url.endswith("/api/nodes/tunnel"):
+            seen["report"] = {"headers": headers, "json": json}
+            return _Resp(200, {"status": "updated"})
+        raise AssertionError(f"Unexpected POST {url}")
+
+    async def fake_create_tunnel(name):
+        seen["tunnel_name"] = name
+        return {"id": "tid-1", "name": name}
+
+    async def fake_init_tunnel(tunnel_id):
+        seen["init_tunnel"] = tunnel_id
+        return True
+
+    async def fake_get_token(tunnel_id):
+        seen["token_tunnel"] = tunnel_id
+        return "connector-token"
+
+    async def fake_setup_cloudflared(token):
+        seen["cloudflared_token"] = token
+
+    originals = (
+        cluster_routes.httpx.AsyncClient,
+        cluster_routes._worker_address_for_master,
+        cluster_routes.setup_cloudflared_user_service,
+        tunnel.create_tunnel,
+        tunnel.init_tunnel_config,
+        tunnel.get_tunnel_token,
+    )
+    cluster_routes.httpx.AsyncClient = lambda *a, **kw: _AsyncClient(on_post, *a, **kw)
+    cluster_routes._worker_address_for_master = lambda master_url, request: "http://10.0.0.5:9000"
+    cluster_routes.setup_cloudflared_user_service = fake_setup_cloudflared
+    tunnel.create_tunnel = fake_create_tunnel
+    tunnel.init_tunnel_config = fake_init_tunnel
+    tunnel.get_tunnel_token = fake_get_token
+    try:
+        result = asyncio.run(
+            cluster_routes.config_enroll_worker(
+                cluster_routes.EnrollWorkerBody(
+                    name="worker-a",
+                    master_url="http://192.168.166.186:9000",
+                    token="enroll-token",
+                ),
+                _DummyRequest(),
+            )
+        )
+    finally:
+        (
+            cluster_routes.httpx.AsyncClient,
+            cluster_routes._worker_address_for_master,
+            cluster_routes.setup_cloudflared_user_service,
+            tunnel.create_tunnel,
+            tunnel.init_tunnel_config,
+            tunnel.get_tunnel_token,
+        ) = originals
+
+    cfg = node_config.get_node_config()
+    assert result["cf_tunnel"]["tunnel_id"] == "tid-1"
+    assert cfg["cf_token"] == "cf-token"
+    assert cfg["cf_account_id"] == "acct-1"
+    assert cfg["cf_zone_id"] == "zone-1"
+    assert cfg["cf_default_policy_id"] == "pol-1"
+    assert cfg["cf_team_domain"] == "team-a"
+    assert cfg["cf_access_issuer"] == "https://team-a.cloudflareaccess.com"
+    assert cfg["tunnel_id"] == "tid-1"
+    assert seen["tunnel_name"] == "worker-a"
+    assert seen["init_tunnel"] == "tid-1"
+    assert seen["token_tunnel"] == "tid-1"
+    assert seen["cloudflared_token"] == "connector-token"
+    assert seen["report"]["headers"]["X-Api-Key"] == "worker-key"
+    assert seen["report"]["json"] == {"tunnel_id": "tid-1"}
+
+
+@_run_with_temp_config
 def test_enroll_worker_propagates_master_enrollment_error():
     if cluster_routes is None:
         return
@@ -200,6 +299,61 @@ def test_enroll_worker_rejects_master_url_with_path():
         assert "base URL" in str(exc.detail)
     else:
         raise AssertionError("Expected HTTPException")
+
+
+@_run_with_temp_config
+def test_master_enrollment_response_includes_cf_config_when_configured():
+    if cluster_routes is None:
+        return
+    node_config.init_as_master("master-a")
+    node_config.save_cf_config(
+        "cf-token",
+        "acct-1",
+        "zone-1",
+        "pol-1",
+        team_domain="team-a",
+        access_issuer="https://team-a.cloudflareaccess.com",
+    )
+    token = node_config.create_enrollment_token()
+
+    result = asyncio.run(
+        cluster_routes.enroll_worker(
+            cluster_routes.EnrollBody(
+                token=token,
+                node_name="worker-a",
+                address="http://10.0.0.5:9000",
+            )
+        )
+    )
+
+    assert result["status"] == "enrolled"
+    assert result["cf_config"] == {
+        "token": "cf-token",
+        "account_id": "acct-1",
+        "zone_id": "zone-1",
+        "default_policy_id": "pol-1",
+        "team_domain": "team-a",
+        "access_issuer": "https://team-a.cloudflareaccess.com",
+    }
+
+
+@_run_with_temp_config
+def test_worker_tunnel_report_updates_master_worker_record():
+    if cluster_routes is None:
+        return
+    node_config.init_as_master("master-a")
+    worker_id = node_config.add_worker("worker-a", "http://10.0.0.5:9000", "worker-key")
+
+    result = asyncio.run(
+        cluster_routes.report_worker_tunnel(
+            cluster_routes.WorkerTunnelBody(tunnel_id="tid-1"),
+            types.SimpleNamespace(headers={"X-Api-Key": "worker-key"}),
+        )
+    )
+
+    cfg = node_config.get_node_config()
+    assert result == {"status": "updated", "tunnel_id": "tid-1"}
+    assert cfg["workers"][worker_id]["tunnel_id"] == "tid-1"
 
 
 def run_tests():

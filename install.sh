@@ -354,10 +354,11 @@ if [ -n "$ENROLL_TOKEN" ]; then
 
     if [ -n "$API_KEY" ]; then
         # Configure as worker locally with credentials from master
-        CONFIG_BODY=$(python3 -c "import json,sys; print(json.dumps({'name': sys.argv[1], 'master_url': sys.argv[2], 'api_key': sys.argv[3], 'update_public_key': sys.argv[4]}))" "$NODE_NAME" "$MASTER_URL" "$API_KEY" "$SIGNING_PUBLIC_KEY")
-        curl -sS -X POST "http://127.0.0.1:9000/api/config/init-worker" \
+        CONFIG_BODY=$(RESULT_JSON="$RESULT" python3 -c "import json,os,sys; body={'name': sys.argv[1], 'master_url': sys.argv[2], 'api_key': sys.argv[3], 'update_public_key': sys.argv[4]}; data=json.loads(os.environ.get('RESULT_JSON','{}')); cf=data.get('cf_config') if isinstance(data, dict) else None; body.update({'cf_config': cf} if cf else {}); print(json.dumps(body))" "$NODE_NAME" "$MASTER_URL" "$API_KEY" "$SIGNING_PUBLIC_KEY")
+        INIT_RESULT=$(curl -sS -X POST "http://127.0.0.1:9000/api/config/init-worker" \
             -H "Content-Type: application/json" \
-            -d "$CONFIG_BODY" > /dev/null
+            -d "$CONFIG_BODY")
+        CF_TUNNEL_ERROR=$(echo "$INIT_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cf_tunnel_error',''))" 2>/dev/null || echo "")
 
         # Restart so heartbeat loop picks up worker config
         systemctl --user restart "$SERVICE_NAME"
@@ -367,6 +368,9 @@ if [ -n "$ENROLL_TOKEN" ]; then
         echo "  Master:   $MASTER_URL"
         echo "  Address:  $WORKER_ADDRESS"
         echo "  Connected automatically — no manual setup needed."
+        if [ -n "$CF_TUNNEL_ERROR" ]; then
+            echo "  Cloudflare tunnel setup warning: $CF_TUNNEL_ERROR"
+        fi
         echo "============================================"
     else
         echo "    Enrollment failed: $RESULT"

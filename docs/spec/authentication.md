@@ -144,11 +144,12 @@ The `X-Api-Key` header value is compared against:
 | Heartbeat | Worker | `POST /api/nodes/heartbeat` |
 | Code update | Master pushing to worker | `POST /api/node/update` |
 | CF token push | Master pushing to worker | `POST /api/cf/token` |
+| Worker tunnel report | Worker reporting local tunnel ID | `POST /api/nodes/tunnel` |
 | Config reset | Any node with api_key | `POST /api/config/reset` |
 
 ### Self-Auth Paths
 
-API key validation for registration, heartbeat, update, CF token push, reset, and enrollment is handled by the route handlers themselves (not the middleware). These paths are listed in `_SELF_AUTH_PATHS` and the middleware passes them through without checking.
+API key validation for registration, heartbeat, update, worker tunnel reports, CF token push, reset, and enrollment is handled by the route handlers themselves (not the middleware). These paths are listed in `_SELF_AUTH_PATHS` and the middleware passes them through without checking.
 
 ---
 
@@ -288,6 +289,7 @@ These paths bypass the middleware and implement their own authentication:
 | `/api/nodes/register` | X-Api-Key (validated by handler) |
 | `/api/nodes/heartbeat` | X-Api-Key (validated by handler) |
 | `/api/node/update` | X-Api-Key (validated by handler) |
+| `/api/nodes/tunnel` | X-Api-Key (validated by handler) |
 | `/api/cf/token` | X-Api-Key (validated by handler) |
 | `/api/config/reset` | X-Api-Key (validated by handler) |
 | `/api/nodes/enroll` | Enrollment token (validated by handler) |

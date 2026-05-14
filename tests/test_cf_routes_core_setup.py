@@ -707,6 +707,44 @@ def test_api_setup_worker_tunnel_maps_runtime_error():
     assert exc.status_code == 502
 
 
+def test_api_setup_worker_tunnel_does_not_mark_worker_when_token_push_fails():
+    calls = []
+
+    async def fake_create(_name):
+        calls.append("create")
+        return {"id": "tid-7"}
+
+    async def fake_get_token(_tid):
+        calls.append("token")
+        return "tok-7"
+
+    async def fake_init(_tid):
+        calls.append("init")
+
+    async def fake_proxy(_node_id, _method, _path, _body):
+        calls.append("proxy")
+        raise RuntimeError("worker unreachable")
+
+    def fake_set(_node_id, _tid):
+        calls.append("set")
+
+    with _Patch(
+        [
+            (cf_routes, "_load_cf_config", _cf_ok),
+            (cf_routes, "get_worker_by_node_id", lambda _nid: {"name": "worker-a"}),
+            (cf_routes, "create_tunnel", fake_create),
+            (cf_routes, "get_tunnel_token", fake_get_token),
+            (cf_routes, "init_tunnel_config", fake_init),
+            (cf_routes, "set_worker_tunnel_id", fake_set),
+            (proxy, "proxy_to_node", fake_proxy),
+        ]
+    ):
+        exc = _assert_raises_async(HTTPException, cf_routes.api_setup_worker_tunnel, "worker-1", None)
+
+    assert exc.status_code == 502
+    assert calls == ["create", "token", "init", "proxy"]
+
+
 def test_cf_setup_validate_token_success():
     def on_get(url, headers=None, params=None):
         if url.endswith("/accounts"):

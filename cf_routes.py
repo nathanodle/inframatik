@@ -346,14 +346,16 @@ async def api_setup_worker_tunnel(node_id: str, body: SetupWorkerTunnelBody = No
         # 3. Init ingress config
         await init_tunnel_config(tid)
 
-        # 4. Store tunnel_id in master's worker config
-        set_worker_tunnel_id(node_id, tid)
-
-        # 5. Push token to worker
+        # 4. Push token to worker. Only mark the worker configured after this
+        # succeeds; otherwise the UI would hide the retry button while the
+        # worker never received a connector token.
         push_result = await proxy_to_node(
             node_id, "POST", "/api/cf/token",
             {"tunnel_id": tid, "token": token}
         )
+
+        # 5. Store tunnel_id in master's worker config
+        set_worker_tunnel_id(node_id, tid)
 
         return {
             "status": "setup_complete",
