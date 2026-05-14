@@ -48,7 +48,7 @@ let currentAppView = 'main';
 // ---- Helpers ----
 
 function shouldShowLocalCfSection() {
-    return nodeRole === 'master' || nodeRole === 'standalone';
+    return nodeRole === 'master' || nodeRole === 'standalone' || nodeRole === 'worker';
 }
 
 function syncAppViewChrome() {

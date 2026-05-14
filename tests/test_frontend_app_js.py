@@ -218,11 +218,12 @@ def test_app_js_cloudflare_section_gating_by_role():
 
                 const worker = await runRole('worker', { tunnel_id: 'tid-worker' });
                 assert(worker.configured === true, 'worker should initialize');
-                assert(worker.shouldShowLocalCfSection === false, 'worker should not show local CF section');
-                assert(worker.cfSectionLoaded === false, 'worker refresh loop should not load CF section');
+                assert(worker.shouldShowLocalCfSection === true, 'worker should show local CF section');
+                assert(worker.currentTunnelId === 'tid-worker', 'worker tunnel id should load from config');
+                assert(worker.cfSectionLoaded === true, 'worker refresh loop should load CF section');
                 assert(
-                    !worker.calls.api.some((call) => call[1].startsWith('/api/cf/')),
-                    'worker should not load local Cloudflare APIs'
+                    worker.calls.api.some((call) => call[1] === '/api/cf/access/apps'),
+                    'worker should load local Cloudflare APIs'
                 );
 
                 const servicesHtml = vm.runInContext(`
