@@ -179,7 +179,7 @@ if [ -z "$INSTALL_CF" ]; then
         [[ $REPLY =~ ^[Yy]$ ]] && INSTALL_CF=1
     else
         echo "==> Skipping Cloudflare setup (non-interactive)"
-        echo "    To include CF support: INSTALL_CF=1 curl ... | bash"
+        echo "    To include CF support: curl ... | INSTALL_CF=1 bash"
     fi
 fi
 
@@ -196,39 +196,65 @@ if [ -n "$INSTALL_CF" ]; then
             armv7l)  CF_ARCH="arm" ;;
             *)       echo "    Unsupported architecture: $ARCH"; exit 1 ;;
         esac
-        CLOUDFLARED_VERSION="${CLOUDFLARED_VERSION:-2025.2.1}"
+        CLOUDFLARED_VERSION="${CLOUDFLARED_VERSION:-2026.2.0}"
         CF_BASE_URL="https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}"
-        CF_BIN_URL="${CF_BASE_URL}/cloudflared-linux-${CF_ARCH}"
-        CF_SHA_URL="${CF_BASE_URL}/cloudflared-linux-${CF_ARCH}.sha256"
-        CF_SHA_URL_ALT="${CF_BASE_URL}/cloudflared-linux-${CF_ARCH}.sha256sum"
+        CF_ASSET="cloudflared-linux-${CF_ARCH}"
+        CF_BIN_URL="${CF_BASE_URL}/${CF_ASSET}"
+        CF_API_URL="https://api.github.com/repos/cloudflare/cloudflared/releases/tags/${CLOUDFLARED_VERSION}"
         TMP_BIN="$(mktemp)"
-        TMP_SHA="$(mktemp)"
+        TMP_RELEASE="$(mktemp)"
 
         if ! curl -fsSL -o "$TMP_BIN" "$CF_BIN_URL"; then
             echo "ERROR: Failed to download cloudflared binary from ${CF_BIN_URL}"
-            rm -f "$TMP_BIN" "$TMP_SHA"
+            rm -f "$TMP_BIN" "$TMP_RELEASE"
             exit 1
         fi
-        if ! curl -fsSL -o "$TMP_SHA" "$CF_SHA_URL"; then
-            if ! curl -fsSL -o "$TMP_SHA" "$CF_SHA_URL_ALT"; then
-                echo "ERROR: Failed to download cloudflared checksum file."
-                rm -f "$TMP_BIN" "$TMP_SHA"
-                exit 1
-            fi
+
+        if ! curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "User-Agent: inframatik-installer" \
+            -o "$TMP_RELEASE" \
+            "$CF_API_URL"; then
+            echo "ERROR: Failed to download cloudflared release metadata."
+            rm -f "$TMP_BIN" "$TMP_RELEASE"
+            exit 1
         fi
 
-        EXPECTED_SHA="$(grep -Eo '[0-9a-fA-F]{64}' "$TMP_SHA" | head -n 1 | tr 'A-F' 'a-f')"
+        if ! EXPECTED_SHA="$(python3 - "$TMP_RELEASE" "$CF_ASSET" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+asset_name = sys.argv[2]
+for asset in release.get("assets", []):
+    if isinstance(asset, dict) and asset.get("name") == asset_name:
+        digest = str(asset.get("digest") or "")
+        match = re.search(r"\b[a-fA-F0-9]{64}\b", digest)
+        if match:
+            print(match.group(0).lower())
+            raise SystemExit(0)
+        break
+raise SystemExit(1)
+PY
+)"; then
+            echo "ERROR: cloudflared release metadata did not include a SHA256 digest for ${CF_ASSET}."
+            rm -f "$TMP_BIN" "$TMP_RELEASE"
+            exit 1
+        fi
         ACTUAL_SHA="$(sha256sum "$TMP_BIN" | awk '{print $1}')"
         if [ -z "$EXPECTED_SHA" ] || [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
             echo "ERROR: cloudflared checksum verification failed."
-            rm -f "$TMP_BIN" "$TMP_SHA"
+            rm -f "$TMP_BIN" "$TMP_RELEASE"
             exit 1
         fi
 
         mkdir -p "$HOME/.local/bin"
         chmod 0755 "$TMP_BIN"
         mv "$TMP_BIN" "$CF_USER_BIN"
-        rm -f "$TMP_BIN" "$TMP_SHA"
+        rm -f "$TMP_BIN" "$TMP_RELEASE"
         echo "    Installed cloudflared ${CLOUDFLARED_VERSION} to ${CF_USER_BIN}"
     fi
 fi

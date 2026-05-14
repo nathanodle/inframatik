@@ -66,7 +66,7 @@ curl -fsSL http://MASTER_IP:9000/api/install.sh | bash -s -- --enroll TOKEN
 curl -fsSL http://MASTER_IP:9000/api/install.sh | bash -s -- --enroll TOKEN --name gpu-server
 
 # With Cloudflare support (non-interactive)
-INSTALL_CF=1 curl -fsSL http://MASTER_IP:9000/api/install.sh | bash -s -- --enroll TOKEN
+curl -fsSL http://MASTER_IP:9000/api/install.sh | INSTALL_CF=1 bash -s -- --enroll TOKEN
 ```
 
 The installer prompts for an admin password, sets up a venv, creates a systemd service, installs the `inframatik` CLI, and enrolls with the master automatically. Enrollment tokens are single-use.
