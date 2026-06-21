@@ -467,7 +467,11 @@ async def api_setup_missing_worker_tunnels():
         raise HTTPException(403, "Only master can set up worker tunnels")
 
     workers = config.get("workers", {})
-    targets = [(node_id, worker) for node_id, worker in workers.items() if not worker.get("tunnel_id")]
+    targets = [
+        (node_id, worker)
+        for node_id, worker in workers.items()
+        if not worker.get("tunnel_id") and not worker.get("cf_opt_out")
+    ]
     results = {}
     if not targets:
         await _send_worker_cf_setup_progress("complete", "All workers already have Cloudflare tunnels.", done=True)

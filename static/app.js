@@ -43,6 +43,11 @@ let currentTunnelId = null;
 let cfPolicies = [];
 let cfSectionLoaded = false;
 let machineHostname = window.location.hostname || '';
+let installSourceMasterUrl = '';
+let workerSkipCf = {
+    'setup-worker': false,
+    'init-worker': false,
+};
 let currentAppView = 'main';
 let lastSystemData = null;
 let refreshInFlight = false;
@@ -237,6 +242,9 @@ async function initCluster() {
         if (info.machine_hostname && typeof info.machine_hostname === 'string') {
             machineHostname = info.machine_hostname.trim();
         }
+        installSourceMasterUrl = typeof info.install_source_master_url === 'string'
+            ? info.install_source_master_url.trim()
+            : '';
         if (info.role === 'unconfigured') {
             // First run — show setup modal
             document.getElementById('setup-modal').classList.add('active');
@@ -292,15 +300,17 @@ function showSetupForm(role) {
 
     if (role === 'worker') {
         document.getElementById('setup-worker').style.display = '';
-        document.getElementById('setup-worker-name').value = '';
-        document.getElementById('setup-worker-master').value = '';
+        document.getElementById('setup-worker-name').value = defaultWorkerNodeName();
+        resetWorkerMasterFields('setup-worker', installSourceMasterUrl);
         document.getElementById('setup-worker-token').value = '';
         document.getElementById('setup-worker-error').textContent = '';
+        setWorkerSkipCf('setup-worker', false);
         hideWorkerEnrollProgress('setup-worker');
         const backBtn = document.getElementById('setup-worker-back-btn');
-        const submitBtn = document.querySelector('#setup-worker .btn.primary');
+        const submitBtn = document.getElementById('setup-worker-submit-btn');
         if (backBtn) backBtn.disabled = false;
         if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Register'; }
+        setWorkerCfButtonsDisabled('setup-worker', false);
     } else {
         // Standalone or Master → CF prompt
         const title = role === 'master' ? 'Set as Master' : 'Standalone Setup';
@@ -694,6 +704,104 @@ function bindWorkerEnrollProgress(prefix) {
     });
 }
 
+function setWorkerSkipCf(prefix, skip) {
+    workerSkipCf[prefix] = Boolean(skip);
+    const useCfBtn = document.getElementById(`${prefix}-use-cf-btn`);
+    const localOnlyBtn = document.getElementById(`${prefix}-local-only-btn`);
+    if (useCfBtn) {
+        useCfBtn.classList.toggle('primary', !workerSkipCf[prefix]);
+        useCfBtn.setAttribute('aria-pressed', String(!workerSkipCf[prefix]));
+    }
+    if (localOnlyBtn) {
+        localOnlyBtn.classList.toggle('primary', workerSkipCf[prefix]);
+        localOnlyBtn.setAttribute('aria-pressed', String(workerSkipCf[prefix]));
+    }
+}
+
+function setWorkerCfButtonsDisabled(prefix, disabled) {
+    const useCfBtn = document.getElementById(`${prefix}-use-cf-btn`);
+    const localOnlyBtn = document.getElementById(`${prefix}-local-only-btn`);
+    if (useCfBtn) useCfBtn.disabled = disabled;
+    if (localOnlyBtn) localOnlyBtn.disabled = disabled;
+}
+
+function defaultWorkerNodeName() {
+    return (machineHostname || '').split('.')[0].trim();
+}
+
+function splitMasterUrlForFields(masterUrl) {
+    try {
+        const parsed = new URL(masterUrl);
+        if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) return null;
+        return {
+            host: parsed.hostname,
+            port: parsed.port || (parsed.protocol === 'https:' ? '443' : '80'),
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+function resetWorkerMasterFields(prefix, masterUrl = '') {
+    const hostEl = document.getElementById(`${prefix}-master-host`);
+    const portEl = document.getElementById(`${prefix}-master-port`);
+    const source = splitMasterUrlForFields(masterUrl);
+    if (hostEl) hostEl.value = source ? source.host : '';
+    if (portEl) portEl.value = source ? source.port : '9000';
+}
+
+function getWorkerMasterUrl(prefix) {
+    const hostEl = document.getElementById(`${prefix}-master-host`);
+    const portEl = document.getElementById(`${prefix}-master-port`);
+    let host = (hostEl?.value || '').trim();
+    let port = (portEl?.value || '').trim() || '9000';
+    let scheme = 'http';
+
+    if (!host) {
+        return { error: 'Master IP or hostname is required.' };
+    }
+
+    if (/^https?:\/\//i.test(host)) {
+        try {
+            const parsed = new URL(host);
+            scheme = parsed.protocol.replace(':', '').toLowerCase();
+            host = parsed.hostname;
+            if (parsed.port) port = parsed.port;
+            if ((parsed.pathname && parsed.pathname !== '/') || parsed.search || parsed.hash) {
+                return { error: 'Enter only the master IP or hostname and port.' };
+            }
+        } catch (e) {
+            return { error: 'Enter a valid master IP or hostname.' };
+        }
+    } else {
+        host = host.replace(/^\/+|\/+$/g, '');
+        if (/[/?#]/.test(host)) {
+            return { error: 'Enter only the master IP or hostname and port.' };
+        }
+
+        const bracketedIpv6 = host.match(/^\[([^\]]+)\](?::(\d+))?$/);
+        const hostWithPort = host.match(/^([^:]+):(\d+)$/);
+        if (bracketedIpv6) {
+            host = bracketedIpv6[1];
+            if (bracketedIpv6[2]) port = bracketedIpv6[2];
+        } else if (hostWithPort) {
+            host = hostWithPort[1];
+            port = hostWithPort[2];
+        }
+    }
+
+    if (!/^\d+$/.test(port)) {
+        return { error: 'Master port must be a number.' };
+    }
+    const portNum = Number(port);
+    if (portNum < 1 || portNum > 65535) {
+        return { error: 'Master port must be between 1 and 65535.' };
+    }
+
+    const hostForUrl = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+    return { url: `${scheme}://${hostForUrl}:${portNum}` };
+}
+
 async function submitSetupFinal() {
     const errEl = document.getElementById('setup-error');
     errEl.textContent = '';
@@ -782,24 +890,27 @@ async function submitSetupFinal() {
 
 async function submitSetupWorker() {
     const name = document.getElementById('setup-worker-name').value.trim();
-    const master_url = document.getElementById('setup-worker-master').value.trim().replace(/\/+$/, '');
     const token = document.getElementById('setup-worker-token').value.trim();
     const errEl = document.getElementById('setup-worker-error');
     errEl.textContent = '';
-    if (!name || !master_url || !token) { errEl.textContent = 'All fields are required.'; return; }
+    const masterAddress = getWorkerMasterUrl('setup-worker');
+    if (!name || !token) { errEl.textContent = 'All fields are required.'; return; }
+    if (masterAddress.error) { errEl.textContent = masterAddress.error; return; }
 
-    const regBtn = document.querySelector('#setup-worker .btn.primary');
+    const regBtn = document.getElementById('setup-worker-submit-btn');
     const backBtn = document.getElementById('setup-worker-back-btn');
     if (regBtn) { regBtn.disabled = true; regBtn.textContent = 'Registering...'; }
     if (backBtn) backBtn.disabled = true;
+    setWorkerCfButtonsDisabled('setup-worker', true);
     bindWorkerEnrollProgress('setup-worker');
     showWorkerEnrollProgress('setup-worker', 'Contacting master...', 5);
 
     try {
         const result = await api('POST', '/api/config/enroll-worker', {
             name,
-            master_url,
+            master_url: masterAddress.url,
             token,
+            skip_cf: workerSkipCf['setup-worker'],
         });
         delete wsProgressCallbacks['worker-enroll'];
         if (result.cf_tunnel_error) {
@@ -817,6 +928,7 @@ async function submitSetupWorker() {
         errEl.textContent = e.message;
         if (regBtn) { regBtn.disabled = false; regBtn.textContent = 'Register'; }
         if (backBtn) backBtn.disabled = false;
+        setWorkerCfButtonsDisabled('setup-worker', false);
     }
 }
 
@@ -1720,9 +1832,11 @@ function renderMasterWorkers(workers, liveNodes = nodes, cfConfigured = false) {
         const statusText = status === 'online' ? 'Online' : 'Offline';
         const cfBadge = w.tunnel_id
             ? '<span class="worker-cf-badge">CF</span>'
-            : cfConfigured
-                ? `<button class="btn" onclick="setupWorkerTunnel('${esc(nodeId)}', '${esc(w.name)}')">Setup Tunnel</button>`
-                : '<span class="worker-status-label">Local only</span>';
+            : w.cf_opt_out
+                ? '<span class="worker-status-label">Local only</span>'
+                : cfConfigured
+                    ? `<button class="btn" onclick="setupWorkerTunnel('${esc(nodeId)}', '${esc(w.name)}')">Setup Tunnel</button>`
+                    : '<span class="worker-status-label">Local only</span>';
         return `
         <div class="master-worker-row">
             <span class="status-dot ${statusClass}"></span>
@@ -1741,7 +1855,7 @@ function renderWorkerCfSyncActions(workers, cfConfigured) {
     if (!actionsEl) return;
     if (resultsEl) resultsEl.innerHTML = '';
 
-    const missing = Object.values(workers || {}).filter(w => !w.tunnel_id);
+    const missing = Object.values(workers || {}).filter(w => !w.tunnel_id && !w.cf_opt_out);
     if (!cfConfigured || missing.length === 0) {
         actionsEl.innerHTML = '';
         return;
@@ -2008,12 +2122,14 @@ function showInitWorker() {
     document.getElementById('settings-unconfigured').style.display = 'none';
     document.getElementById('settings-standalone').style.display = 'none';
     document.getElementById('settings-init-worker').style.display = 'block';
-    document.getElementById('init-worker-name').value = '';
-    document.getElementById('init-worker-master').value = '';
+    document.getElementById('init-worker-name').value = defaultWorkerNodeName();
+    resetWorkerMasterFields('init-worker', installSourceMasterUrl);
     document.getElementById('init-worker-token').value = '';
+    setWorkerSkipCf('init-worker', false);
     document.getElementById('settings-error').textContent = '';
     hideWorkerEnrollProgress('init-worker');
     document.getElementById('init-worker-back-btn').disabled = false;
+    setWorkerCfButtonsDisabled('init-worker', false);
     const btn = document.getElementById('init-worker-submit-btn');
     btn.disabled = false;
     btn.textContent = 'Register';
@@ -2036,15 +2152,17 @@ async function submitInitMaster() {
 
 async function submitInitWorker() {
     const name = document.getElementById('init-worker-name').value.trim();
-    const master_url = document.getElementById('init-worker-master').value.trim().replace(/\/+$/, '');
     const token = document.getElementById('init-worker-token').value.trim();
     const errEl = document.getElementById('settings-error');
     errEl.textContent = '';
-    if (!name || !master_url || !token) { errEl.textContent = 'All fields are required.'; return; }
+    const masterAddress = getWorkerMasterUrl('init-worker');
+    if (!name || !token) { errEl.textContent = 'All fields are required.'; return; }
+    if (masterAddress.error) { errEl.textContent = masterAddress.error; return; }
     const backBtn = document.getElementById('init-worker-back-btn');
     const submitBtn = document.getElementById('init-worker-submit-btn');
     backBtn.disabled = true;
     submitBtn.disabled = true;
+    setWorkerCfButtonsDisabled('init-worker', true);
     submitBtn.textContent = 'Registering...';
     bindWorkerEnrollProgress('init-worker');
     showWorkerEnrollProgress('init-worker', 'Contacting master...', 5);
@@ -2052,8 +2170,9 @@ async function submitInitWorker() {
     try {
         const result = await api('POST', '/api/config/enroll-worker', {
             name,
-            master_url,
+            master_url: masterAddress.url,
             token,
+            skip_cf: workerSkipCf['init-worker'],
         });
         delete wsProgressCallbacks['worker-enroll'];
         if (result.cf_tunnel_error) {
@@ -2071,6 +2190,7 @@ async function submitInitWorker() {
         errEl.textContent = e.message;
         backBtn.disabled = false;
         submitBtn.disabled = false;
+        setWorkerCfButtonsDisabled('init-worker', false);
         submitBtn.textContent = 'Register';
     }
 }

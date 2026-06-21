@@ -416,13 +416,23 @@
                 <label>Node Name</label>
                 <input type="text" id="init-worker-name" placeholder="e.g. gpu-server" autocomplete="off">
             </div>
-            <div class="form-group">
-                <label>Master Address</label>
-                <input type="text" id="init-worker-master" placeholder="http://192.168.1.10:9000" autocomplete="off">
+            <div class="master-address-grid">
+                <div class="form-group">
+                    <label>Master IP / Hostname</label>
+                    <input type="text" id="init-worker-master-host" placeholder="192.168.1.10" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label>Port</label>
+                    <input type="text" id="init-worker-master-port" value="9000" inputmode="numeric" autocomplete="off">
+                </div>
             </div>
             <div class="form-group">
                 <label>Enrollment Token</label>
                 <input type="text" id="init-worker-token" placeholder="enroll-..." autocomplete="off">
+            </div>
+            <div class="worker-cf-choice" role="group" aria-label="Worker Cloudflare mode">
+                <button type="button" class="btn primary" id="init-worker-use-cf-btn" onclick="setWorkerSkipCf('init-worker', false)" aria-pressed="true">Use Cloudflare</button>
+                <button type="button" class="btn" id="init-worker-local-only-btn" onclick="setWorkerSkipCf('init-worker', true)" aria-pressed="false">Local Only</button>
             </div>
             <div id="init-worker-progress" style="display:none;margin:12px 0">
                 <div class="settings-desc" id="init-worker-progress-text" style="color:var(--accent);margin-bottom:8px"></div>
@@ -649,9 +659,15 @@
         <!-- Step 2 alt: worker form (name + master + enrollment token) -->
         <div id="setup-worker" style="display:none">
             <h3>Register as Worker</h3>
-            <div class="form-group">
-                <label>Master Address</label>
-                <input type="text" id="setup-worker-master" placeholder="http://192.168.1.10:9000" autocomplete="off">
+            <div class="master-address-grid">
+                <div class="form-group">
+                    <label>Master IP / Hostname</label>
+                    <input type="text" id="setup-worker-master-host" placeholder="192.168.1.10" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label>Port</label>
+                    <input type="text" id="setup-worker-master-port" value="9000" inputmode="numeric" autocomplete="off">
+                </div>
             </div>
             <div class="form-group">
                 <label>Enrollment Token <span class="label-hint">(from master's Settings → Workers)</span></label>
@@ -660,6 +676,10 @@
             <div class="form-group">
                 <label>Node Name</label>
                 <input type="text" id="setup-worker-name" placeholder="e.g. gpu-server" autocomplete="off">
+            </div>
+            <div class="worker-cf-choice" role="group" aria-label="Worker Cloudflare mode">
+                <button type="button" class="btn primary" id="setup-worker-use-cf-btn" onclick="setWorkerSkipCf('setup-worker', false)" aria-pressed="true">Use Cloudflare</button>
+                <button type="button" class="btn" id="setup-worker-local-only-btn" onclick="setWorkerSkipCf('setup-worker', true)" aria-pressed="false">Local Only</button>
             </div>
             <div id="setup-worker-progress" style="display:none;margin:12px 0">
                 <div class="settings-desc" id="setup-worker-progress-text" style="color:var(--accent);margin-bottom:8px"></div>
@@ -670,7 +690,7 @@
             <div class="form-error" id="setup-worker-error"></div>
             <div class="form-actions">
                 <button class="btn" id="setup-worker-back-btn" onclick="showSetupChoose()">Back</button>
-                <button class="btn primary" onclick="submitSetupWorker()">Register</button>
+                <button class="btn primary" id="setup-worker-submit-btn" onclick="submitSetupWorker()">Register</button>
             </div>
         </div>
     </div>

@@ -591,18 +591,21 @@ def normalize_worker_address(address: str) -> str:
     return f"{parsed.scheme}://{host_part}:{port}"
 
 
-def add_worker(name: str, address: str, api_key: str) -> str:
+def add_worker(name: str, address: str, api_key: str, cf_opt_out: bool = False) -> str:
     """Add a worker to the master's config. Returns the assigned node_id."""
     config = get_node_config()
     if not config or config.get("role") != "master":
         raise ValueError("Only a master node can add workers")
     normalized_address = assert_worker_address_allowed(address, config=config)
     node_id = generate_node_id()
-    config.setdefault("workers", {})[node_id] = {
+    worker = {
         "name": name,
         "address": normalized_address,
         "api_key": api_key,
     }
+    if cf_opt_out:
+        worker["cf_opt_out"] = True
+    config.setdefault("workers", {})[node_id] = worker
     save_node_config(config)
     return node_id
 
@@ -752,6 +755,7 @@ def set_worker_tunnel_id(node_id: str, tunnel_id: str):
     if not worker:
         raise ValueError(f"Worker '{node_id}' not found")
     worker["tunnel_id"] = tunnel_id
+    worker.pop("cf_opt_out", None)
     save_node_config(config)
 
 
@@ -767,6 +771,7 @@ def set_worker_tunnel_id_for_api_key(api_key: str, tunnel_id: str):
     for worker in config.get("workers", {}).values():
         if worker.get("api_key") == api_key:
             worker["tunnel_id"] = tunnel_id
+            worker.pop("cf_opt_out", None)
             save_node_config(config)
             return
     raise ValueError("Unknown API key")

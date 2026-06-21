@@ -508,8 +508,13 @@ def test_install_script_no_longer_exposes_install_cf_flag():
 
     body = resp.body.decode()
     assert "INSTALL_CF" not in body
-    assert "Master has no Cloudflare config; enrolling as local-only worker." in body
-    assert "Master has Cloudflare configured; creating a local worker tunnel..." in body
+    assert "--local-only" in body
+    assert "INFRAMATIK_SKIP_CF" in body
+    assert "INFRAMATIK_INSTALL_SOURCE_MASTER_URL" in body
+    assert 'MASTER_URL="http://example.com:9000"' in body
+    assert 'http://*|https://*' in body
+    assert '!= "http://example.com:9000"' not in body
+    assert "installer_rich.py" in body
 
 
 def test_install_package_requires_master_role():

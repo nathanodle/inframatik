@@ -601,6 +601,24 @@ def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():
     assert "worker-enroll" in app_js
     assert "/api/cf/workers/setup" in app_js
     assert "Sync Cloudflare to Workers" in app_js
+    assert "skip_cf" in app_js
+    assert "Use Cloudflare" in index_html
+    assert "Local Only" in index_html
+    assert "setup-worker-master-host" in index_html
+    assert "setup-worker-master-port" in index_html
+    assert "init-worker-master-host" in index_html
+    assert "init-worker-master-port" in index_html
+    assert 'value="9000"' in index_html
+    assert 'id="setup-worker-master"' not in index_html
+    assert 'id="init-worker-master"' not in index_html
+    assert "http://192.168.1.10:9000" not in index_html
+    assert "installSourceMasterUrl" in app_js
+    assert "install_source_master_url" in app_js
+    assert "splitMasterUrlForFields" in app_js
+    assert "getWorkerMasterUrl" in app_js
+    assert "defaultWorkerNodeName" in app_js
+    assert "setup-worker-name').value = defaultWorkerNodeName()" in app_js
+    assert "init-worker-name').value = defaultWorkerNodeName()" in app_js
     assert "setup-worker-progress" in index_html
     assert "init-worker-progress" in index_html
     assert "worker-cf-sync-progress" in index_html

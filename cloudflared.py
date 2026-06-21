@@ -6,6 +6,7 @@ import platform
 import re
 import tempfile
 from pathlib import Path
+from typing import Awaitable, Callable
 
 logger = logging.getLogger("inframatik.cloudflared")
 
@@ -19,6 +20,7 @@ DEFAULT_CLOUDFLARED_VERSION = os.getenv("INFRAMATIK_CLOUDFLARED_VERSION", "2026.
 _VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 GITHUB_RELEASE_API_URL = "https://api.github.com/repos/cloudflare/cloudflared/releases/tags/{version}"
 MAX_GITHUB_RELEASE_JSON_BYTES = 2 * 1024 * 1024
+ProgressCallback = Callable[[str, str], Awaitable[None] | None]
 
 
 def _allow_unsigned_cloudflared_update() -> bool:
@@ -97,6 +99,14 @@ async def _run_checked(cmd: list[str], error_prefix: str):
     if code != 0:
         detail = output or f"exit code {code}"
         raise RuntimeError(f"{error_prefix}: {detail}")
+
+
+async def _emit_progress(progress: ProgressCallback | None, step: str, message: str):
+    if progress is None:
+        return
+    result = progress(step, message)
+    if hasattr(result, "__await__"):
+        await result
 
 
 def _cloudflared_arch() -> str:
@@ -253,28 +263,32 @@ def _write_cloudflared_unit():
     _secure_write_text(CLOUDFLARED_UNIT_PATH, unit_content, mode=0o644)
 
 
-async def ensure_cloudflared_binary():
+async def ensure_cloudflared_binary(progress: ProgressCallback | None = None):
     """Download and install cloudflared if not already present."""
     if CLOUDFLARED_BINARY_PATH.exists() and os.access(CLOUDFLARED_BINARY_PATH, os.X_OK):
+        await _emit_progress(progress, "cloudflared_present", "cloudflared is already installed")
         return  # Already installed
-    await update_cloudflared_user_binary()
+    await update_cloudflared_user_binary(progress=progress)
 
 
-async def setup_cloudflared_user_service(token: str):
+async def setup_cloudflared_user_service(token: str, progress: ProgressCallback | None = None):
     token = (token or "").strip()
     if not token:
         raise ValueError("Tunnel token is required")
 
     # Auto-install cloudflared if missing
-    await ensure_cloudflared_binary()
+    await ensure_cloudflared_binary(progress=progress)
 
+    await _emit_progress(progress, "writing_config", "Writing cloudflared service configuration")
     _secure_write_text(CLOUDFLARED_TOKEN_PATH, token, mode=0o600)
     _write_cloudflared_unit()
 
+    await _emit_progress(progress, "reloading_systemd", "Reloading user systemd daemon")
     await _run_checked(
         ["systemctl", "--user", "daemon-reload"],
         "Failed to reload user systemd daemon",
     )
+    await _emit_progress(progress, "starting_service", "Starting cloudflared user service")
     await _run_checked(
         ["systemctl", "--user", "enable", "--now", CLOUDFLARED_UNIT_NAME],
         "Failed to enable/start cloudflared user service",
@@ -373,18 +387,23 @@ async def restart_cloudflared_user_service() -> dict:
     return await get_cloudflared_user_service_status()
 
 
-async def update_cloudflared_user_binary(version: str | None = None) -> dict:
+async def update_cloudflared_user_binary(
+    version: str | None = None,
+    progress: ProgressCallback | None = None,
+) -> dict:
     target_version = _normalize_version(version)
     arch = _cloudflared_arch()
     base_url = f"https://github.com/cloudflare/cloudflared/releases/download/{target_version}"
     binary_url = f"{base_url}/cloudflared-linux-{arch}"
 
+    await _emit_progress(progress, "downloading_binary", f"Downloading cloudflared {target_version} for {arch}")
     binary_data = await _download_bytes(binary_url)
     actual_sha = hashlib.sha256(binary_data).hexdigest()
 
     allow_unsigned = _allow_unsigned_cloudflared_update()
     # Verify checksum/digest; only allow missing verification data with explicit opt-in.
     try:
+        await _emit_progress(progress, "verifying_checksum", "Verifying cloudflared checksum")
         expected_sha = await _download_expected_sha(target_version, arch)
         if actual_sha != expected_sha:
             raise RuntimeError("cloudflared checksum verification failed")
@@ -404,10 +423,12 @@ async def update_cloudflared_user_binary(version: str | None = None) -> dict:
         )
 
     previous_version = await get_cloudflared_binary_version()
+    await _emit_progress(progress, "installing_binary", "Installing cloudflared binary")
     _secure_write_bytes(CLOUDFLARED_BINARY_PATH, binary_data, mode=0o755)
 
     restarted = False
     if CLOUDFLARED_UNIT_PATH.exists():
+        await _emit_progress(progress, "restarting_service", "Restarting cloudflared service")
         await _run_checked(
             ["systemctl", "--user", "restart", CLOUDFLARED_UNIT_NAME],
             "Failed to restart cloudflared user service after update",

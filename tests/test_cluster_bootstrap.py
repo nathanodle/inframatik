@@ -80,6 +80,16 @@ def test_node_info_handles_password_only_bootstrap_config():
 
 
 @_run_with_temp_config
+def test_node_info_exposes_install_source_master_url_before_role():
+    if cluster_routes is None:
+        return
+    node_config.save_node_config({"install_source_master_url": "http://192.168.166.186:9000/"})
+    info = asyncio.run(cluster_routes.node_info())
+    assert info["role"] == "unconfigured"
+    assert info["install_source_master_url"] == "http://192.168.166.186:9000"
+
+
+@_run_with_temp_config
 def test_config_get_handles_password_only_bootstrap_config():
     if cluster_routes is None:
         return
@@ -144,6 +154,7 @@ def test_enroll_worker_calls_master_server_side_and_saves_config():
         "token": "enroll-token",
         "node_name": "worker-a",
         "address": "http://10.0.0.5:9000",
+        "skip_cf": False,
     }
     assert result["role"] == "worker"
     assert result["master_url"] == "http://192.168.166.186:9000"
@@ -387,6 +398,32 @@ def test_master_enrollment_response_omits_cf_config_when_local_only():
 
     assert result["status"] == "enrolled"
     assert "cf_config" not in result
+
+
+@_run_with_temp_config
+def test_master_enrollment_skip_cf_marks_worker_opt_out():
+    if cluster_routes is None:
+        return
+    node_config.init_as_master("master-a")
+    node_config.save_cf_config("cf-token", "acct-1", "zone-1")
+    token = node_config.create_enrollment_token()
+
+    result = asyncio.run(
+        cluster_routes.enroll_worker(
+            cluster_routes.EnrollBody(
+                token=token,
+                node_name="worker-a",
+                address="http://10.0.0.5:9000",
+                skip_cf=True,
+            )
+        )
+    )
+
+    cfg = node_config.get_node_config()
+    worker = next(iter(cfg["workers"].values()))
+    assert result["status"] == "enrolled"
+    assert "cf_config" not in result
+    assert worker["cf_opt_out"] is True
 
 
 @_run_with_temp_config

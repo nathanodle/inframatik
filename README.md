@@ -50,7 +50,7 @@ FastAPI backend (Python)  ←→  Vanilla JS frontend
 |------|-------------|
 | **Standalone** | Single machine. System monitoring + service management. No clustering. |
 | **Master** | Central node. Monitors workers via sidebar, proxies API calls, deploys updates, manages CF tunnels. |
-| **Worker** | Connects to a master via heartbeats. Receives updates and, when the master has Cloudflare configured, creates its own local CF tunnel during enrollment. |
+| **Worker** | Connects to a master via heartbeats. Receives updates and, unless enrolled local-only, creates its own local CF tunnel when the master has Cloudflare configured. |
 
 ## Multi-Node Setup
 
@@ -60,13 +60,20 @@ FastAPI backend (Python)  ←→  Vanilla JS frontend
 2. On the new machine:
 
 ```bash
+# Interactive: paste the token when prompted, or press Enter to skip enrollment
+curl -fsSL http://MASTER_IP:9000/api/install.sh | bash
+
+# Non-interactive
 curl -fsSL http://MASTER_IP:9000/api/install.sh | bash -s -- --enroll TOKEN
 
 # With a custom name
 curl -fsSL http://MASTER_IP:9000/api/install.sh | bash -s -- --enroll TOKEN --name gpu-server
+
+# Enroll as local-only even if the master has Cloudflare configured
+curl -fsSL http://MASTER_IP:9000/api/install.sh | bash -s -- --enroll TOKEN --local-only
 ```
 
-The installer prompts for an admin password, sets up a venv, creates a systemd service, installs the `inframatik` CLI, and enrolls with the master automatically. Enrollment tokens are single-use. If the master already has Cloudflare configured, the worker creates its own tunnel and installs `cloudflared` automatically. If the master is local-only, Cloudflare is skipped and can be synced to workers later from master Settings.
+The installer prompts for an admin password, sets up a venv, switches to a Rich-powered install flow, creates a systemd service, and installs the `inframatik` CLI. If no `--enroll` token is provided, it asks for an enrollment token and worker name; the worker name defaults to the system hostname, and pressing Enter at the token prompt skips enrollment so you can finish setup in the web UI. Enrollment tokens are single-use. If the master already has Cloudflare configured, the worker creates its own tunnel and installs `cloudflared` automatically unless local-only mode is selected. If the master is local-only, Cloudflare is skipped and can be synced to workers later from master Settings.
 
 ### Option B: Manual
 

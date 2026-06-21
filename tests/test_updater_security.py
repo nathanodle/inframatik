@@ -149,6 +149,7 @@ def test_build_package_includes_expected_and_excludes_sensitive(tmp_app: Path):
     (tmp_app / "main.py").write_text("print('main')\n")
     (tmp_app / "notes.txt").write_text("ignore me\n")
     (tmp_app / "install.sh").write_text("#!/bin/sh\n")
+    (tmp_app / "uninstall").write_text("#!/bin/sh\n")
     (tmp_app / "requirements.txt").write_text("fastapi\n")
     (tmp_app / "requirements.lock").write_text("fastapi==x\n")
     (tmp_app / "static").mkdir()
@@ -173,6 +174,7 @@ def test_build_package_includes_expected_and_excludes_sensitive(tmp_app: Path):
 
     assert "main.py" in names
     assert "install.sh" in names
+    assert "uninstall" in names
     assert "requirements.txt" in names
     assert "requirements.lock" in names
     assert "static/app.js" in names

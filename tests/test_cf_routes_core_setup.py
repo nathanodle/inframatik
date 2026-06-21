@@ -670,6 +670,7 @@ def test_api_setup_missing_worker_tunnels_sets_up_only_missing_workers():
                     "workers": {
                         "w1": {"name": "worker-1"},
                         "w2": {"name": "worker-2", "tunnel_id": "existing"},
+                        "w3": {"name": "worker-3", "cf_opt_out": True},
                     },
                 },
             ),

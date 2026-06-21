@@ -520,6 +520,28 @@ body {
     border-color: #2563eb;
 }
 
+.btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.worker-cf-choice {
+    display: inline-flex;
+    gap: 6px;
+    margin: 4px 0 12px;
+    padding: 4px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.worker-cf-choice .btn {
+    display: flex;
+    align-items: center;
+    min-width: 112px;
+    justify-content: center;
+}
+
 .btn.danger {
     color: var(--red);
 }
@@ -577,6 +599,20 @@ body {
 
 .form-group {
     margin-bottom: 14px;
+}
+
+.master-address-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 96px;
+    gap: 10px;
+}
+
+.master-address-grid .form-group {
+    min-width: 0;
+}
+
+.master-address-grid input[id$="-port"] {
+    text-align: center;
 }
 
 .form-group label {

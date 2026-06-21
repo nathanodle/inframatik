@@ -244,9 +244,9 @@ def build_package() -> bytes:
             # Skip excluded dirs/files
             if any(part in EXCLUDE for part in rel.parts):
                 continue
-            # Only include .py files, static/*, dependency files, and install.sh
+            # Only include app code, static assets, dependency files, and install/uninstall scripts.
             if (rel.suffix == ".py" or rel.parts[0] == "static"
-                    or rel.name in ("requirements.txt", "requirements.lock", "install.sh")):
+                    or rel.name in ("requirements.txt", "requirements.lock", "install.sh", "uninstall")):
                 tar.add(path, arcname=str(rel))
         version_payload = json.dumps(
             _package_version_metadata(),

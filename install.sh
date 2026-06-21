@@ -8,319 +8,205 @@ CONFIG_DIR="$HOME/.config/inframatik"
 SERVICE_NAME="inframatik"
 ENROLL_TOKEN=""
 NODE_NAME=""
-ADMIN_PW="${INFRAMATIK_ADMIN_PASSWORD:-}"
+SKIP_CF="${INFRAMATIK_SKIP_CF:-}"
+INSTALL_SOURCE_MASTER_URL=""
 
-# Parse arguments
+case "$MASTER_URL" in
+    http://*|https://*) INSTALL_SOURCE_MASTER_URL="$MASTER_URL" ;;
+esac
+
+usage() {
+    echo "Usage: curl ... | bash -s -- [--enroll <token>] [--name <node-name>] [--local-only]"
+    echo "       curl ... | bash        # prompts for enrollment token, or Enter to skip"
+    echo ""
+    echo "Options:"
+    echo "  --enroll <token>   Enroll this machine as a worker"
+    echo "  --name <name>      Worker node name when enrolling (defaults to system hostname)"
+    echo "  --local-only       Skip worker Cloudflare setup even if master has Cloudflare"
+    echo "  --skip-cf          Alias for --local-only"
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --enroll)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --enroll requires a token"
+                exit 1
+            fi
             ENROLL_TOKEN="$2"
             shift 2
             ;;
         --name)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --name requires a value"
+                exit 1
+            fi
             NODE_NAME="$2"
             shift 2
+            ;;
+        --local-only|--skip-cf)
+            SKIP_CF=1
+            shift
             ;;
         --password)
             echo "ERROR: --password is no longer supported for security reasons."
             echo "Use interactive prompt input or INFRAMATIK_ADMIN_PASSWORD environment variable."
             exit 1
             ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: curl ... | bash -s -- [--enroll <token>] [--name <node-name>]"
+            usage
             exit 1
             ;;
     esac
 done
 
-echo "==> inframatik installer"
-echo "    Master: $MASTER_URL"
-echo ""
-
-# Validate and acknowledge env-provided admin password when used.
-if [ -n "$ADMIN_PW" ]; then
-    if [ ${#ADMIN_PW} -lt 8 ]; then
-        echo "ERROR: INFRAMATIK_ADMIN_PASSWORD must be at least 8 characters."
-        exit 1
-    fi
-    echo "==> Using admin password from INFRAMATIK_ADMIN_PASSWORD"
-fi
-
-# Prompt for admin password if not provided via env and terminal is interactive.
-if [ -z "$ADMIN_PW" ] && [ -t 0 ]; then
-    while true; do
-        read -sp "Set admin password (min 8 chars): " ADMIN_PW
-        echo
-        if [ ${#ADMIN_PW} -lt 8 ]; then
-            echo "    Password too short. Minimum 8 characters."
-            ADMIN_PW=""
-            continue
-        fi
-        read -sp "Confirm password: " ADMIN_PW_CONFIRM
-        echo
-        if [ "$ADMIN_PW" != "$ADMIN_PW_CONFIRM" ]; then
-            echo "    Passwords do not match."
-            ADMIN_PW=""
-            continue
-        fi
-        break
-    done
-fi
-
-# Check prerequisites
-for cmd in python3 curl sudo sha256sum openssl base64; do
-    if ! command -v "$cmd" &>/dev/null; then
+for cmd in python3 sudo openssl; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "ERROR: $cmd is required but not installed."
         exit 1
     fi
 done
 
-# Check for root — this script should run as a regular user with sudo access
 if [ "$(id -u)" -eq 0 ]; then
     echo "ERROR: Do not run this script as root."
     echo "Run as a regular user with sudo access instead."
     exit 1
 fi
 
-# Validate sudo access upfront (caches credentials for subsequent calls)
-if ! sudo -v 2>/dev/null; then
-    echo "ERROR: sudo access is required. Please ensure your user can run sudo."
-    exit 1
-fi
-
-# 1. Download and extract code
-echo "==> Downloading code package..."
+echo "==> Preparing Python environment..."
 mkdir -p "$INSTALL_DIR"
-TMP_PKG="$(mktemp)"
-TMP_HEADERS="$(mktemp)"
-TMP_PUB="$(mktemp)"
-TMP_SIG="$(mktemp)"
-
-if ! curl -fsSL -D "$TMP_HEADERS" -o "$TMP_PKG" "$MASTER_URL/api/install/package"; then
-    echo "ERROR: Failed to download install package."
-    rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
-    exit 1
-fi
-
-PKG_SIG="$(awk -F': ' 'tolower($1) == "x-inframatik-package-signature" {print $2}' "$TMP_HEADERS" | tr -d '\r' | tail -n 1)"
-if [ -z "$PKG_SIG" ]; then
-    echo "ERROR: Missing package signature header from master."
-    rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
-    exit 1
-fi
-
-if ! printf '%s' "$PACKAGE_PUBLIC_KEY_B64" | base64 -d > "$TMP_PUB"; then
-    echo "ERROR: Invalid embedded signing public key."
-    rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
-    exit 1
-fi
-if ! printf '%s' "$PKG_SIG" | base64 -d > "$TMP_SIG"; then
-    echo "ERROR: Invalid package signature encoding."
-    rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
-    exit 1
-fi
-
-if ! openssl pkeyutl -verify -rawin -pubin -inkey "$TMP_PUB" -sigfile "$TMP_SIG" -in "$TMP_PKG" >/dev/null 2>&1; then
-    echo "ERROR: Package signature verification failed."
-    rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
-    exit 1
-fi
-
-tar xzf "$TMP_PKG" -C "$INSTALL_DIR"
-rm -f "$TMP_PKG" "$TMP_HEADERS" "$TMP_PUB" "$TMP_SIG"
-echo "    Extracted to $INSTALL_DIR"
-
-# 2. Create Python venv and install deps
-echo "==> Setting up Python environment..."
 if [ ! -d "$INSTALL_DIR/venv" ]; then
     python3 -m venv "$INSTALL_DIR/venv"
 fi
-REQ_LOCK_FILE="$INSTALL_DIR/requirements.lock"
-REQ_FILE="$INSTALL_DIR/requirements.txt"
-ALLOW_UNHASHED_DEPS="${INFRAMATIK_ALLOW_UNHASHED_DEPS:-}"
+"$INSTALL_DIR/venv/bin/python" -m pip install -q --disable-pip-version-check "rich==13.9.4"
 
-if [ -f "$REQ_LOCK_FILE" ]; then
-    if "$INSTALL_DIR/venv/bin/pip" install -q --require-hashes -r "$REQ_LOCK_FILE"; then
-        echo "    Installed hash-pinned dependencies from requirements.lock"
-    else
-        if [ "$ALLOW_UNHASHED_DEPS" = "1" ]; then
-            echo "WARNING: Hash-locked install failed; falling back to requirements.txt because INFRAMATIK_ALLOW_UNHASHED_DEPS=1."
-            "$INSTALL_DIR/venv/bin/pip" install -q -r "$REQ_FILE"
-        else
-            echo "ERROR: Hash-locked dependency install failed."
-            echo "If this host/platform cannot satisfy requirements.lock, set INFRAMATIK_ALLOW_UNHASHED_DEPS=1 to bypass (not recommended)."
-            exit 1
-        fi
-    fi
-else
-    if [ "$ALLOW_UNHASHED_DEPS" = "1" ]; then
-        echo "WARNING: requirements.lock missing; falling back to requirements.txt because INFRAMATIK_ALLOW_UNHASHED_DEPS=1."
-        "$INSTALL_DIR/venv/bin/pip" install -q -r "$REQ_FILE"
-    else
-        echo "ERROR: requirements.lock is required for secure hash-pinned installs."
-        echo "Set INFRAMATIK_ALLOW_UNHASHED_DEPS=1 to bypass (not recommended)."
-        exit 1
-    fi
-fi
-echo "    Dependencies installed"
+export INFRAMATIK_MASTER_URL="$MASTER_URL"
+export INFRAMATIK_PACKAGE_PUBLIC_KEY_B64="$PACKAGE_PUBLIC_KEY_B64"
+export INFRAMATIK_INSTALL_DIR="$INSTALL_DIR"
+export INFRAMATIK_CONFIG_DIR="$CONFIG_DIR"
+export INFRAMATIK_SERVICE_NAME="$SERVICE_NAME"
+export INFRAMATIK_ENROLL_TOKEN="$ENROLL_TOKEN"
+export INFRAMATIK_NODE_NAME="$NODE_NAME"
+export INFRAMATIK_SKIP_CF="$SKIP_CF"
+export INFRAMATIK_INSTALL_SOURCE_MASTER_URL="$INSTALL_SOURCE_MASTER_URL"
 
-# 3. Create config directory
-mkdir -p "$CONFIG_DIR"
+"$INSTALL_DIR/venv/bin/python" - <<'PY'
+import base64
+import os
+import subprocess
+import tarfile
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
 
-CURRENT_USER=$(whoami)
+from rich.console import Console
+from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn, TransferSpeedColumn
 
-# 4. Add ports.env to .bashrc
-if ! grep -q 'inframatik/ports.env' "$HOME/.bashrc" 2>/dev/null; then
-    echo '' >> "$HOME/.bashrc"
-    echo '# inframatik service ports' >> "$HOME/.bashrc"
-    echo '[ -f ~/.config/inframatik/ports.env ] && source ~/.config/inframatik/ports.env' >> "$HOME/.bashrc"
-    echo "==> Added ports.env to .bashrc"
-fi
+console = Console()
+master_url = os.environ["INFRAMATIK_MASTER_URL"].rstrip("/")
+install_dir = Path(os.environ["INFRAMATIK_INSTALL_DIR"]).expanduser()
+package_public_key_b64 = os.environ["INFRAMATIK_PACKAGE_PUBLIC_KEY_B64"]
 
-# 5. Create systemd user service
-echo "==> Setting up systemd service..."
-mkdir -p "$HOME/.config/systemd/user"
-cat > "$HOME/.config/systemd/user/${SERVICE_NAME}.service" << SVC_EOF
-[Unit]
-Description=inframatik
-After=network-online.target
 
-[Service]
-Type=simple
-WorkingDirectory=${INSTALL_DIR}
-ExecStart=${INSTALL_DIR}/venv/bin/uvicorn main:app --host 0.0.0.0 --port 9000
-Restart=on-failure
-RestartSec=5s
+class InstallError(RuntimeError):
+    pass
 
-[Install]
-WantedBy=default.target
-SVC_EOF
 
-# 6. Enable linger so user services start at boot
-echo "==> Enabling linger for $CURRENT_USER..."
-sudo loginctl enable-linger "$CURRENT_USER"
+def download_package(url: str, destination: Path) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "inframatik-installer"})
+    try:
+        response = urllib.request.urlopen(request, timeout=60)
+    except urllib.error.URLError as e:
+        raise InstallError(f"Failed to download install package: {e}") from e
 
-# 7. Install CLI
-echo "==> Installing CLI..."
-chmod +x "$INSTALL_DIR/inframatik-cli.py"
-mkdir -p "$HOME/.local/bin"
-ln -sf "$INSTALL_DIR/inframatik-cli.py" "$HOME/.local/bin/inframatik"
-if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-    echo "    Added ~/.local/bin to PATH (open a new terminal to use 'inframatik' command)"
-fi
+    with response:
+        signature = response.headers.get("X-Inframatik-Package-Signature")
+        if not signature:
+            raise InstallError("Missing package signature header from master.")
 
-# 8. Enable and start the service
-systemctl --user daemon-reload
-systemctl --user enable "$SERVICE_NAME"
-systemctl --user restart "$SERVICE_NAME"
-echo "==> inframatik started on port 9000"
+        total_raw = response.headers.get("Content-Length")
+        total = int(total_raw) if total_raw and total_raw.isdigit() else None
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Downloading signed code package...", total=total)
+            with destination.open("wb") as f:
+                while True:
+                    chunk = response.read(1024 * 128)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    progress.update(task, advance=len(chunk))
+        return signature
 
-# 9. Set admin password
-if [ -n "$ADMIN_PW" ]; then
-    sleep 2
-    PW_BODY=$(python3 -c "import json,sys; print(json.dumps({'password': sys.argv[1]}))" "$ADMIN_PW")
-    PW_RESULT_FILE="$(mktemp)"
-    if ! PW_HTTP_CODE=$(curl -sS -o "$PW_RESULT_FILE" -w "%{http_code}" -X POST "http://127.0.0.1:9000/api/auth/set-password" \
-        -H "Content-Type: application/json" \
-        -d "$PW_BODY"); then
-        echo "ERROR: Failed to call local password setup endpoint."
-        rm -f "$PW_RESULT_FILE"
-        exit 1
-    fi
-    if [ "$PW_HTTP_CODE" != "200" ]; then
-        PW_DETAIL=$(python3 - "$PW_RESULT_FILE" <<'PY'
-import json
-import pathlib
-import sys
-text = pathlib.Path(sys.argv[1]).read_text()
+
+def verify_package(package_path: Path, signature_b64: str, tmpdir: Path):
+    pub_path = tmpdir / "package.pub"
+    sig_path = tmpdir / "package.sig"
+    try:
+        pub_path.write_bytes(base64.b64decode(package_public_key_b64, validate=True))
+        sig_path.write_bytes(base64.b64decode(signature_b64, validate=True))
+    except Exception as e:
+        raise InstallError("Invalid package signature encoding.") from e
+
+    result = subprocess.run(
+        [
+            "openssl",
+            "pkeyutl",
+            "-verify",
+            "-rawin",
+            "-pubin",
+            "-inkey",
+            str(pub_path),
+            "-sigfile",
+            str(sig_path),
+            "-in",
+            str(package_path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise InstallError("Package signature verification failed.")
+
+
+def extract_package(package_path: Path):
+    install_dir.mkdir(parents=True, exist_ok=True)
+    root = install_dir.resolve()
+    with tarfile.open(package_path, "r:gz") as tar:
+        for member in tar.getmembers():
+            target = (install_dir / member.name).resolve()
+            if not target.is_relative_to(root):
+                raise InstallError(f"Unsafe path in install package: {member.name}")
+        tar.extractall(install_dir)
+
+
 try:
-    data = json.loads(text)
-except Exception:
-    print(text.strip() or "unknown error")
-    raise SystemExit(0)
-detail = data.get("detail") or data.get("error") or text
-print(str(detail).strip() or "unknown error")
+    console.rule("[bold]inframatik code install[/]")
+    console.print(f"Master: [bold]{master_url}[/]")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        package_path = tmpdir / "inframatik-package.tgz"
+        signature = download_package(f"{master_url}/api/install/package", package_path)
+        with console.status("Verifying package signature..."):
+            verify_package(package_path, signature, tmpdir)
+        with console.status(f"Extracting package to {install_dir}..."):
+            extract_package(package_path)
+    console.print("[green]Code package installed.[/]")
+except InstallError as e:
+    console.print(f"[red]ERROR:[/] {e}")
+    raise SystemExit(1)
 PY
-)
-        echo "ERROR: Failed to set admin password (HTTP $PW_HTTP_CODE): $PW_DETAIL"
-        rm -f "$PW_RESULT_FILE"
-        exit 1
-    fi
-    PW_STATUS=$(python3 - "$PW_RESULT_FILE" <<'PY'
-import json
-import pathlib
-import sys
-text = pathlib.Path(sys.argv[1]).read_text()
-try:
-    data = json.loads(text)
-except Exception:
-    print("")
-    raise SystemExit(0)
-print(data.get("status", ""))
-PY
-)
-    rm -f "$PW_RESULT_FILE"
-    if [ "$PW_STATUS" != "password_set" ]; then
-        echo "ERROR: Password setup endpoint returned unexpected response."
-        exit 1
-    fi
-    echo "==> Admin password set"
-fi
 
-# 10. Optional: enroll as worker with master
-if [ -n "$ENROLL_TOKEN" ]; then
-    [ -z "$NODE_NAME" ] && NODE_NAME=$(hostname -s)
-    echo "==> Enrolling with master as: $NODE_NAME"
-    sleep 3  # Give the service a moment to start
-
-    # Determine our routable IP
-    MASTER_HOST=$(echo "$MASTER_URL" | sed 's|https\?://||;s|:.*||;s|/.*||')
-    LOCAL_IP=$(python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.connect(('$MASTER_HOST',1)); print(s.getsockname()[0]); s.close()" 2>/dev/null || hostname -I | awk '{print $1}')
-    WORKER_ADDRESS="http://${LOCAL_IP}:9000"
-
-    # Call master's enrollment endpoint
-    ENROLL_BODY=$(python3 -c "import json,sys; print(json.dumps({'token': sys.argv[1], 'node_name': sys.argv[2], 'address': sys.argv[3]}))" "$ENROLL_TOKEN" "$NODE_NAME" "$WORKER_ADDRESS")
-    RESULT=$(curl -sS -X POST "$MASTER_URL/api/nodes/enroll" \
-        -H "Content-Type: application/json" \
-        -d "$ENROLL_BODY")
-
-    API_KEY=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || echo "")
-    SIGNING_PUBLIC_KEY=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('signing_public_key',''))" 2>/dev/null || echo "")
-    HAS_CF_CONFIG=$(echo "$RESULT" | python3 -c "import sys,json; data=json.load(sys.stdin); print('1' if isinstance(data.get('cf_config'), dict) else '')" 2>/dev/null || echo "")
-
-    if [ -n "$API_KEY" ]; then
-        if [ -n "$HAS_CF_CONFIG" ]; then
-            echo "==> Master has Cloudflare configured; creating a local worker tunnel..."
-        else
-            echo "==> Master has no Cloudflare config; enrolling as local-only worker."
-            echo "    If Cloudflare is configured later, sync worker tunnels from master Settings."
-        fi
-        # Configure as worker locally with credentials from master
-        CONFIG_BODY=$(RESULT_JSON="$RESULT" python3 -c "import json,os,sys; body={'name': sys.argv[1], 'master_url': sys.argv[2], 'api_key': sys.argv[3], 'update_public_key': sys.argv[4]}; data=json.loads(os.environ.get('RESULT_JSON','{}')); cf=data.get('cf_config') if isinstance(data, dict) else None; body.update({'cf_config': cf} if cf else {}); print(json.dumps(body))" "$NODE_NAME" "$MASTER_URL" "$API_KEY" "$SIGNING_PUBLIC_KEY")
-        INIT_RESULT=$(curl -sS -X POST "http://127.0.0.1:9000/api/config/init-worker" \
-            -H "Content-Type: application/json" \
-            -d "$CONFIG_BODY")
-        CF_TUNNEL_ERROR=$(echo "$INIT_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cf_tunnel_error',''))" 2>/dev/null || echo "")
-
-        # Restart so heartbeat loop picks up worker config
-        systemctl --user restart "$SERVICE_NAME"
-        echo ""
-        echo "============================================"
-        echo "  Enrolled: $NODE_NAME"
-        echo "  Master:   $MASTER_URL"
-        echo "  Address:  $WORKER_ADDRESS"
-        echo "  Connected automatically — no manual setup needed."
-        if [ -n "$CF_TUNNEL_ERROR" ]; then
-            echo "  Cloudflare tunnel setup warning: $CF_TUNNEL_ERROR"
-        fi
-        echo "============================================"
-    else
-        echo "    Enrollment failed: $RESULT"
-        echo "    Check that the enrollment token is valid."
-    fi
-fi
-
-echo ""
-echo "==> Done! inframatik is running at http://$(hostname -I | awk '{print $1}'):9000"
+"$INSTALL_DIR/venv/bin/python" "$INSTALL_DIR/installer_rich.py"

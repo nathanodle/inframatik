@@ -253,12 +253,18 @@ async def node_info():
     config = get_node_config()
     role = _configured_role(config)
     if not role:
-        return {
+        result = {
             "role": "unconfigured",
             "node_name": None,
             "node_id": None,
             "machine_hostname": machine_hostname or None,
         }
+        install_source = (config or {}).get("install_source_master_url") if isinstance(config, dict) else None
+        if isinstance(install_source, str):
+            parsed = urlparse(install_source)
+            if parsed.scheme in ("http", "https") and parsed.netloc:
+                result["install_source_master_url"] = install_source.rstrip("/")
+        return result
     return {
         "role": role,
         "node_name": config.get("node_name"),
@@ -315,12 +321,14 @@ class InitWorkerBody(BaseModel):
     api_key: Optional[str] = None
     update_public_key: Optional[str] = None
     cf_config: Optional[dict] = None
+    skip_cf: bool = False
 
 
 class EnrollWorkerBody(BaseModel):
     name: str
     master_url: str
     token: str
+    skip_cf: bool = False
 
 
 class WorkerTunnelBody(BaseModel):
@@ -463,7 +471,14 @@ async def _configure_enrolled_worker_cloudflare(
     node_name: str,
     master_url: str,
     api_key: str,
+    skip_cf: bool = False,
 ) -> tuple[Optional[dict], Optional[str]]:
+    if skip_cf:
+        await _send_worker_enroll_progress(
+            "skipping_cloudflare",
+            "Local-only worker selected; skipping Cloudflare tunnel setup.",
+        )
+        return None, None
     if not _save_enrolled_cf_config(cf_config):
         await _send_worker_enroll_progress(
             "skipping_cloudflare",
@@ -502,6 +517,7 @@ async def config_init_worker(body: InitWorkerBody):
         new_config["node_name"],
         new_config["master_url"],
         new_config["api_key"],
+        skip_cf=body.skip_cf,
     )
     result = {
         "node_id": new_config["node_id"],
@@ -541,6 +557,7 @@ async def config_enroll_worker(body: EnrollWorkerBody, request: Request):
                     "token": token,
                     "node_name": body.name,
                     "address": worker_address,
+                    "skip_cf": body.skip_cf,
                 },
             )
             try:
@@ -586,6 +603,7 @@ async def config_enroll_worker(body: EnrollWorkerBody, request: Request):
         new_config["node_name"],
         new_config["master_url"],
         new_config["api_key"],
+        skip_cf=body.skip_cf,
     )
     result = {
         "node_id": new_config["node_id"],
@@ -1007,6 +1025,7 @@ class EnrollBody(BaseModel):
     token: str
     node_name: str
     address: str
+    skip_cf: bool = False
 
 
 @cluster_router.post("/api/nodes/enroll")
@@ -1030,7 +1049,7 @@ async def enroll_worker(body: EnrollBody):
 
     # Store worker in master config
     try:
-        add_worker(body.node_name, normalized_address, worker_api_key)
+        add_worker(body.node_name, normalized_address, worker_api_key, cf_opt_out=body.skip_cf)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -1040,7 +1059,7 @@ async def enroll_worker(body: EnrollBody):
         "signing_public_key": signing_public_key,
     }
     cf_config = _master_cf_config_for_enrollment(config)
-    if cf_config:
+    if cf_config and not body.skip_cf:
         result["cf_config"] = cf_config
     return result
 

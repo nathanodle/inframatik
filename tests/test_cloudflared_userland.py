@@ -83,7 +83,7 @@ def test_setup_cloudflared_user_service_writes_files_and_reloads_systemd(_tmp_ho
 def test_setup_cloudflared_user_service_auto_installs_missing_binary(_tmp_home: Path):
     calls = []
 
-    async def fake_ensure_binary():
+    async def fake_ensure_binary(progress=None):
         calls.append("ensure")
         cloudflared.CLOUDFLARED_BINARY_PATH.parent.mkdir(parents=True, exist_ok=True)
         cloudflared.CLOUDFLARED_BINARY_PATH.write_text("#!/bin/sh\nexit 0\n")

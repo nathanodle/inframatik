@@ -158,6 +158,24 @@ def test_add_worker_persists_normalized_address():
 
 
 @_run_with_temp_config
+def test_worker_cf_opt_out_persists_until_tunnel_is_set():
+    node_config.init_as_master("master")
+    node_id = node_config.add_worker(
+        "worker-a",
+        "http://worker.local:9000",
+        "sdk_test",
+        cf_opt_out=True,
+    )
+    cfg = node_config.get_node_config()
+    assert cfg["workers"][node_id]["cf_opt_out"] is True
+
+    node_config.set_worker_tunnel_id(node_id, "tid-1")
+    cfg = node_config.get_node_config()
+    assert cfg["workers"][node_id]["tunnel_id"] == "tid-1"
+    assert "cf_opt_out" not in cfg["workers"][node_id]
+
+
+@_run_with_temp_config
 @_with_allowlist_required(False)
 def test_worker_allowlist_optional_mode_allows_when_empty():
     node_config.init_as_master("master")
