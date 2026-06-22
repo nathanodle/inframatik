@@ -1533,6 +1533,8 @@ def test_static_inference_model_ui_assets_present():
     assert "renderCommandEnv" in app_js
     assert "cancelInferenceOperation" in app_js
     assert "surfaceActiveInferenceOperation" in app_js
+    assert "watchInferenceOperation" not in app_js
+    assert "inferenceOperationWatchers" not in app_js
     assert "runtime_status" in app_js
     assert "model_job" in app_js
     assert "handleModelJobEvent" in app_js

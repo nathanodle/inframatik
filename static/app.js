@@ -88,7 +88,6 @@ let inferenceOperationsData = [];
 let inferenceSystemData = null;
 let pendingInferenceProfileActions = new Map();
 let pendingInferenceInstanceActions = new Map();
-let inferenceOperationWatchers = new Set();
 let inferenceFailureLogFetches = new Set();
 let profileDetailCache = new Map();
 let profileDetailModes = new Map();
@@ -3295,9 +3294,6 @@ async function surfaceActiveInferenceOperation(error, nodeId = selectedNodeId) {
         const operation = await api('GET', nodePathFor(nodeId, `/api/inference/operations/${encodeURIComponent(activeId)}`));
         mergeInferenceOperation(operation);
         setInferenceError(`${detail.message || 'An inference operation is already active.'} ${operation.kind || detail.kind || ''} ${operation.current_step || operation.state || ''}`.trim());
-        if (!shouldUseInferenceOperationWs(nodeId)) {
-            watchInferenceOperation(operation.id, nodeId);
-        }
         return true;
     } catch (_ignored) {
         return false;
@@ -3316,9 +3312,6 @@ async function runProfileAction(profileId, action, button) {
         const operation = await api('POST', nodePathFor(nodeId, `/api/inference/profiles/${encodeURIComponent(profileId)}/${action}`));
         mergeInferenceOperation(operation);
         setInferenceStatus(`${profileActionLabel(action)} operation queued for ${profileId}.`);
-        if (!shouldUseInferenceOperationWs(nodeId)) {
-            watchInferenceOperation(operation.id, nodeId);
-        }
     } catch (e) {
         pendingInferenceProfileActions.delete(profileId);
         if (button) button.disabled = false;
@@ -3344,9 +3337,6 @@ async function runInstanceAction(profileId, instanceIndex, action, button) {
         );
         mergeInferenceOperation(operation);
         setInferenceStatus(`${profileActionLabel(action)} operation queued for ${profileId}[${instanceIndex}].`);
-        if (!shouldUseInferenceOperationWs(nodeId)) {
-            watchInferenceOperation(operation.id, nodeId);
-        }
     } catch (e) {
         pendingInferenceInstanceActions.delete(key);
         if (button) button.disabled = false;
@@ -3370,33 +3360,6 @@ async function cancelInferenceOperation(operationId) {
     } catch (e) {
         setInferenceError(e.message);
     }
-}
-
-async function watchInferenceOperation(operationId, nodeId = selectedNodeId) {
-    if (!operationId) return null;
-    if (inferenceOperationWatchers.has(operationId)) return null;
-    inferenceOperationWatchers.add(operationId);
-    for (let i = 0; i < 30; i++) {
-        try {
-            const op = await api('GET', nodePathFor(nodeId, `/api/inference/operations/${encodeURIComponent(operationId)}`));
-            mergeInferenceOperation(op);
-            if (!ACTIVE_INFERENCE_OPERATION_STATES.has(op.state)) {
-                inferenceOperationWatchers.delete(operationId);
-                if (currentAppView === 'inference' && nodeId === selectedNodeId) {
-                    await refreshInferenceProfiles();
-                    if (op.profile_id && profileDetailModes.get(op.profile_id) === 'details') {
-                        await loadProfileDetails(op.profile_id);
-                    }
-                }
-                return op;
-            }
-        } catch (e) {
-            setInferenceError(e.message);
-        }
-        await new Promise(resolve => setTimeout(resolve, 1200));
-    }
-    inferenceOperationWatchers.delete(operationId);
-    return null;
 }
 
 async function loadProfileLogs(profileId, instanceIndex = null) {
