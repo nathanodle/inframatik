@@ -450,16 +450,25 @@ def test_proxy_inference_overview_forwards_include_system_flag():
         default_result = asyncio.run(cluster_routes.proxy_inference_overview("node-1"))
         light_result = asyncio.run(cluster_routes.proxy_inference_overview("node-1", include_system=False))
         detail_result = asyncio.run(cluster_routes.proxy_inference_profile_detail("node-1", "qwen"))
+        launcher_env_result = asyncio.run(
+            cluster_routes.proxy_merge_inference_launcher_env(
+                "node-1",
+                "vllm-main",
+                {"env": {"LD_LIBRARY_PATH": "/opt/cuda/lib"}},
+            )
+        )
     finally:
         cluster_routes.proxy_to_node = original_proxy
 
     assert default_result["path"] == "/api/inference/overview"
     assert light_result["path"] == "/api/inference/overview?include_system=false"
     assert detail_result["path"] == "/api/inference/profiles/qwen/detail"
+    assert launcher_env_result["path"] == "/api/inference/launchers/vllm-main/env"
     assert seen == [
         ("node-1", "GET", "/api/inference/overview", None),
         ("node-1", "GET", "/api/inference/overview?include_system=false", None),
         ("node-1", "GET", "/api/inference/profiles/qwen/detail", None),
+        ("node-1", "POST", "/api/inference/launchers/vllm-main/env", {"env": {"LD_LIBRARY_PATH": "/opt/cuda/lib"}}),
     ]
 
 

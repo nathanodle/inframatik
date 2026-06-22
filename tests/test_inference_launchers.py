@@ -167,6 +167,33 @@ def test_launcher_runtime_validation_suggests_venv_library_path(tmp_path: Path):
         assert any("suggested launcher env" in error for error in result["errors"])
 
 
+def test_launcher_env_merge_preserves_existing_env(tmp_path: Path):
+    with _temp_launchers(tmp_path):
+        exe = tmp_path / "vllm"
+        _make_executable(exe)
+        inference_launchers.create_launcher(
+            launcher_id="vllm-main",
+            display_name="vllm",
+            engine="vllm",
+            executable=str(exe),
+            env={"TOKEN": "hidden", "VLLM_USE_V1": "1"},
+        )
+
+        merged = inference_launchers.merge_launcher_env(
+            "vllm-main",
+            {"LD_LIBRARY_PATH": "/opt/cuda/lib", "VLLM_USE_V1": "0"},
+        )
+        raw = inference_launchers.get_launcher("vllm-main", include_secret_env=True)
+
+        assert merged["env"]["TOKEN"] == "<redacted>"
+        assert merged["env"]["LD_LIBRARY_PATH"] == "<redacted>"
+        assert raw["env"] == {
+            "TOKEN": "hidden",
+            "VLLM_USE_V1": "0",
+            "LD_LIBRARY_PATH": "/opt/cuda/lib",
+        }
+
+
 def test_launcher_update_and_delete_reference_checks(tmp_path: Path):
     with _temp_launchers(tmp_path) as config_dir:
         exe = tmp_path / "llama-server"
@@ -264,6 +291,16 @@ def test_launcher_http_api_create_validate_update_delete(tmp_path: Path):
                     assert updated.status_code == 200
                     assert updated.json()["display_name"] == "SGLang prod"
                     assert updated.json()["base_args"][-1] == "--quiet"
+
+                    merged = await client.post(
+                        "/api/inference/launchers/sglang-python/env",
+                        json={"env": {"LD_LIBRARY_PATH": "/opt/cuda/lib"}},
+                    )
+                    assert merged.status_code == 200
+                    assert merged.json()["env"]["LD_LIBRARY_PATH"] == "<redacted>"
+                    raw = inference_launchers.get_launcher("sglang-python", include_secret_env=True)
+                    assert raw["env"]["TOKEN"] == "hidden"
+                    assert raw["env"]["LD_LIBRARY_PATH"] == "/opt/cuda/lib"
 
                     deleted = await client.delete("/api/inference/launchers/sglang-python")
                     assert deleted.status_code == 200

@@ -1512,6 +1512,16 @@ async def proxy_update_inference_launcher(node_id: str, launcher_id: str, body: 
         raise HTTPException(502, str(e))
 
 
+@cluster_router.post("/api/nodes/{node_id}/inference/launchers/{launcher_id}/env")
+async def proxy_merge_inference_launcher_env(node_id: str, launcher_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/launchers/{launcher_id}/env", body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
 @cluster_router.delete("/api/nodes/{node_id}/inference/launchers/{launcher_id}")
 async def proxy_delete_inference_launcher(
     node_id: str,

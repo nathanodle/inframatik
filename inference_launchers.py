@@ -293,6 +293,26 @@ def update_launcher(launcher_id: str, updates: dict) -> dict:
     return _public_launcher(updated)
 
 
+def merge_launcher_env(launcher_id: str, env: dict) -> dict:
+    launcher_id = validate_launcher_id(launcher_id)
+    if not isinstance(env, dict):
+        raise LauncherError("Env body must be an object")
+    env = normalize_env(env)
+    if not env:
+        raise LauncherError("At least one env value is required")
+    with _lock:
+        registry = _load_registry()
+        launcher = registry.get("launchers", {}).get(launcher_id)
+        if not launcher:
+            raise LauncherNotFoundError(f"Launcher not found: {launcher_id}")
+        updated = dict(launcher)
+        updated["env"] = {**(launcher.get("env") or {}), **env}
+        updated["updated_at"] = _now()
+        registry["launchers"][launcher_id] = updated
+        _save_registry(registry)
+    return _public_launcher(updated)
+
+
 def validate_launcher_path(launcher_id: str) -> dict:
     launcher = get_launcher(launcher_id, include_secret_env=True)
     executable = Path(launcher["executable"]).expanduser()

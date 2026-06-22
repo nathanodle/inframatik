@@ -4904,7 +4904,7 @@ async function validateLauncher(launcherId) {
     if (resultEl) resultEl.innerHTML = '<div class="launcher-validation-panel">Checking executable and runtime...</div>';
     try {
         const result = await api('POST', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}/validate?runtime=true`));
-        if (resultEl) resultEl.innerHTML = renderLauncherValidation(result);
+        if (resultEl) resultEl.innerHTML = renderLauncherValidation(result, launcherId);
     } catch (e) {
         if (resultEl) {
             resultEl.innerHTML = `<div class="launcher-validation-panel failed"><div class="model-job-error">${esc(e.message)}</div></div>`;
@@ -4916,14 +4916,48 @@ function launcherValidationBadge(label, ok) {
     return `<span class="model-badge ${ok ? 'green' : 'red'}">${esc(label)}</span>`;
 }
 
-function renderLauncherValidationSuggestions(runtime) {
+async function applyLauncherSuggestedEnv(launcherId, button) {
+    if (!launcherId || !button) return;
+    let env = {};
+    try {
+        env = JSON.parse(button.dataset.env || '{}');
+    } catch (e) {
+        setInferenceError(`Suggested env could not be parsed: ${e.message}`);
+        return;
+    }
+    if (!Object.keys(env).length) {
+        setInferenceError('No suggested env values to apply.');
+        return;
+    }
+    setInferenceError('');
+    button.disabled = true;
+    button.textContent = 'Applying...';
+    try {
+        const launcher = await api('POST', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}/env`), { env });
+        patchInferenceLauncher(launcher);
+        setInferenceStatus(`Applied suggested env to launcher ${launcherId}.`);
+        await validateLauncher(launcherId);
+    } catch (e) {
+        setInferenceError(e.message);
+        button.disabled = false;
+        button.textContent = 'Apply';
+    }
+}
+
+function renderLauncherValidationSuggestions(runtime, launcherId = '') {
     const suggestions = runtime.suggested_env || {};
     const rows = Object.entries(suggestions);
     if (!rows.length) return '';
+    const envJson = JSON.stringify(suggestions);
     return `
         <div class="launcher-validation-suggestions">
-            <div class="launcher-card-title">Suggested Env</div>
-            <div class="launcher-card-meta">Add these launcher env values, save, then validate again.</div>
+            <div class="launcher-validation-suggestions-head">
+                <div>
+                    <div class="launcher-card-title">Suggested Env</div>
+                    <div class="launcher-card-meta">Apply these launcher env values, then validate again.</div>
+                </div>
+                ${launcherId ? `<button type="button" class="btn primary" data-env="${esc(envJson)}" onclick="applyLauncherSuggestedEnv('${esc(launcherId)}', this)">Apply</button>` : ''}
+            </div>
             ${rows.map(([key, value]) => `
                 <div class="launcher-validation-suggestion-row">
                     <code>${esc(key)}=${esc(value)}</code>
@@ -4934,7 +4968,7 @@ function renderLauncherValidationSuggestions(runtime) {
     `;
 }
 
-function renderLauncherValidation(result) {
+function renderLauncherValidation(result, launcherId = '') {
     const runtime = result.runtime || {};
     const executable = result.executable || {};
     const workingDir = result.working_dir || null;
@@ -4961,7 +4995,7 @@ function renderLauncherValidation(result) {
             </div>
             ${command ? `<div class="launcher-command-preview">${esc(command)}</div>` : ''}
             ${errors.length ? `<div class="launcher-validation-errors">${errors.map(error => `<div>${esc(error)}</div>`).join('')}</div>` : ''}
-            ${renderLauncherValidationSuggestions(runtime)}
+            ${renderLauncherValidationSuggestions(runtime, launcherId || result.launcher_id || '')}
             ${runtime.output ? `<pre class="launcher-validation-output">${esc(runtime.output)}</pre>` : ''}
         </div>
     `;

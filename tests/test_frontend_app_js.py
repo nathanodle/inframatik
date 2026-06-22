@@ -1715,6 +1715,7 @@ def test_app_js_cloudflare_section_gating_by_role():
 
                 const launcherValidationSuggestionHtml = vm.runInContext(`
                     renderLauncherValidation({
+                        launcher_id: 'vllm-main',
                         valid: false,
                         errors: ['Runtime dependency was found inside the venv; add the suggested launcher env and validate again.'],
                         executable: { path: '/home/aiml/vllm/venv/bin/vllm', exists: true, is_file: true, executable: true },
@@ -1732,11 +1733,59 @@ def test_app_js_cloudflare_section_gating_by_role():
                 `, context);
                 assert(
                     launcherValidationSuggestionHtml.includes('Suggested Env') &&
+                    launcherValidationSuggestionHtml.includes('Apply') &&
+                    launcherValidationSuggestionHtml.includes('applyLauncherSuggestedEnv') &&
                     launcherValidationSuggestionHtml.includes('LD_LIBRARY_PATH') &&
                     launcherValidationSuggestionHtml.includes('nvidia/cuda_runtime/lib') &&
                     launcherValidationSuggestionHtml.includes('data-copy=') &&
                     launcherValidationSuggestionHtml.includes('copyText(this.dataset.copy, this)'),
                     'launcher validation should render suggested env values with copy controls'
+                );
+
+                const launcherApplyEnvResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'launchers';
+                        const originalPatch = patchInferenceLauncher;
+                        const originalValidate = validateLauncher;
+                        patchInferenceLauncher = function(launcher) {
+                            calls.push(['patch', launcher.id, launcher.redacted_env_keys && launcher.redacted_env_keys.join(',')]);
+                            return true;
+                        };
+                        validateLauncher = async function(launcherId) { calls.push(['validate', launcherId]); };
+                        setInferenceStatus = function(message) { calls.push(['status', message]); };
+                        setInferenceError = function(message) { calls.push(['error', message]); };
+                        api = async function(method, path, body) {
+                            calls.push([method, path, body && body.env && body.env.LD_LIBRARY_PATH]);
+                            if (method === 'POST' && path === '/api/inference/launchers/vllm-main/env') {
+                                return { id: 'vllm-main', redacted_env_keys: ['LD_LIBRARY_PATH'] };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        const button = {
+                            dataset: { env: JSON.stringify({ LD_LIBRARY_PATH: '/opt/cuda/lib' }) },
+                            disabled: false,
+                            textContent: 'Apply',
+                        };
+                        try {
+                            await applyLauncherSuggestedEnv('vllm-main', button);
+                            return { calls, button };
+                        } finally {
+                            patchInferenceLauncher = originalPatch;
+                            validateLauncher = originalValidate;
+                        }
+                    })()
+                `, context);
+                assert(
+                    launcherApplyEnvResult.calls.some(call => call[0] === 'POST' && call[1] === '/api/inference/launchers/vllm-main/env' && call[2] === '/opt/cuda/lib') &&
+                    launcherApplyEnvResult.calls.some(call => call[0] === 'patch' && call[1] === 'vllm-main') &&
+                    launcherApplyEnvResult.calls.some(call => call[0] === 'validate' && call[1] === 'vllm-main') &&
+                    launcherApplyEnvResult.calls.some(call => call[0] === 'status' && String(call[1]).includes('Applied suggested env')) &&
+                    launcherApplyEnvResult.button.disabled === true,
+                    'applying launcher suggested env should merge env, patch local launcher state, and revalidate'
                 );
             })().catch((error) => {
                 console.error(error.stack || error.message);
@@ -2891,6 +2940,8 @@ def test_static_inference_model_ui_assets_present():
     assert "validate?runtime=true" in app_js
     assert "renderLauncherValidation" in app_js
     assert "renderLauncherValidationSuggestions" in app_js
+    assert "applyLauncherSuggestedEnv" in app_js
+    assert "/api/inference/launchers/${encodeURIComponent(launcherId)}/env" in app_js
     assert "cleanModelJobStaging" in app_js
     assert "modelJobStagingCleaned" in app_js
     assert "showStartedModelJob" in app_js
@@ -2906,6 +2957,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".launcher-validation-panel" in style_css
     assert ".launcher-validation-output" in style_css
     assert ".launcher-validation-suggestions" in style_css
+    assert ".launcher-validation-suggestions-head" in style_css
     assert ".profile-card" in style_css
     assert ".inference-live-status" in style_css
     assert ".inference-header-controls" in style_css

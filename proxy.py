@@ -473,6 +473,8 @@ async def _handle_local_inference(method: str, route_path: str, query: dict[str,
     suffix = "/" + "/".join(parts[1:]) if len(parts) > 1 else ""
     if method == "PUT" and suffix == "":
         return inference_launchers.update_launcher(launcher_id, body or {})
+    if method == "POST" and suffix == "/env":
+        return inference_launchers.merge_launcher_env(launcher_id, (body or {}).get("env") or {})
     if method == "DELETE" and suffix == "":
         return inference_launchers.delete_launcher(
             launcher_id,

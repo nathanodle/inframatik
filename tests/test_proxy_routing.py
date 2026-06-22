@@ -292,6 +292,7 @@ def test_handle_local_inference_launchers_dispatch():
     original_list = inference_launchers.list_launchers
     original_create = inference_launchers.create_launcher
     original_update = inference_launchers.update_launcher
+    original_merge_env = inference_launchers.merge_launcher_env
     original_validate = inference_launchers.validate_launcher_path
     original_delete = inference_launchers.delete_launcher
     original_preview = inference_planner.preview_profile
@@ -308,6 +309,7 @@ def test_handle_local_inference_launchers_dispatch():
     }
     inference_launchers.create_launcher = lambda **kwargs: calls.append(("create", kwargs)) or {"id": kwargs["launcher_id"]}
     inference_launchers.update_launcher = lambda launcher_id, body: calls.append(("update", launcher_id, body)) or {"id": launcher_id}
+    inference_launchers.merge_launcher_env = lambda launcher_id, env: calls.append(("merge_env", launcher_id, env)) or {"id": launcher_id, "env": env}
     inference_launchers.validate_launcher_path = lambda launcher_id: calls.append(("validate", launcher_id)) or {"valid": True}
     inference_launchers.delete_launcher = lambda launcher_id, force_stopped_references=False: calls.append(("delete", launcher_id, force_stopped_references)) or {"deleted": launcher_id}
     inference_planner.preview_profile = lambda body: calls.append(("preview", body)) or {"valid_for_save": True}
@@ -318,12 +320,14 @@ def test_handle_local_inference_launchers_dispatch():
         listed = _run(proxy._handle_local_inference("GET", "/api/inference/launchers", {"include_validation": ["true"]}))
         created = _run(proxy._handle_local_inference("POST", "/api/inference/launchers", {}, {"id": "vllm-main", "engine": "vllm", "executable": "/x"}))
         updated = _run(proxy._handle_local_inference("PUT", "/api/inference/launchers/vllm-main", {}, {"base_args": ["serve"]}))
+        merged = _run(proxy._handle_local_inference("POST", "/api/inference/launchers/vllm-main/env", {}, {"env": {"LD_LIBRARY_PATH": "/opt/cuda/lib"}}))
         validated = _run(proxy._handle_local_inference("POST", "/api/inference/launchers/vllm-main/validate", {}))
         deleted = _run(proxy._handle_local_inference("DELETE", "/api/inference/launchers/vllm-main", {"force_stopped_references": ["true"]}))
     finally:
         inference_launchers.list_launchers = original_list
         inference_launchers.create_launcher = original_create
         inference_launchers.update_launcher = original_update
+        inference_launchers.merge_launcher_env = original_merge_env
         inference_launchers.validate_launcher_path = original_validate
         inference_launchers.delete_launcher = original_delete
         inference_planner.preview_profile = original_preview
@@ -334,10 +338,12 @@ def test_handle_local_inference_launchers_dispatch():
     assert listed["include_validation"] is True
     assert created == {"id": "vllm-main"}
     assert updated == {"id": "vllm-main"}
+    assert merged == {"id": "vllm-main", "env": {"LD_LIBRARY_PATH": "/opt/cuda/lib"}}
     assert validated == {"valid": True}
     assert deleted == {"deleted": "vllm-main"}
     assert calls[0] == ("preview", {"id": "draft"})
     assert calls[1] == ("overview", False)
+    assert ("merge_env", "vllm-main", {"LD_LIBRARY_PATH": "/opt/cuda/lib"}) in calls
     assert calls[-1] == ("delete", "vllm-main", True)
 
 

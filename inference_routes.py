@@ -35,6 +35,10 @@ class LauncherUpdateBody(BaseModel):
     env: Optional[dict] = None
 
 
+class LauncherEnvMergeBody(BaseModel):
+    env: dict = Field(default_factory=dict)
+
+
 def _raise_http_error(exc: inference_launchers.LauncherError):
     raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
@@ -504,6 +508,14 @@ async def api_update_inference_launcher(launcher_id: str, body: LauncherUpdateBo
         updates = body.dict(exclude_unset=True)
     try:
         return inference_launchers.update_launcher(launcher_id, updates)
+    except inference_launchers.LauncherError as e:
+        _raise_http_error(e)
+
+
+@inference_router.post("/api/inference/launchers/{launcher_id}/env")
+async def api_merge_inference_launcher_env(launcher_id: str, body: LauncherEnvMergeBody):
+    try:
+        return inference_launchers.merge_launcher_env(launcher_id, body.env)
     except inference_launchers.LauncherError as e:
         _raise_http_error(e)
 
