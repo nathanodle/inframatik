@@ -2212,6 +2212,18 @@ body {
     line-height: 1.4;
 }
 
+.profile-cf-removal-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.profile-cf-removal-option input {
+    margin: 0;
+}
+
 .empty-state.compact {
     margin-top: 8px;
     padding: 10px;

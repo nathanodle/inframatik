@@ -3718,6 +3718,7 @@ function renderProfileConnect(profileId, data, secrets = {}) {
     const cleanupRecords = Array.isArray(data.cleanup_records) ? data.cleanup_records : [];
     const tokens = (cloudflare.service_tokens || []);
     const activeTokens = tokens.filter(token => (token.state || 'active') === 'active');
+    const hasOwnedTokens = tokens.some(token => token.owned_by_inframatik && (token.state || 'active') === 'active');
     const hasEngineKey = Boolean((bundle.secret_state || {}).engine_api_key_configured);
     const endpointHostname = cloudflare.hostname || exposure.hostname || '';
     const cfResourcesReady = Boolean(cloudflare.hostname && cloudflare.access_app_id && cloudflare.access_policy_id);
@@ -3807,6 +3808,12 @@ function renderProfileConnect(profileId, data, secrets = {}) {
                     ${cloudflareFacts.map(([label, value]) => `<div><span>${esc(label)}</span><code>${esc(value)}</code></div>`).join('')}
                 </div>
                 <div class="model-actions">
+                    ${cfResourcesConfigured && hasOwnedTokens ? `
+                        <label class="profile-cf-removal-option">
+                            <input type="checkbox" id="profile-cf-delete-owned-${esc(profileId)}">
+                            <span>Delete inframatik-owned clients if unreferenced</span>
+                        </label>
+                    ` : ''}
                     ${cfResourcesConfigured ? `<button class="btn danger" onclick="removeProfileCloudflare(${profileIdArg})">Remove Endpoint</button>` : ''}
                 </div>
                 <div class="model-job-error" id="profile-cf-hostname-error-${esc(profileId)}"></div>
@@ -3881,7 +3888,8 @@ async function provisionProfileCloudflare(profileId) {
 
 async function removeProfileCloudflare(profileId) {
     if (!confirm('Remove Cloudflare exposure for this profile?')) return;
-    const deleteOwned = confirm('Delete Cloudflare service tokens owned by inframatik too? Cancel keeps those tokens in Cloudflare.');
+    const deleteOwnedEl = document.getElementById(`profile-cf-delete-owned-${profileId}`);
+    const deleteOwned = Boolean(deleteOwnedEl && deleteOwnedEl.checked);
     try {
         const data = await api('DELETE', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/exposure?delete_owned_tokens=${deleteOwned ? 'true' : 'false'}`));
         await refreshInferenceProfiles();

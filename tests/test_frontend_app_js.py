@@ -747,6 +747,8 @@ def test_app_js_cloudflare_section_gating_by_role():
                     cleanupHtml.includes('Service Auth ready') &&
                     cleanupHtml.includes('Cloudflare clients') &&
                     cleanupHtml.includes('Generate Client') &&
+                    cleanupHtml.includes('profile-cf-delete-owned-qwen-cleanup') &&
+                    cleanupHtml.includes('Delete inframatik-owned clients if unreferenced') &&
                     cleanupHtml.includes('dns_record') &&
                     cleanupHtml.includes('qwen.example.com') &&
                     cleanupHtml.includes('retryInferenceCleanup') &&
@@ -759,6 +761,37 @@ def test_app_js_cloudflare_section_gating_by_role():
                     cleanupHtml.includes('retired client') &&
                     cleanupHtml.includes('retired</span>'),
                     'Connect view should show cleanup records and ownership-aware Cloudflare token actions'
+                );
+
+                const removeCloudflareCalls = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        isMaster = false;
+                        selectedNodeId = 'self-node';
+                        document.getElementById('profile-cf-delete-owned-qwen-cleanup').checked = true;
+                        confirm = function(message) {
+                            calls.push(['confirm', message]);
+                            return true;
+                        };
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'DELETE' && path === '/api/inference/profiles/qwen-cleanup/cloudflare/exposure?delete_owned_tokens=true') {
+                                return { warnings: [] };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        refreshInferenceProfiles = async function() { calls.push(['refreshProfiles']); };
+                        loadProfileConnect = async function(profileId) { calls.push(['loadConnect', profileId]); };
+                        await removeProfileCloudflare('qwen-cleanup');
+                        return calls;
+                    })()
+                `, context);
+                assert(
+                    removeCloudflareCalls.filter(call => call[0] === 'confirm').length === 1 &&
+                    removeCloudflareCalls.some(call => call[0] === 'DELETE' && call[1].endsWith('delete_owned_tokens=true')) &&
+                    removeCloudflareCalls.some(call => call[0] === 'refreshProfiles') &&
+                    removeCloudflareCalls.some(call => call[0] === 'loadConnect' && call[1] === 'qwen-cleanup'),
+                    'Cloudflare endpoint removal should read the delete-owned checkbox and use one confirmation'
                 );
 
                 const restartButtonDisplay = vm.runInContext(`
@@ -1760,6 +1793,7 @@ def test_static_inference_model_ui_assets_present():
     assert "copyButton" in app_js
     assert "data-copy" in app_js
     assert "profile-token-guidance" in app_js
+    assert "profile-cf-delete-owned-" in app_js
     assert "renderConnectionPosture" in app_js
     assert "renderInstanceBundleOptions" in app_js
     assert "profile-cf-hostname-" in app_js
@@ -1877,6 +1911,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-one-time-secret" in style_css
     assert ".profile-token-row" in style_css
     assert ".profile-token-guidance" in style_css
+    assert ".profile-cf-removal-option" in style_css
 
 
 def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():
