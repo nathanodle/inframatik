@@ -3914,6 +3914,25 @@ async function surfaceActiveInferenceOperation(error, nodeId = selectedNodeId) {
     }
 }
 
+function normalizeInferenceOperationResponse(response, context = {}) {
+    const operation = response && response.operation && response.operation.id ? response.operation : response;
+    if (!operation || !operation.id) return null;
+    const next = {
+        state: 'queued',
+        current_step: 'queued',
+        progress: 0,
+        ...operation,
+    };
+    if (!next.profile_id && context.profileId) next.profile_id = context.profileId;
+    if ((next.instance_index === null || next.instance_index === undefined) && context.instanceIndex !== undefined) {
+        next.instance_index = context.instanceIndex;
+    }
+    if (!next.kind && context.action) {
+        next.kind = `${context.instanceIndex === undefined ? 'profile' : 'instance'}_${context.action}`;
+    }
+    return next;
+}
+
 async function runProfileAction(profileId, action, button) {
     if (!profileId || !['start', 'stop', 'restart'].includes(action)) return;
     const nodeId = selectedNodeId;
@@ -3923,7 +3942,11 @@ async function runProfileAction(profileId, action, button) {
     if (button) button.disabled = true;
     updateInferenceProfileCard(profileId);
     try {
-        const operation = await api('POST', nodePathFor(nodeId, `/api/inference/profiles/${encodeURIComponent(profileId)}/${action}`));
+        const operation = normalizeInferenceOperationResponse(
+            await api('POST', nodePathFor(nodeId, `/api/inference/profiles/${encodeURIComponent(profileId)}/${action}`)),
+            { profileId, action }
+        );
+        if (!operation) throw new Error(`${profileActionLabel(action)} request did not return an operation id.`);
         mergeInferenceOperation(operation);
         setInferenceStatus(`${profileActionLabel(action)} operation queued for ${profileId}.`);
     } catch (e) {
@@ -3945,10 +3968,14 @@ async function runInstanceAction(profileId, instanceIndex, action, button) {
     if (button) button.disabled = true;
     updateInferenceProfileCard(profileId);
     try {
-        const operation = await api(
-            'POST',
-            nodePathFor(nodeId, `/api/inference/profiles/${encodeURIComponent(profileId)}/instances/${encodeURIComponent(instanceIndex)}/${action}`)
+        const operation = normalizeInferenceOperationResponse(
+            await api(
+                'POST',
+                nodePathFor(nodeId, `/api/inference/profiles/${encodeURIComponent(profileId)}/instances/${encodeURIComponent(instanceIndex)}/${action}`)
+            ),
+            { profileId, instanceIndex, action }
         );
+        if (!operation) throw new Error(`${profileActionLabel(action)} request did not return an operation id.`);
         mergeInferenceOperation(operation);
         setInferenceStatus(`${profileActionLabel(action)} operation queued for ${profileId}[${instanceIndex}].`);
     } catch (e) {

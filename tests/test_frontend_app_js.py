@@ -1125,6 +1125,50 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile action conflicts should fetch and render the active operation'
                 );
 
+                const thinActionResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'profiles';
+                        inferenceProfilesData = [{ id: 'qwen', display_name: 'Qwen', state: 'stopped', instances: [] }];
+                        inferenceOperationsData = [];
+                        pendingInferenceProfileActions.clear();
+                        const originalUpdateCard = updateInferenceProfileCard;
+                        const originalRenderOperations = renderInferenceOperations;
+                        updateInferenceProfileCard = function(profileId) { calls.push(['updateCard', profileId]); };
+                        renderInferenceOperations = function(operations) { calls.push(['renderOperations', operations[0] && operations[0].profile_id, operations[0] && operations[0].kind]); };
+                        setInferenceStatus = function(message) { calls.push(['status', message]); };
+                        setInferenceError = function(message) { calls.push(['error', message]); };
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'POST' && path === '/api/inference/profiles/qwen/start') {
+                                return { id: 'op-thin' };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        try {
+                            await runProfileAction('qwen', 'start');
+                            return { calls, operation: inferenceOperationsData[0], pendingAction: pendingInferenceProfileActions.get('qwen') };
+                        } finally {
+                            updateInferenceProfileCard = originalUpdateCard;
+                            renderInferenceOperations = originalRenderOperations;
+                        }
+                    })()
+                `, context);
+                assert(
+                    thinActionResult.operation &&
+                    thinActionResult.operation.id === 'op-thin' &&
+                    thinActionResult.operation.profile_id === 'qwen' &&
+                    thinActionResult.operation.kind === 'profile_start' &&
+                    thinActionResult.operation.state === 'queued' &&
+                    thinActionResult.pendingAction === 'start' &&
+                    thinActionResult.calls.some(call => call[0] === 'renderOperations' && call[1] === 'qwen' && call[2] === 'profile_start') &&
+                    thinActionResult.calls.some(call => call[0] === 'status' && String(call[1]).includes('operation queued')),
+                    'thin accepted profile action responses should be normalized before rendering'
+                );
+
                 const richPreviewHtml = vm.runInContext(`
                     renderProfilePreview({
                         valid_for_save: true,
@@ -2735,6 +2779,7 @@ def test_static_inference_model_ui_assets_present():
     assert "renderInferenceLiveStatus" in app_js
     assert "markInferenceLiveEvent" in app_js
     assert "markInferenceFallbackSync" in app_js
+    assert "normalizeInferenceOperationResponse" in app_js
     assert "websocketEventMatchesSelectedNode" in app_js
     assert "mergeInferenceOperationSnapshot" in app_js
     assert "selectedInferenceNodeIds" in app_js
