@@ -268,6 +268,45 @@ def test_profile_start_publishes_live_readiness_status(tmp_path: Path):
         assert status["log_tail_lines"] == 2
 
 
+def test_profile_start_fails_before_systemd_when_launcher_runtime_invalid(tmp_path: Path):
+    port = _free_port()
+    with _temp_inference(tmp_path, port=port):
+        _setup_profile(tmp_path, port)
+
+        async def fake_validate_runtime(_launcher_id):
+            return {
+                "valid": False,
+                "errors": ["Runtime probe exited with code 7"],
+                "runtime": {
+                    "checked": True,
+                    "valid": False,
+                    "code": 7,
+                    "output": "ImportError: libcudart.so.12: cannot open shared object file",
+                    "suggested_env": {"LD_LIBRARY_PATH": "/venv/nvidia/cuda_runtime/lib"},
+                },
+            }
+
+        with _Patch([(inference_launchers, "validate_launcher_runtime", fake_validate_runtime)]):
+            with _fake_runtime() as actions:
+                async def scenario():
+                    op = await inference_operations.start_profile("qwen")
+                    done = await inference_operations.wait_for_operation(op["id"], timeout=1.0)
+                    profile = inference_profiles.get_profile_raw("qwen")
+                    return done, profile
+
+                done, profile = _run(scenario())
+
+        assert done["state"] == "failed"
+        assert done["result"]["message"] == "Launcher runtime validation failed"
+        assert done["result"]["launcher_id"] == "vllm-main"
+        assert done["result"]["validation"]["runtime"]["code"] == 7
+        assert done["result"]["suggested_env"]["LD_LIBRARY_PATH"] == "/venv/nvidia/cuda_runtime/lib"
+        assert done["steps"][0]["name"] == "validate"
+        assert done["steps"][0]["state"] == "failed"
+        assert actions == []
+        assert profile["state"] == "stopped"
+
+
 def test_profile_start_rolls_back_when_tcp_never_ready(tmp_path: Path):
     port = _free_port()
     with _temp_inference(tmp_path, port=port):

@@ -3009,7 +3009,9 @@ function operationFailureMessage(operation) {
 
 function operationFailureLogs(operation) {
     const detail = operationResultDetail(operation);
-    return detail.logs || '';
+    const validation = detail.validation && typeof detail.validation === 'object' ? detail.validation : {};
+    const runtime = validation.runtime && typeof validation.runtime === 'object' ? validation.runtime : {};
+    return detail.logs || runtime.output || '';
 }
 
 function operationRuntimeStatus(operation) {
@@ -3056,13 +3058,21 @@ function operationFailureDiagnosis(operation, detail) {
     const lower = `${message} ${detail.message || ''} ${logs || ''}`.toLowerCase();
     const restartCount = Number(detail.restart_count);
     const profile = profileById(operation.profile_id);
-    const launcherId = profile && profile.engine_launcher_id;
+    const launcherId = (profile && profile.engine_launcher_id) || result.launcher_id || detail.launcher_id;
+    const validation = detail.validation && typeof detail.validation === 'object' ? detail.validation : {};
+    const runtime = validation.runtime && typeof validation.runtime === 'object' ? validation.runtime : {};
     let cause = 'The operation failed before the profile reached a healthy serving state.';
     let action = 'Open the logs below, fix the launcher/model/runtime issue, then start or restart the profile.';
     let fixAction = '';
     if (operation.state === 'failed_interrupted') {
         cause = 'inframatik restarted while this operation was still running.';
         action = 'Check the current profile state, then start or restart the profile if the service is not running.';
+    } else if (validation.runtime) {
+        cause = 'The engine launcher failed runtime validation before inframatik started the service.';
+        action = 'Apply any suggested launcher env, validate the launcher again, then start the profile.';
+        if (launcherId) {
+            fixAction = `<button type="button" class="btn primary" onclick="openLauncherValidation(${jsArg(launcherId)}, ${jsArg(operation.profile_id || '')})">Validate launcher</button>`;
+        }
     } else if (lower.includes('cannot open shared object file') || lower.includes('libcudart.so')) {
         cause = 'The launcher process cannot load a required shared library.';
         action = 'Validate the engine launcher. If Suggested Env appears, apply it to add the venv library path, then start the profile again.';
@@ -3097,6 +3107,7 @@ function operationFailureDiagnosis(operation, detail) {
                     <p>${esc(value)}</p>
                 </div>
             `).join('')}
+            ${runtime.suggested_env ? renderLauncherValidationSuggestions(runtime, launcherId || '') : ''}
             ${fixAction ? `<div class="profile-operation-fix-action">${fixAction}</div>` : ''}
         </div>
     `;

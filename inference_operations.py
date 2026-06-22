@@ -11,6 +11,7 @@ from typing import Optional
 
 import httpx
 
+import inference_launchers
 import inference_profiles
 
 
@@ -282,6 +283,7 @@ async def _run_operation(operation_id: str):
 async def _run_start(operation_id: str, profile_id: str, instance_index: Optional[int], rollback_on_failure: bool) -> dict:
     _set_step(operation_id, "validate", "running", progress=10)
     profile = inference_profiles.get_profile_raw(profile_id)
+    await _validate_launcher_runtime(profile, operation_id)
     instances = _select_instances(profile, instance_index)
     if not instances:
         raise OperationError("No inference instances selected")
@@ -397,6 +399,29 @@ def _aggregate_state_after_instance_stop(profile: dict, instance_index: int) -> 
     if any(state == "running" for state in states):
         return "running"
     return "degraded"
+
+
+async def _validate_launcher_runtime(profile: dict, operation_id: str):
+    launcher_id = (
+        profile.get("engine_launcher_id")
+        or profile.get("launcher_id")
+        or ((profile.get("engine_launcher") or {}) if isinstance(profile.get("engine_launcher"), dict) else {}).get("id")
+    )
+    if not launcher_id:
+        _set_step(operation_id, "validate", "failed", progress=100)
+        raise OperationError("Inference profile has no engine launcher")
+    validation = await inference_launchers.validate_launcher_runtime(str(launcher_id))
+    if validation.get("valid"):
+        return
+    runtime = validation.get("runtime") if isinstance(validation.get("runtime"), dict) else {}
+    _set_step(operation_id, "validate", "failed", progress=100)
+    raise OperationError({
+        "message": "Launcher runtime validation failed",
+        "launcher_id": launcher_id,
+        "validation": validation,
+        "logs": runtime.get("output") or "",
+        "suggested_env": runtime.get("suggested_env") or {},
+    })
 
 
 async def wait_unit_active(unit: str, timeout: float):

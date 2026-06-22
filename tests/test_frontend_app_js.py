@@ -835,6 +835,54 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'failed startup operation panel should explain cause, next action, rollback, and captured logs'
                 );
 
+                const failedValidationHtml = vm.runInContext(`
+                    inferenceProfilesData = [{
+                        id: 'qwen',
+                        display_name: 'Qwen',
+                        engine_launcher_id: 'vllm-main',
+                        state: 'failed',
+                        instances: [],
+                    }];
+                    renderProfileOperationPanel({
+                        id: 'op-failed-validation',
+                        kind: 'profile_start',
+                        state: 'failed',
+                        profile_id: 'qwen',
+                        current_step: 'failed',
+                        progress: 100,
+                        result: {
+                            message: 'Launcher runtime validation failed',
+                            launcher_id: 'vllm-main',
+                            validation: {
+                                valid: false,
+                                runtime: {
+                                    checked: true,
+                                    valid: false,
+                                    code: 7,
+                                    output: 'ImportError: libcudart.so.12: cannot open shared object file',
+                                    suggested_env: {
+                                        LD_LIBRARY_PATH: '/home/aiml/vllm/venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib',
+                                    },
+                                },
+                            },
+                            suggested_env: {
+                                LD_LIBRARY_PATH: '/home/aiml/vllm/venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib',
+                            },
+                        },
+                    });
+                `, context);
+                assert(
+                    failedValidationHtml.includes('Launcher runtime validation failed') &&
+                    failedValidationHtml.includes('failed runtime validation before inframatik started the service') &&
+                    failedValidationHtml.includes('Suggested Env') &&
+                    failedValidationHtml.includes('applyLauncherSuggestedEnv') &&
+                    failedValidationHtml.includes('LD_LIBRARY_PATH') &&
+                    failedValidationHtml.includes('nvidia/cuda_runtime/lib') &&
+                    failedValidationHtml.includes('ImportError: libcudart.so.12') &&
+                    failedValidationHtml.includes('openLauncherValidation(&quot;vllm-main&quot;, &quot;qwen&quot;)'),
+                    'runtime validation failures should show suggested env and probe output before any systemd rollback'
+                );
+
                 const launcherFixActionResult = await vm.runInContext(`
                     (async () => {
                         const calls = [];
