@@ -100,6 +100,9 @@ let operationLogOutputCache = new Map();
 let profilePreviewBodyHtml = '<div class="empty-state">No preview yet.</div>';
 let profilePreviewHasResult = false;
 let profilePreviewStale = false;
+let profileEditorDirty = false;
+let profileEditorLoadedProfile = null;
+let profileEditorPreviewPlan = null;
 let inferenceJobsTimer = null;
 let inferenceOperationWatchdogTimer = null;
 let inferenceOperationUpdateTimes = new Map();
@@ -379,7 +382,7 @@ document.addEventListener('change', (e) => {
         syncProfileDeploymentPortDefaults();
     }
     if (isProfileEditorEvent(e)) {
-        markProfilePreviewStale();
+        markProfileEditorChanged();
     }
 });
 
@@ -388,7 +391,7 @@ document.addEventListener('input', (e) => {
         renderInferenceGpuHints();
     }
     if (isProfileEditorEvent(e)) {
-        markProfilePreviewStale();
+        markProfileEditorChanged();
     }
 });
 
@@ -1670,14 +1673,112 @@ function renderProfilePreviewPanel() {
     setElementHtml('profile-preview-panel', `${staleBanner}${profilePreviewBodyHtml}`);
 }
 
+function profileEditorCurrentId() {
+    const editEl = document.getElementById('profile-edit-id');
+    const idEl = document.getElementById('profile-id');
+    return String((editEl && editEl.value) || '').trim() || String((idEl && idEl.value) || '').trim();
+}
+
+function profileEditorTitle() {
+    const editId = String((document.getElementById('profile-edit-id') || {}).value || '');
+    const displayName = String((document.getElementById('profile-display-name') || {}).value || '');
+    const id = profileEditorCurrentId();
+    if (editId) return `Editing ${displayName.trim() || id || editId}`;
+    return id ? `New ${displayName.trim() || id}` : 'New profile';
+}
+
+function profileEditorModeBadge() {
+    return String((document.getElementById('profile-edit-id') || {}).value || '') ? 'edit' : 'new';
+}
+
+function profileEditorPreviewTone(plan) {
+    if (!profilePreviewHasResult) return '';
+    if (profilePreviewStale) return 'yellow';
+    if (plan && plan.valid_for_save) return 'green';
+    return 'red';
+}
+
+function profileEditorValidationText(plan) {
+    if (!profilePreviewHasResult) return 'not run';
+    const blockers = (plan && plan.blockers) || [];
+    const warnings = (plan && plan.warnings) || [];
+    if (blockers.length || warnings.length) {
+        return [
+            blockers.length ? `${blockers.length} blocker${blockers.length === 1 ? '' : 's'}` : '',
+            warnings.length ? `${warnings.length} warning${warnings.length === 1 ? '' : 's'}` : '',
+        ].filter(Boolean).join(' / ');
+    }
+    return plan && plan.valid_for_save ? 'valid' : 'blocked';
+}
+
+function profileEditorPreviewText() {
+    if (!profilePreviewHasResult) return 'not run';
+    return profilePreviewStale ? 'stale' : 'fresh';
+}
+
+function profileEditorLayoutText(plan) {
+    const instances = (plan && plan.resolved_instances) || [];
+    const ports = ((plan && plan.port_plan) || {}).allocated || [];
+    if (!profilePreviewHasResult) return '--';
+    return `${instances.length || 0} inst · ${ports.join(', ') || 'no ports'}`;
+}
+
+function profileEditorRestartText(plan) {
+    const restart = (plan && plan.restart_required) || {};
+    if (restart.required) {
+        const fields = (restart.fields || []).slice(0, 2).join(', ');
+        return fields ? `required · ${fields}` : 'required';
+    }
+    if (profileCanSaveRestart(profileEditorLoadedProfile)) return 'available';
+    return profilePreviewHasResult ? 'not required' : '--';
+}
+
+function profileEditorCommandText(plan) {
+    if (!profilePreviewHasResult) return '--';
+    const commands = (plan && plan.command_preview) || [];
+    const units = ((plan && plan.systemd_preview) || {}).units || [];
+    return `${commands.length || 0} cmd · ${units.length || 0} unit${units.length === 1 ? '' : 's'}`;
+}
+
+function renderProfileEditorStatus() {
+    const el = document.getElementById('profile-editor-status');
+    if (!el) return;
+    const plan = profileEditorPreviewPlan || {};
+    const tone = profileEditorPreviewTone(plan);
+    const dirtyTone = profileEditorDirty ? 'yellow' : 'green';
+    const facts = [
+        ['Validation', profileEditorValidationText(plan)],
+        ['Preview', profileEditorPreviewText()],
+        ['Layout', profileEditorLayoutText(plan)],
+        ['Restart', profileEditorRestartText(plan)],
+        ['Command', profileEditorCommandText(plan)],
+    ];
+    setHtmlIfChanged(el, `
+        <div class="profile-editor-status-head">
+            <div class="profile-editor-status-title">
+                <span class="model-badge ${tone}">${esc(profileEditorModeBadge())}</span>
+                <strong>${esc(profileEditorTitle())}</strong>
+            </div>
+            <span class="model-badge ${dirtyTone}">${profileEditorDirty ? 'unsaved edits' : 'clean'}</span>
+        </div>
+        <div class="profile-editor-status-summary">
+            ${facts.map(([label, value]) => `
+                <div><span>${esc(label)}</span><code>${esc(value)}</code></div>
+            `).join('')}
+        </div>
+    `);
+}
+
 function setProfilePreviewBody(html, options = {}) {
     profilePreviewBodyHtml = html || PROFILE_PREVIEW_EMPTY_HTML;
     profilePreviewHasResult = Boolean(options.hasResult);
     profilePreviewStale = Boolean(options.stale);
     renderProfilePreviewPanel();
+    renderProfileEditorStatus();
 }
 
 function resetProfilePreviewPanel() {
+    profileEditorPreviewPlan = null;
     setProfilePreviewBody(PROFILE_PREVIEW_EMPTY_HTML, { hasResult: false, stale: false });
 }
 
@@ -1685,6 +1786,13 @@ function markProfilePreviewStale() {
     if (!profilePreviewHasResult || profilePreviewStale) return;
     profilePreviewStale = true;
     renderProfilePreviewPanel();
+    renderProfileEditorStatus();
+}
+
+function markProfileEditorChanged() {
+    profileEditorDirty = true;
+    markProfilePreviewStale();
+    renderProfileEditorStatus();
 }
 
 function clearProfileEditorIssueBadges() {
@@ -2394,7 +2502,7 @@ function removeProfileTokenRow(button) {
     const parent = row.parentElement;
     row.remove();
     if (parent) parent._inframatikHtml = null;
-    markProfilePreviewStale();
+    markProfileEditorChanged();
 }
 
 function moveProfileArgRow(button, direction) {
@@ -2407,7 +2515,7 @@ function moveProfileArgRow(button, direction) {
         parent.insertBefore(row.nextElementSibling, row);
     }
     parent._inframatikHtml = null;
-    markProfilePreviewStale();
+    markProfileEditorChanged();
 }
 
 function addProfileArgRow(value = '') {
@@ -2424,7 +2532,7 @@ function addProfileArgRow(value = '') {
         </div>
     `;
     appendTokenRow(el, row);
-    markProfilePreviewStale();
+    markProfileEditorChanged();
 }
 
 function addProfileEnvRow(key = '', value = '') {
@@ -2438,7 +2546,7 @@ function addProfileEnvRow(key = '', value = '') {
         <button class="btn danger" type="button" onclick="removeProfileTokenRow(this)">Remove</button>
     `;
     appendTokenRow(el, row);
-    markProfilePreviewStale();
+    markProfileEditorChanged();
 }
 
 function setProfileAdvancedArgs(args = []) {
@@ -2864,6 +2972,8 @@ function resetProfileForm() {
     clearProfileEditorIssueBadges();
     syncProfileSaveRestartButton(null);
     syncProfilePortPolicyFields();
+    profileEditorLoadedProfile = null;
+    profileEditorDirty = false;
     resetProfilePreviewPanel();
 }
 
@@ -3064,6 +3174,10 @@ function fillProfileForm(profile) {
     ));
     renderProfileEngineFields();
     syncProfileSaveRestartButton(profile);
+    profileEditorLoadedProfile = profile ? { ...profile } : null;
+    profileEditorDirty = false;
+    profileEditorPreviewPlan = null;
+    renderProfileEditorStatus();
 }
 
 async function previewInferenceProfile() {
@@ -3179,6 +3293,7 @@ function renderProfilePreviewIssues(blockers = [], warnings = []) {
 }
 
 function renderProfilePreview(plan) {
+    profileEditorPreviewPlan = plan || {};
     updateProfileEditorIssueBadges(plan);
     const blockers = plan.blockers || [];
     const warnings = plan.warnings || [];

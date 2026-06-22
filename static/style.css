@@ -701,6 +701,10 @@ body {
     margin-top: 20px;
 }
 
+.profile-editor-actions {
+    margin-top: 0;
+}
+
 .checkbox-group { margin-bottom: 14px; }
 
 .checkbox-label {
@@ -1469,6 +1473,84 @@ body {
 .profile-form-panel,
 .profile-list-panel {
     min-width: 0;
+}
+
+.profile-editor-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    margin: 18px -16px -14px;
+    padding: 10px 16px 14px;
+    border-top: 1px solid var(--border);
+    background: rgba(26, 34, 52, 0.94);
+    backdrop-filter: blur(10px);
+}
+
+.profile-editor-status {
+    display: grid;
+    gap: 8px;
+    min-height: 48px;
+    margin-bottom: 10px;
+}
+
+.profile-editor-status-empty {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.profile-editor-status-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.profile-editor-status-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.profile-editor-status-title strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.profile-editor-status-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.profile-editor-status-summary > div {
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.profile-editor-status-summary span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.profile-editor-status-summary code {
+    display: block;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .profile-editor-nav {
@@ -3727,6 +3809,15 @@ body {
     }
 
     .profile-editor-nav {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .profile-editor-status-head {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .profile-editor-status-summary {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 

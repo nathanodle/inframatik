@@ -961,11 +961,16 @@
                         </div>
                     </div>
                     </div>
-                    <div class="form-actions">
-                        <button class="btn" onclick="resetProfileForm()">Reset</button>
-                        <button class="btn" onclick="previewInferenceProfile()">Preview</button>
-                        <button class="btn success" id="profile-save-restart-btn" onclick="saveInferenceProfile({restart:true})" style="display:none">Save & Restart</button>
-                        <button class="btn primary" onclick="saveInferenceProfile()">Save Profile</button>
+                    <div class="profile-editor-footer">
+                        <div class="profile-editor-status" id="profile-editor-status">
+                            <div class="profile-editor-status-empty">New profile · preview not run</div>
+                        </div>
+                        <div class="form-actions profile-editor-actions">
+                            <button class="btn" onclick="resetProfileForm()">Reset</button>
+                            <button class="btn" onclick="previewInferenceProfile()">Preview</button>
+                            <button class="btn success" id="profile-save-restart-btn" onclick="saveInferenceProfile({restart:true})" style="display:none">Save & Restart</button>
+                            <button class="btn primary" onclick="saveInferenceProfile()">Save Profile</button>
+                        </div>
                     </div>
                 </section>
 

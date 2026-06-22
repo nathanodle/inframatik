@@ -1649,6 +1649,67 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile preview should warn when stale and clear the warning on preview or reset'
                 );
 
+                const editorStatusResult = vm.runInContext(`
+                    (function() {
+                        resetProfileForm();
+                        const resetHtml = document.getElementById('profile-editor-status').innerHTML;
+                        document.getElementById('profile-id').value = 'qwen-status';
+                        document.getElementById('profile-display-name').value = 'Qwen Status';
+                        markProfileEditorChanged();
+                        const dirty = document.getElementById('profile-editor-status').innerHTML;
+                        renderProfilePreview({
+                            valid_for_save: false,
+                            blockers: [{ field: 'deployment.gpu_policy', message: 'GPU conflict' }],
+                            warnings: [{ field: 'common.api_key', message: 'API key recommended' }],
+                            resolved_instances: [
+                                { index: 0, host: '127.0.0.1', port: 10000, gpu_ids: [0], unit: 'infra-llm-qwen@0.service' },
+                            ],
+                            port_plan: { allocated: [10000], mode: 'auto' },
+                            gpu_plan: { assignments: [{ index: 0, gpu_ids: [0] }], mode: 'profile', claim_mode: 'exclusive' },
+                            cloudflare_plan: { resources: [] },
+                            command_preview: [{ argv: ['vllm', 'serve'], env: {} }],
+                            systemd_preview: { units: [{ name: 'infra-llm-qwen@0.service' }] },
+                            restart_required: { required: true, fields: ['common.context_length'] },
+                        });
+                        const preview = document.getElementById('profile-editor-status').innerHTML;
+                        markProfilePreviewStale();
+                        const stale = document.getElementById('profile-editor-status').innerHTML;
+                        fillProfileForm({
+                            id: 'qwen-edit',
+                            display_name: 'Qwen Edit',
+                            engine: 'vllm',
+                            engine_launcher_id: 'vllm-main',
+                            model: { artifact_id: 'qwen', snapshot: 'v1' },
+                            common: {},
+                            deployment: {},
+                            exposure: { mode: 'local' },
+                            advanced: {},
+                            engine_config: {},
+                            instances: [],
+                            state: 'running',
+                        });
+                        const cleanEdit = document.getElementById('profile-editor-status').innerHTML;
+                        return { reset: resetHtml, dirty, preview, stale, cleanEdit };
+                    })();
+                `, context);
+                assert(
+                    editorStatusResult.reset.includes('New profile') &&
+                    editorStatusResult.reset.includes('clean') &&
+                    editorStatusResult.reset.includes('not run') &&
+                    editorStatusResult.dirty.includes('Qwen Status') &&
+                    editorStatusResult.dirty.includes('unsaved edits') &&
+                    editorStatusResult.preview.includes('1 blocker / 1 warning') &&
+                    editorStatusResult.preview.includes('1 inst') &&
+                    editorStatusResult.preview.includes('10000') &&
+                    editorStatusResult.preview.includes('required') &&
+                    editorStatusResult.preview.includes('1 cmd') &&
+                    editorStatusResult.stale.includes('stale') &&
+                    editorStatusResult.cleanEdit.includes('Editing Qwen Edit') &&
+                    editorStatusResult.cleanEdit.includes('clean') &&
+                    editorStatusResult.cleanEdit.includes('available'),
+                    'profile editor status rail should track dirty, preview, validation, layout, and restart state'
+                );
+
                 const bundleHtml = vm.runInContext(`
                     renderClientBundle({
                         id: 'default',
@@ -4062,6 +4123,8 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-common-json"' in index_html
     assert 'id="profile-engine-json"' in index_html
     assert 'id="profile-save-restart-btn"' in index_html
+    assert 'id="profile-editor-status"' in index_html
+    assert "profile-editor-footer" in index_html
     assert "Save & Restart" in index_html
     assert 'class="profile-editor-nav"' in index_html
     assert 'data-profile-editor-section="basics"' in index_html
@@ -4087,7 +4150,11 @@ def test_static_inference_model_ui_assets_present():
     assert "groupProfileIssues" in app_js
     assert "PROFILE_EDITOR_SECTION_LABELS" in app_js
     assert "markProfilePreviewStale" in app_js
+    assert "markProfileEditorChanged" in app_js
+    assert "renderProfileEditorStatus" in app_js
     assert "resetProfilePreviewPanel" in app_js
+    assert ".profile-editor-footer" in style_css
+    assert ".profile-editor-status" in style_css
     assert 'id="profile-gpu-hints"' in index_html
     assert 'id="profile-kv-cache-dtype"' in index_html
     assert 'id="profile-gpu-memory-utilization"' in index_html
