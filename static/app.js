@@ -2194,7 +2194,19 @@ function resetProfileForm() {
     if (exposureEl) exposureEl.value = 'local';
     renderProfileSelects();
     renderProfileEngineFields();
+    syncProfileSaveRestartButton(null);
     setElementHtml('profile-preview-panel', '<div class="empty-state">No preview yet.</div>');
+}
+
+function profileCanSaveRestart(profile) {
+    const state = String((profile && (profile.state || profile.status)) || '').toLowerCase();
+    return ['running', 'starting', 'restarting', 'active'].includes(state);
+}
+
+function syncProfileSaveRestartButton(profile) {
+    const btn = document.getElementById('profile-save-restart-btn');
+    if (!btn) return;
+    btn.style.display = profileCanSaveRestart(profile) ? '' : 'none';
 }
 
 function fillProfileForm(profile) {
@@ -2354,6 +2366,7 @@ function fillProfileForm(profile) {
         STRUCTURED_ENGINE_KEYS[engineConfigKey(profile.engine || 'vllm')] || []
     ));
     renderProfileEngineFields();
+    syncProfileSaveRestartButton(profile);
 }
 
 async function previewInferenceProfile() {
@@ -2379,7 +2392,7 @@ async function previewInferenceProfile() {
     }
 }
 
-async function saveInferenceProfile() {
+async function saveInferenceProfile(options = {}) {
     setInferenceError('');
     let draft;
     try {
@@ -2394,13 +2407,17 @@ async function saveInferenceProfile() {
     }
     try {
         const editId = modelOptionalValue('profile-edit-id');
+        const restartAfterSave = Boolean(options.restart && editId);
         const result = editId
             ? await api('PUT', modelNodePath(`/api/inference/profiles/${encodeURIComponent(editId)}`), draft)
             : await api('POST', modelNodePath('/api/inference/profiles'), draft);
-        setInferenceStatus(editId ? `Updated profile ${editId}.` : 'Profile saved.');
+        setInferenceStatus(restartAfterSave ? `Updated profile ${editId}; queuing restart...` : editId ? `Updated profile ${editId}.` : 'Profile saved.');
         resetProfileForm();
         await refreshInferenceProfiles();
         renderProfilePreview(result.plan || {});
+        if (restartAfterSave) {
+            await runProfileAction(editId, 'restart');
+        }
     } catch (e) {
         setInferenceError(e.message);
     }

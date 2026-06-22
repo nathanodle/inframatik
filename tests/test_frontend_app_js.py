@@ -391,6 +391,62 @@ def test_app_js_cloudflare_section_gating_by_role():
                     bundleHtml.includes('client-example-card'),
                     'client bundles should provide copy controls for endpoints, headers, one-time secrets, and examples'
                 );
+
+                const restartButtonDisplay = vm.runInContext(`
+                    fillProfileForm({
+                        id: 'qwen',
+                        display_name: 'Qwen',
+                        engine: 'vllm',
+                        engine_launcher_id: 'vllm-main',
+                        model: { artifact_id: 'qwen', snapshot: 'v1' },
+                        common: {},
+                        deployment: {},
+                        advanced: {},
+                        engine_config: {},
+                        exposure: {},
+                        instances: [{ port: 10000 }],
+                        state: 'running',
+                    });
+                    document.getElementById('profile-save-restart-btn').style.display;
+                `, context);
+                assert(
+                    restartButtonDisplay === '',
+                    'profile editor should show Save & Restart while editing a running profile'
+                );
+
+                const saveRestartCalls = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        document.getElementById('profile-edit-id').value = 'qwen';
+                        buildProfileDraft = function() {
+                            return { engine_launcher_id: 'vllm-main', model: { artifact_id: 'qwen' } };
+                        };
+                        api = async function(method, path, body) {
+                            calls.push([method, path, body && body.engine_launcher_id]);
+                            return { plan: { valid_for_save: true }, profile: { id: 'qwen' } };
+                        };
+                        resetProfileForm = function() {
+                            calls.push(['reset']);
+                            document.getElementById('profile-edit-id').value = '';
+                        };
+                        refreshInferenceProfiles = async function() {
+                            calls.push(['refresh']);
+                        };
+                        renderProfilePreview = function(plan) {
+                            calls.push(['preview', Boolean(plan)]);
+                        };
+                        runProfileAction = async function(profileId, action) {
+                            calls.push(['action', profileId, action]);
+                        };
+                        await saveInferenceProfile({ restart: true });
+                        return calls;
+                    })()
+                `, context);
+                assert(
+                    saveRestartCalls.some(call => call[0] === 'PUT' && call[1] === '/api/inference/profiles/qwen') &&
+                    saveRestartCalls.some(call => call[0] === 'action' && call[1] === 'qwen' && call[2] === 'restart'),
+                    'Save & Restart should save the edited profile and then queue a restart operation'
+                );
             })().catch((error) => {
                 console.error(error.stack || error.message);
                 process.exit(1);
@@ -702,6 +758,8 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-model"' in index_html
     assert 'id="profile-common-json"' in index_html
     assert 'id="profile-engine-json"' in index_html
+    assert 'id="profile-save-restart-btn"' in index_html
+    assert "Save & Restart" in index_html
     assert 'id="profile-gpu-hints"' in index_html
     assert 'id="profile-kv-cache-dtype"' in index_html
     assert 'id="profile-gpu-memory-utilization"' in index_html
@@ -730,6 +788,8 @@ def test_static_inference_model_ui_assets_present():
     assert "runInstanceAction" in app_js
     assert "runProfileTest" in app_js
     assert "exportInferenceProfile" in app_js
+    assert "profileCanSaveRestart" in app_js
+    assert "saveInferenceProfile({restart:true})" in index_html
     assert "/api/inference/profiles/${encodeURIComponent(profileId)}/export" in app_js
     assert "rotateProfileApiKey" in app_js
     assert "loadProfileConnect" in app_js
