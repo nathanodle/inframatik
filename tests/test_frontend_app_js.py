@@ -6,6 +6,7 @@ without a browser.
 """
 
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -19,19 +20,27 @@ EMPTY_SERVICES_COPY = (
 
 
 def _run_node(script: str):
-    result = subprocess.run(
-        ["node", "-e", script],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise AssertionError(
-            "Node harness failed\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
+    script_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".cjs", dir=ROOT, delete=False) as script_file:
+            script_file.write(script)
+            script_path = Path(script_file.name)
+        result = subprocess.run(
+            ["node", str(script_path)],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
         )
+        if result.returncode != 0:
+            raise AssertionError(
+                "Node harness failed\n"
+                f"stdout:\n{result.stdout}\n"
+                f"stderr:\n{result.stderr}"
+            )
+    finally:
+        if script_path is not None:
+            script_path.unlink(missing_ok=True)
 
 
 def test_app_js_cloudflare_section_gating_by_role():
@@ -2497,6 +2506,53 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'Save & Restart should patch the saved profile locally and then queue a restart operation'
                 );
 
+                const managedEnvSaveGuard = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        document.getElementById('profile-edit-id').value = '';
+                        buildProfileDraft = function() {
+                            return {
+                                id: 'qwen-env-override',
+                                engine_launcher_id: 'vllm-main',
+                                model: { artifact_id: 'qwen' },
+                                advanced: { env: { CUDA_VISIBLE_DEVICES: '0,1' } },
+                            };
+                        };
+                        setInferenceStatus = function(message) { calls.push(['status', message]); };
+                        setInferenceError = function(message) { if (message) calls.push(['error', message]); };
+                        resetProfileForm = function() { calls.push(['reset']); };
+                        renderProfilePreview = function(plan) { calls.push(['preview', Boolean(plan)]); };
+                        api = async function(method, path, body) {
+                            calls.push([method, path, body && body.advanced && body.advanced.env && body.advanced.env.CUDA_VISIBLE_DEVICES]);
+                            return {
+                                plan: { valid_for_save: true },
+                                profile: { id: 'qwen-env-override', display_name: 'Qwen Env Override', state: 'stopped' },
+                            };
+                        };
+                        confirm = function(message) {
+                            calls.push(['confirm-cancel', message]);
+                            return false;
+                        };
+                        await saveInferenceProfile();
+                        confirm = function(message) {
+                            calls.push(['confirm-save', message]);
+                            return true;
+                        };
+                        await saveInferenceProfile();
+                        return calls;
+                    })()
+                `, context);
+                assert(
+                    managedEnvSaveGuard.some(call => call[0] === 'confirm-cancel' && String(call[1]).includes('CUDA_VISIBLE_DEVICES')) &&
+                    managedEnvSaveGuard.some(call => call[0] === 'status' && String(call[1]).includes('canceled')) &&
+                    !managedEnvSaveGuard.slice(0, managedEnvSaveGuard.findIndex(call => call[0] === 'confirm-save')).some(call => call[0] === 'POST') &&
+                    managedEnvSaveGuard.some(call => call[0] === 'confirm-save' && String(call[1]).includes('GPU placement')) &&
+                    managedEnvSaveGuard.some(call => call[0] === 'POST' && call[1] === '/api/inference/profiles' && call[2] === '0,1'),
+                    'profile save should require explicit confirmation before managed env overrides are persisted'
+                );
+
                 const launcherPatchResult = await vm.runInContext(`
                     (async () => {
                         const calls = [];
@@ -3966,6 +4022,8 @@ def test_static_inference_model_ui_assets_present():
     assert "moveProfileArgRow" in app_js
     assert "collectProfileAdvancedArgs" in app_js
     assert "collectProfileAdvancedEnv" in app_js
+    assert "MANAGED_PROFILE_ENV_KEYS" in app_js
+    assert "confirmManagedProfileEnvOverrides" in app_js
     assert "setProfileEditorSection" in app_js
     assert "profileIssueSection" in app_js
     assert "updateProfileEditorIssueBadges" in app_js

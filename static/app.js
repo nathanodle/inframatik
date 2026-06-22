@@ -109,6 +109,7 @@ let activeInferenceRefreshId = 0;
 const ACTIVE_MODEL_JOB_STATES = new Set(['queued', 'running', 'hashing', 'verifying']);
 const ACTIVE_INFERENCE_OPERATION_STATES = new Set(['queued', 'running']);
 const ACCEPTED_OPERATION_RECONCILE_DELAY_MS = 1200;
+const MANAGED_PROFILE_ENV_KEYS = new Set(['CUDA_VISIBLE_DEVICES']);
 
 // ---- Helpers ----
 
@@ -2467,6 +2468,22 @@ function collectProfileAdvancedEnv() {
     return env;
 }
 
+function managedProfileEnvOverrideKeys(draft) {
+    const env = draft && draft.advanced && draft.advanced.env && typeof draft.advanced.env === 'object'
+        ? draft.advanced.env
+        : {};
+    return Object.keys(env).filter(key => MANAGED_PROFILE_ENV_KEYS.has(key));
+}
+
+function confirmManagedProfileEnvOverrides(draft) {
+    const keys = managedProfileEnvOverrideKeys(draft);
+    if (!keys.length) return true;
+    return confirm(
+        `Profile env overrides inframatik-managed runtime env: ${keys.join(', ')}.\n\n` +
+        'This can bypass generated GPU placement for the profile. Save anyway?'
+    );
+}
+
 function profileJsonValue(id, label) {
     const raw = modelOptionalValue(id);
     if (!raw) return {};
@@ -3072,6 +3089,10 @@ async function saveInferenceProfile(options = {}) {
     }
     if (!draft.engine_launcher_id || !draft.model) {
         setInferenceError('Launcher and model are required.');
+        return;
+    }
+    if (!confirmManagedProfileEnvOverrides(draft)) {
+        setInferenceStatus('Profile save canceled.');
         return;
     }
     try {
