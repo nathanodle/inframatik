@@ -3240,8 +3240,16 @@ function renderProfileConnect(profileId, data, secrets = {}) {
     const tokens = (cloudflare.service_tokens || []);
     const activeTokens = tokens.filter(token => (token.state || 'active') === 'active');
     const hasEngineKey = Boolean((bundle.secret_state || {}).engine_api_key_configured);
-    const hasCfExposure = exposure.mode === 'cloudflare' || Boolean(cloudflare.hostname || cloudflare.access_app_id || cloudflare.access_policy_id);
+    const endpointHostname = cloudflare.hostname || exposure.hostname || '';
+    const cfResourcesReady = Boolean(cloudflare.hostname && cloudflare.access_app_id && cloudflare.access_policy_id);
+    const cfResourcesConfigured = Boolean(cloudflare.hostname || cloudflare.access_app_id || cloudflare.access_policy_id);
     const canGenerateClient = Boolean(cloudflare.access_policy_id);
+    const cloudflareFacts = [
+        ['Hostname', endpointHostname || '--'],
+        ['Tunnel', cloudflare.tunnel_id || '--'],
+        ['Access App', cloudflare.access_app_id || '--'],
+        ['Policy', cloudflare.access_policy_id || '--'],
+    ];
     const tokenRows = tokens.map(token => {
         const profileIdArg = jsArg(profileId);
         const tokenIdArg = jsArg(token.id);
@@ -3268,7 +3276,7 @@ function renderProfileConnect(profileId, data, secrets = {}) {
             <div class="connect-status-row">
                 ${connectBadge(exposure.mode || 'local')}
                 ${connectBadge(hasEngineKey ? 'engine key ready' : 'engine key missing', hasEngineKey ? 'green' : 'yellow')}
-                ${connectBadge(hasCfExposure ? 'cloudflare ready' : 'local only', hasCfExposure ? 'green' : '')}
+                ${connectBadge(cfResourcesReady ? 'cloudflare ready' : endpointHostname ? 'hostname set' : 'local only', cfResourcesReady ? 'green' : endpointHostname ? 'yellow' : '')}
                 ${connectBadge(`${activeTokens.length} active client${activeTokens.length === 1 ? '' : 's'}`, activeTokens.length ? 'green' : '')}
             </div>
         </div>
@@ -3287,14 +3295,21 @@ function renderProfileConnect(profileId, data, secrets = {}) {
                 <div class="connect-section-header">
                     <div>
                         <div class="launcher-card-title">Cloudflare Endpoint</div>
-                        <div class="launcher-card-meta">${esc(cloudflare.hostname || exposure.hostname || 'No hostname configured')}</div>
+                        <div class="launcher-card-meta">${esc(endpointHostname || 'No hostname configured')}</div>
                     </div>
-                    ${connectBadge(hasCfExposure ? 'provisioned' : 'not configured', hasCfExposure ? 'green' : '')}
+                    ${connectBadge(cfResourcesReady ? 'provisioned' : endpointHostname ? 'pending' : 'not configured', cfResourcesReady ? 'green' : endpointHostname ? 'yellow' : '')}
+                </div>
+                <div class="connect-inline-form">
+                    <input type="text" id="profile-cf-hostname-${esc(profileId)}" value="${esc(endpointHostname)}" placeholder="llm.example.com" autocomplete="off">
+                    <button class="btn" onclick="provisionProfileCloudflare(${profileIdArg})">${cfResourcesConfigured ? 'Reconcile' : 'Provision'}</button>
+                </div>
+                <div class="connect-mini-facts">
+                    ${cloudflareFacts.map(([label, value]) => `<div><span>${esc(label)}</span><code>${esc(value)}</code></div>`).join('')}
                 </div>
                 <div class="model-actions">
-                    <button class="btn" onclick="provisionProfileCloudflare(${profileIdArg})">${hasCfExposure ? 'Reconcile' : 'Provision'} Endpoint</button>
-                    ${hasCfExposure ? `<button class="btn danger" onclick="removeProfileCloudflare(${profileIdArg})">Remove Endpoint</button>` : ''}
+                    ${cfResourcesConfigured ? `<button class="btn danger" onclick="removeProfileCloudflare(${profileIdArg})">Remove Endpoint</button>` : ''}
                 </div>
+                <div class="model-job-error" id="profile-cf-hostname-error-${esc(profileId)}"></div>
             </section>
             <section>
                 <div class="connect-section-header">
@@ -3313,18 +3328,16 @@ function renderProfileConnect(profileId, data, secrets = {}) {
         </div>
         ${tokens.length ? `<div class="profile-token-list">${tokenRows}</div>` : '<div class="empty-state compact">No Cloudflare service-token clients attached.</div>'}
     `;
-    const detail = document.getElementById(`profile-detail-${profileId}`);
-    if (detail) detail.innerHTML = html;
+    setProfileDetail(profileId, html, 'connect');
 }
 
 async function loadProfileConnect(profileId) {
-    const detail = document.getElementById(`profile-detail-${profileId}`);
-    if (detail) detail.textContent = 'Loading connection bundle...';
+    setProfileDetail(profileId, '<div class="empty-state compact">Loading connection bundle...</div>', 'connect');
     try {
         const data = await api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/client-bundles`));
         renderProfileConnect(profileId, data);
     } catch (e) {
-        if (detail) detail.innerHTML = `<div class="model-job-error">${esc(e.message)}</div>`;
+        setProfileDetail(profileId, `<div class="model-job-error">${esc(e.message)}</div>`, 'connect');
     }
 }
 
@@ -3342,8 +3355,15 @@ async function provisionProfileCloudflare(profileId) {
     const profile = inferenceProfilesData.find(item => item.id === profileId) || {};
     const exposure = profile.exposure || {};
     const cloudflare = profile.cloudflare || {};
-    const hostname = cloudflare.hostname || exposure.hostname || prompt('Cloudflare hostname');
-    if (!hostname) return;
+    const input = document.getElementById(`profile-cf-hostname-${profileId}`);
+    const errEl = document.getElementById(`profile-cf-hostname-error-${profileId}`);
+    const hostname = (input && input.value.trim()) || cloudflare.hostname || exposure.hostname || '';
+    if (errEl) errEl.textContent = '';
+    if (!hostname) {
+        if (errEl) errEl.textContent = 'Hostname is required.';
+        else setInferenceError('Hostname is required.');
+        return;
+    }
     try {
         const data = await api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/exposure`), {
             hostname,
@@ -3351,6 +3371,7 @@ async function provisionProfileCloudflare(profileId) {
         });
         await refreshInferenceProfiles();
         renderProfileConnect(profileId, data, { client_secret: data.client_secret });
+        setInferenceStatus(`Cloudflare endpoint ready for ${profileId}.`);
     } catch (e) {
         setInferenceError(e.message);
     }
