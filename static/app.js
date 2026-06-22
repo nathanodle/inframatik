@@ -4512,6 +4512,27 @@ function modelJobActivityLabel(job) {
     return job.state || '';
 }
 
+function modelJobProgressMetrics(job, done, total) {
+    if (!job) return '';
+    const startedAt = Number(job.started_at || 0);
+    if (!startedAt) return '';
+    const finishedAt = Number(job.finished_at || 0);
+    const now = finishedAt || (Date.now() / 1000);
+    const elapsed = Math.max(0, now - startedAt);
+    if (!elapsed) return '';
+    const parts = [`elapsed ${formatSeconds(elapsed)}`];
+    if (done > 0) {
+        const rate = done / elapsed;
+        if (rate > 0) {
+            parts.push(`${ACTIVE_MODEL_JOB_STATES.has(job.state) ? '' : 'avg '}${formatRate(rate)}`);
+            if (ACTIVE_MODEL_JOB_STATES.has(job.state) && total > done) {
+                parts.push(`ETA ${formatSeconds((total - done) / rate)}`);
+            }
+        }
+    }
+    return parts.join(' · ');
+}
+
 function renderModelJobs(jobs) {
     const el = document.getElementById('model-jobs-list');
     if (!jobs.length) {
@@ -4533,6 +4554,7 @@ function renderModelJobs(jobs) {
         ].filter(Boolean).join('');
         const cleanupBadge = stagingCleaned ? '<span class="model-badge green">Staging cleaned</span>' : '';
         const activityLabel = modelJobActivityLabel(job);
+        const progressMetrics = modelJobProgressMetrics(job, done, bytes);
         return `
             <div class="model-job-row">
                 <div class="model-job-main">
@@ -4547,6 +4569,7 @@ function renderModelJobs(jobs) {
                 <div class="model-job-progress">
                     <div class="progress-bar"><div class="progress-fill ${barClass}" style="width:${progress}%"></div></div>
                     <div class="model-job-sub">${esc(activityLabel)}</div>
+                    ${progressMetrics ? `<div class="model-job-metrics">${esc(progressMetrics)}</div>` : ''}
                 </div>
                 ${job.error ? `<div class="model-job-error">${esc(job.error)}</div>` : ''}
             </div>`;

@@ -1014,6 +1014,13 @@ body {
     margin-top: 10px;
 }
 
+.model-job-metrics {
+    margin-top: 4px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
 .model-job-error {
     color: var(--red);
     font-size: 12px;
