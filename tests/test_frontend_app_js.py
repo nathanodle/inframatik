@@ -321,6 +321,41 @@ def test_app_js_cloudflare_section_gating_by_role():
                     !cleanedJobHtml.includes('Clean staging'),
                     'cleaned model jobs should show cleanup state without a stale cleanup action'
                 );
+
+                const startupPanelHtml = vm.runInContext(`
+                    renderProfileOperationPanel({
+                        id: 'op-start',
+                        kind: 'profile_start',
+                        state: 'running',
+                        profile_id: 'qwen',
+                        current_step: 'waiting_ready',
+                        progress: 72,
+                        steps: [{ name: 'waiting_ready', state: 'running' }],
+                        runtime_status: {
+                            phase: 'waiting_ready',
+                            instance_index: 0,
+                            unit: 'infra-llm-qwen.service',
+                            host: '127.0.0.1',
+                            port: 10000,
+                            systemd_state: 'active',
+                            tcp_reachable: false,
+                            restart_count: 1,
+                            elapsed_seconds: 42,
+                            timeout_seconds: 600,
+                            wait_position: 1,
+                            wait_total: 1,
+                        },
+                    });
+                `, context);
+                assert(
+                    startupPanelHtml.includes('Systemd') &&
+                    startupPanelHtml.includes('active') &&
+                    startupPanelHtml.includes('TCP') &&
+                    startupPanelHtml.includes('waiting') &&
+                    startupPanelHtml.includes('Restarts') &&
+                    startupPanelHtml.includes('42s / 10m'),
+                    'active inference operation panel should show live startup readiness facts'
+                );
             })().catch((error) => {
                 console.error(error.stack || error.message);
                 process.exit(1);
@@ -677,6 +712,8 @@ def test_static_inference_model_ui_assets_present():
     assert "hydrateInferenceFailureDiagnostics" in app_js
     assert "hydrateVisibleInferenceFailures" in app_js
     assert "operationWithHydratedLogs" in app_js
+    assert "operationRuntimeStatus" in app_js
+    assert "runtime_status" in app_js
     assert "model_job" in app_js
     assert "handleModelJobEvent" in app_js
     assert "handleModelJobEvent(msg.job, msg)" in app_js

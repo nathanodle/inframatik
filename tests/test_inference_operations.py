@@ -64,6 +64,7 @@ def _temp_inference(tmpdir: Path, port: int = 10000):
         (inference_operations, "CONFIG_DIR", config_dir),
         (inference_operations, "INFERENCE_OPERATIONS_FILE", config_dir / "inference_operations.json"),
         (inference_operations, "POLL_INTERVAL_SECONDS", 0.01),
+        (inference_operations, "STARTUP_STATUS_INTERVAL_SECONDS", 0.01),
         (node_config, "CONFIG_FILE", config_file),
         (services, "SERVICES_FILE", config_dir / "services.json"),
         (services, "PORTS_ENV_FILE", config_dir / "ports.env"),
@@ -191,7 +192,7 @@ def _fake_runtime(tcp_ok=True, journal_text="TOKEN=secret\nready", restart_count
         return unit_state() if callable(unit_state) else unit_state
 
     async def fake_tcp(_host, _port):
-        return tcp_ok
+        return tcp_ok() if callable(tcp_ok) else tcp_ok
 
     async def fake_journal(_unit, lines=300):
         return journal_text
@@ -231,6 +232,38 @@ def test_operation_start_success_and_profile_state(tmp_path: Path):
         assert profile["state"] == "running"
         assert profile["instances"][0]["state"] == "running"
         assert actions[0][0] == "start"
+
+
+def test_profile_start_publishes_live_readiness_status(tmp_path: Path):
+    port = _free_port()
+    with _temp_inference(tmp_path, port=port):
+        _setup_profile(tmp_path, port)
+        checks = {"count": 0}
+
+        def tcp_after_probe():
+            checks["count"] += 1
+            return checks["count"] >= 3
+
+        with _fake_runtime(tcp_ok=tcp_after_probe, restart_count=0):
+            async def scenario():
+                op = await inference_operations.start_profile("qwen")
+                return await inference_operations.wait_for_operation(op["id"], timeout=1.0)
+
+            done = _run(scenario())
+
+        assert done["state"] == "succeeded"
+        status = done["runtime_status"]
+        assert status["phase"] == "waiting_ready"
+        assert status["instance_index"] == 0
+        assert status["unit"] == "infra-llm-qwen.service"
+        assert status["host"] == "127.0.0.1"
+        assert status["port"] == port
+        assert status["systemd_state"] == "active"
+        assert status["tcp_reachable"] is True
+        assert status["restart_count"] == 0
+        assert status["wait_position"] == 1
+        assert status["wait_total"] == 1
+        assert status["elapsed_seconds"] >= 0
 
 
 def test_profile_start_rolls_back_when_tcp_never_ready(tmp_path: Path):

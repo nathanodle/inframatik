@@ -21,6 +21,7 @@ TERMINAL_STATES = {"succeeded", "failed", "failed_interrupted", "canceled"}
 ACTIVE_STATES = {"queued", "running"}
 DEFAULT_STARTUP_GRACE_SECONDS = 600
 POLL_INTERVAL_SECONDS = 0.5
+STARTUP_STATUS_INTERVAL_SECONDS = 2.0
 MAX_OPERATION_RECORDS = 100
 STARTUP_RESTART_FAILURE_THRESHOLD = 3
 STARTUP_LOG_LINES = 80
@@ -298,8 +299,14 @@ async def _run_start(operation_id: str, profile_id: str, instance_index: Optiona
 
         _set_step(operation_id, "waiting_ready", "running", progress=65)
         grace = _startup_grace(profile)
-        for instance in started:
-            await wait_instance_ready(instance, timeout=grace)
+        for position, instance in enumerate(started, start=1):
+            await wait_instance_ready(
+                instance,
+                timeout=grace,
+                operation_id=operation_id,
+                wait_position=position,
+                wait_total=len(started),
+            )
         _set_step(operation_id, "waiting_ready", "succeeded", progress=90)
     except Exception as e:
         cause = _error_result(e)
@@ -415,21 +422,78 @@ async def wait_tcp_ready(instance: dict, timeout: float):
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
-async def wait_instance_ready(instance: dict, timeout: float):
+async def wait_instance_ready(
+    instance: dict,
+    timeout: float,
+    operation_id: Optional[str] = None,
+    wait_position: int = 1,
+    wait_total: int = 1,
+):
     deadline = time.monotonic() + timeout
+    started_at = time.monotonic()
+    next_status_at = 0.0
     host = instance.get("host") or "127.0.0.1"
     port = int(instance.get("port"))
     unit = instance.get("unit")
     initial_restarts = await unit_restart_count(unit) if unit else 0
     while True:
-        if await tcp_ready(host, port):
+        reachable = await tcp_ready(host, port)
+        if reachable:
+            state = await unit_active_state(unit) if unit else "unknown"
+            restart_count = await unit_restart_count(unit) if unit else None
+            _publish_startup_status(
+                operation_id,
+                instance=instance,
+                host=host,
+                port=port,
+                systemd_state=state,
+                tcp_reachable=True,
+                restart_count=restart_count,
+                elapsed_seconds=time.monotonic() - started_at,
+                timeout_seconds=timeout,
+                wait_position=wait_position,
+                wait_total=wait_total,
+            )
             return True
 
         state = await unit_active_state(unit) if unit else "unknown"
         if state in {"failed", "inactive"}:
+            restart_count = await unit_restart_count(unit) if unit else None
+            _publish_startup_status(
+                operation_id,
+                instance=instance,
+                host=host,
+                port=port,
+                systemd_state=state,
+                tcp_reachable=False,
+                restart_count=restart_count,
+                elapsed_seconds=time.monotonic() - started_at,
+                timeout_seconds=timeout,
+                wait_position=wait_position,
+                wait_total=wait_total,
+            )
             raise await unit_startup_error(unit, f"Unit {unit} is {state}", host=host, port=port)
 
         restart_count = await unit_restart_count(unit) if unit else 0
+        now = time.monotonic()
+        if operation_id and now >= next_status_at:
+            elapsed = now - started_at
+            progress = 65 + min(24, int(24 * min(elapsed, timeout) / max(timeout, 0.1)))
+            _publish_startup_status(
+                operation_id,
+                instance=instance,
+                host=host,
+                port=port,
+                systemd_state=state,
+                tcp_reachable=False,
+                restart_count=restart_count,
+                elapsed_seconds=elapsed,
+                timeout_seconds=timeout,
+                wait_position=wait_position,
+                wait_total=wait_total,
+                progress=progress,
+            )
+            next_status_at = now + STARTUP_STATUS_INTERVAL_SECONDS
         if restart_count is not None and initial_restarts is not None:
             if restart_count - initial_restarts >= STARTUP_RESTART_FAILURE_THRESHOLD:
                 raise await unit_startup_error(
@@ -440,7 +504,7 @@ async def wait_instance_ready(instance: dict, timeout: float):
                     restart_count=restart_count,
                 )
 
-        if time.monotonic() >= deadline:
+        if now >= deadline:
             raise await unit_startup_error(
                 unit,
                 f"Timed out waiting for TCP readiness on {host}:{port}",
@@ -449,6 +513,49 @@ async def wait_instance_ready(instance: dict, timeout: float):
                 restart_count=restart_count,
             )
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+
+def _publish_startup_status(
+    operation_id: Optional[str],
+    *,
+    instance: dict,
+    host: str,
+    port: int,
+    systemd_state: str,
+    tcp_reachable: bool,
+    restart_count: Optional[int],
+    elapsed_seconds: float,
+    timeout_seconds: float,
+    wait_position: int,
+    wait_total: int,
+    progress: Optional[int] = None,
+):
+    if not operation_id:
+        return
+    status = {
+        "phase": "waiting_ready",
+        "instance_index": instance.get("index"),
+        "unit": instance.get("unit"),
+        "host": host,
+        "port": port,
+        "systemd_state": systemd_state,
+        "tcp_reachable": bool(tcp_reachable),
+        "restart_count": restart_count,
+        "elapsed_seconds": round(max(0.0, elapsed_seconds), 1),
+        "timeout_seconds": round(max(0.0, timeout_seconds), 1),
+        "wait_position": wait_position,
+        "wait_total": wait_total,
+    }
+    updates = {
+        "current_step": "waiting_ready",
+        "runtime_status": status,
+    }
+    if progress is not None:
+        updates["progress"] = max(65, min(90, int(progress)))
+    try:
+        _patch_operation(operation_id, **updates)
+    except Exception:
+        pass
 
 
 async def systemctl_user(action: str, unit: str) -> dict:

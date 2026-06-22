@@ -450,6 +450,20 @@ Operation record shape:
         {"name": "start_units", "state": "succeeded"},
         {"name": "waiting_tcp", "state": "running"}
       ],
+      "runtime_status": {
+        "phase": "waiting_ready",
+        "instance_index": 0,
+        "unit": "infra-llm-qwen-small@0.service",
+        "host": "127.0.0.1",
+        "port": 10000,
+        "systemd_state": "active",
+        "tcp_reachable": false,
+        "restart_count": 0,
+        "elapsed_seconds": 42.0,
+        "timeout_seconds": 600.0,
+        "wait_position": 1,
+        "wait_total": 1
+      },
       "progress": 70,
       "started_at": 1782086400,
       "updated_at": 1782086460,
@@ -472,6 +486,7 @@ Operation behavior:
 7. Cancelation is deferred except for queued operations that have not begun side effects. Running systemd/Cloudflare operations should finish or fail and then reconcile.
 8. Keep recent terminal operations for a bounded retention window, for example the latest 100 operations or seven days per node.
 9. Error results should include per-instance status, rollback actions attempted, cleanup record IDs, and bounded log pointers where relevant.
+10. While profile or instance start waits for readiness, operation updates should include throttled `runtime_status` facts such as the current instance, target host/port, systemd active state, TCP readiness, restart count, elapsed time, and timeout. These facts are delivered through the normal operation event stream so the UI can explain what is happening before success or failure.
 
 Operation concurrency:
 

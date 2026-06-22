@@ -164,6 +164,18 @@ function formatRate(bytesPerSec) {
     return (bytesPerSec / 1048576).toFixed(1) + ' MB/s';
 }
 
+function formatSeconds(seconds) {
+    const value = Number(seconds || 0);
+    if (!Number.isFinite(value) || value <= 0) return '0s';
+    if (value < 60) return `${Math.round(value)}s`;
+    const minutes = Math.floor(value / 60);
+    const remainder = Math.round(value % 60);
+    if (minutes < 60) return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const minuteRemainder = minutes % 60;
+    return minuteRemainder ? `${hours}h ${minuteRemainder}m` : `${hours}h`;
+}
+
 function progressColor(pct) {
     if (pct >= 90) return 'red';
     if (pct >= 70) return 'yellow';
@@ -2488,6 +2500,12 @@ function operationFailureLogs(operation) {
     return detail.logs || '';
 }
 
+function operationRuntimeStatus(operation) {
+    return operation && operation.runtime_status && typeof operation.runtime_status === 'object'
+        ? operation.runtime_status
+        : {};
+}
+
 function operationStateColor(state) {
     if (state === 'succeeded') return 'green';
     if (ACTIVE_INFERENCE_OPERATION_STATES.has(state)) return 'yellow';
@@ -2512,10 +2530,24 @@ function renderOperationSteps(operation) {
 }
 
 function renderOperationFacts(detail) {
+    detail = detail || {};
+    const elapsed = detail.elapsed_seconds !== undefined && detail.elapsed_seconds !== null
+        ? formatSeconds(detail.elapsed_seconds)
+        : '';
+    const timeout = detail.timeout_seconds !== undefined && detail.timeout_seconds !== null
+        ? formatSeconds(detail.timeout_seconds)
+        : '';
+    const instanceLabel = detail.instance_index !== undefined && detail.instance_index !== null
+        ? `${detail.wait_position && detail.wait_total ? `${detail.wait_position}/${detail.wait_total} · ` : ''}#${detail.instance_index}`
+        : '';
     const facts = [
+        instanceLabel ? ['Instance', instanceLabel] : null,
         detail.unit ? ['Unit', detail.unit] : null,
         detail.host && detail.port ? ['Target', `${detail.host}:${detail.port}`] : null,
+        detail.systemd_state ? ['Systemd', detail.systemd_state] : null,
+        detail.tcp_reachable !== undefined ? ['TCP', detail.tcp_reachable ? 'reachable' : 'waiting'] : null,
         detail.restart_count !== undefined && detail.restart_count !== null ? ['Restarts', detail.restart_count] : null,
+        elapsed ? ['Elapsed', timeout ? `${elapsed} / ${timeout}` : elapsed] : null,
     ].filter(Boolean);
     if (!facts.length) return '';
     return `
@@ -2546,7 +2578,7 @@ function renderProfileOperationPanel(operation, pendingAction = '') {
     const progress = Math.max(0, Math.min(100, Number(operation.progress || 0)));
     const color = operationStateColor(operation.state);
     const failed = ['failed', 'failed_interrupted'].includes(operation.state);
-    const detail = failed ? operationResultDetail(operation) : {};
+    const detail = failed ? operationResultDetail(operation) : operationRuntimeStatus(operation);
     const message = failed ? operationFailureMessage(operation) : '';
     const logs = failed ? operationFailureLogs(operation) : '';
     const panelClass = failed ? 'failed' : ACTIVE_INFERENCE_OPERATION_STATES.has(operation.state) ? 'active' : 'complete';
@@ -2561,9 +2593,9 @@ function renderProfileOperationPanel(operation, pendingAction = '') {
             </div>
             <div class="progress-bar"><div class="progress-fill ${color}" style="width:${progress}%"></div></div>
             ${renderOperationSteps(operation)}
+            ${renderOperationFacts(detail)}
             ${failed ? `
                 <div class="profile-operation-error">${esc(message)}</div>
-                ${renderOperationFacts(detail)}
                 ${logs ? `<pre class="profile-log-view profile-diagnostic-log">${esc(logs)}</pre>` : ''}
             ` : ''}
         </div>
@@ -3437,8 +3469,10 @@ function renderInferenceOperations(operations) {
     setHtmlIfChanged(el, operations.slice(0, 20).map(op => {
         const progress = Math.max(0, Math.min(100, Number(op.progress || 0)));
         const color = op.state === 'succeeded' ? 'green' : ACTIVE_INFERENCE_OPERATION_STATES.has(op.state) ? 'yellow' : op.state === 'canceled' ? '' : 'red';
-        const failureMessage = ['failed', 'failed_interrupted'].includes(op.state) ? operationFailureMessage(op) : '';
-        const failureLogs = ['failed', 'failed_interrupted'].includes(op.state) ? operationFailureLogs(op) : '';
+        const failed = ['failed', 'failed_interrupted'].includes(op.state);
+        const detail = failed ? operationResultDetail(op) : operationRuntimeStatus(op);
+        const failureMessage = failed ? operationFailureMessage(op) : '';
+        const failureLogs = failed ? operationFailureLogs(op) : '';
         return `
             <div class="model-job-row">
                 <div class="model-job-main">
@@ -3452,6 +3486,7 @@ function renderInferenceOperations(operations) {
                 </div>
                 <div class="model-job-progress">
                     <div class="progress-bar"><div class="progress-fill ${color}" style="width:${progress}%"></div></div>
+                    ${renderOperationFacts(detail)}
                     ${failureMessage ? `<div class="model-job-error">${esc(failureMessage)}</div>` : ''}
                     ${failureLogs ? `<details class="profile-diagnostic"><summary>Startup log excerpt</summary><pre class="profile-log-view profile-diagnostic-log">${esc(failureLogs)}</pre></details>` : ''}
                 </div>
