@@ -166,14 +166,34 @@ def test_vllm_preview_renders_argv_env_redaction_and_raw_args(tmp_path: Path):
                         "served_model_name": "qwen",
                         "context_length": 8192,
                         "dtype": "auto",
+                        "quantization": "fp8",
+                        "kv_cache_dtype": "fp8",
+                        "kv_cache_memory_bytes": "40G",
                         "tensor_parallel": 2,
+                        "pipeline_parallel": 1,
+                        "data_parallel": 2,
                         "gpu_memory_utilization": 0.9,
+                        "cpu_offload_gb": 4,
+                        "max_concurrent_requests": 32,
+                        "max_batch_tokens": 8192,
                         "enable_prefix_caching": True,
+                        "reasoning_parser": "glm45",
+                        "tool_call_parser": "glm47",
+                        "enable_auto_tool_choice": True,
+                        "speculative": {"model": "draft-model", "num_tokens": 5},
                         "host": "127.0.0.1",
                         "port": 10000,
                     },
                     "deployment": {"gpu_policy": {"mode": "profile", "gpu_ids": [0, 1]}},
-                    "engine_config": {"vllm": {"enable_expert_parallel": True, "all2all_backend": "deepep_high_throughput"}},
+                    "engine_config": {"vllm": {
+                        "enable_expert_parallel": True,
+                        "all2all_backend": "deepep_high_throughput",
+                        "api_server_count": 2,
+                        "max_num_partial_prefills": 4,
+                        "long_prefill_token_threshold": 32768,
+                        "moe_backend": "auto",
+                        "linear_backend": "auto",
+                    }},
                     "advanced": {"args": ["--max-num-seqs", "16"], "env": {"OPENAI_API_KEY": "sk-test", "VISIBLE": "yes"}},
                 }
             )
@@ -192,6 +212,20 @@ def test_vllm_preview_renders_argv_env_redaction_and_raw_args(tmp_path: Path):
         assert "OPENAI_API_KEY" in command["redacted_env_keys"]
         assert "--enable-expert-parallel" in command["argv"]
         assert "--all2all-backend" in command["argv"]
+        assert "--kv-cache-dtype" in command["argv"]
+        assert "--kv-cache-memory-bytes" in command["argv"]
+        assert "--data-parallel-size" in command["argv"]
+        assert "--max-num-batched-tokens" in command["argv"]
+        assert "--reasoning-parser" in command["argv"]
+        assert "--tool-call-parser" in command["argv"]
+        assert "--enable-auto-tool-choice" in command["argv"]
+        assert "--speculative-model" in command["argv"]
+        assert "--num-speculative-tokens" in command["argv"]
+        assert "--api-server-count" in command["argv"]
+        assert "--max-num-partial-prefills" in command["argv"]
+        assert "--long-prefill-token-threshold" in command["argv"]
+        assert "--moe-backend" in command["argv"]
+        assert "--linear-backend" in command["argv"]
 
 
 def test_sglang_and_llama_command_renderers(tmp_path: Path):
@@ -224,8 +258,25 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
                     "engine": "sglang",
                     "engine_launcher_id": "sglang-python",
                     "model": {"artifact_id": "sg", "snapshot": "v1"},
-                    "common": {"context_length": 4096, "tensor_parallel": 2, "port": 10001},
-                    "engine_config": {"sglang": {"ep_size": 2, "enable_dp_attention": True}},
+                    "common": {
+                        "context_length": 4096,
+                        "tensor_parallel": 2,
+                        "data_parallel": 2,
+                        "max_prefill_tokens": 2048,
+                        "max_batch_tokens": 8192,
+                        "reasoning_parser": "deepseek-r1",
+                        "tool_call_parser": "hermes",
+                        "speculative": {"model": "draft", "num_tokens": 3},
+                        "port": 10001,
+                    },
+                    "engine_config": {"sglang": {
+                        "ep_size": 2,
+                        "enable_dp_attention": True,
+                        "attn_cp_size": 2,
+                        "chunked_prefill_size": 4096,
+                        "moe_a2a_backend": "deepep",
+                        "moe_runner_backend": "triton",
+                    }},
                 }
             )
             llama_result = inference_planner.preview_profile(
@@ -235,7 +286,15 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
                     "engine_launcher_id": "llama-main",
                     "model": {"artifact_id": "llama", "snapshot": "v1"},
                     "common": {"context_length": 2048, "port": 10002},
-                    "engine_config": {"llama_cpp": {"n_gpu_layers": -1, "threads": 8, "flash_attention": True}},
+                    "engine_config": {"llama_cpp": {
+                        "n_gpu_layers": -1,
+                        "threads": 8,
+                        "threads_batch": 4,
+                        "tensor_split": [1, 1],
+                        "cache_type_k": "q8_0",
+                        "cache_type_v": "q8_0",
+                        "flash_attention": True,
+                    }},
                 }
             )
         finally:
@@ -245,11 +304,22 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
         assert sg_argv[:5] == [str(py), "-m", "sglang.launch_server", "--model-path", str(hf_path)]
         assert "--tp-size" in sg_argv
         assert "--enable-dp-attention" in sg_argv
+        assert "--dp-size" in sg_argv
+        assert "--max-prefill-tokens" in sg_argv
+        assert "--chunked-prefill-size" in sg_argv
+        assert "--moe-a2a-backend" in sg_argv
+        assert "--moe-runner-backend" in sg_argv
+        assert "--speculative-draft-model-path" in sg_argv
+        assert "--speculative-num-steps" in sg_argv
 
         llama_argv = llama_result["command_preview"][0]["argv"]
         assert llama_argv[:3] == [str(llama), "--model", str(gguf_path)]
         assert "--ctx-size" in llama_argv
         assert "--flash-attn" in llama_argv
+        assert "--tensor-split" in llama_argv
+        assert "--threads-batch" in llama_argv
+        assert "--cache-type-k" in llama_argv
+        assert "--cache-type-v" in llama_argv
 
 
 def test_planner_blocks_invalid_refs_ports_and_gpus(tmp_path: Path):

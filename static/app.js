@@ -315,6 +315,7 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', (e) => {
     if (e.target && e.target.id === 'profile-engine') {
         renderProfileSelects();
+        renderProfileEngineFields();
     }
 });
 
@@ -1662,15 +1663,100 @@ function profileConfigChips(profile) {
     if (common.context_length) chips.push(`ctx ${common.context_length}`);
     if (common.dtype) chips.push(`dtype ${common.dtype}`);
     if (common.quantization) chips.push(`quant ${common.quantization}`);
+    if (common.kv_cache_dtype) chips.push(`KV ${common.kv_cache_dtype}`);
     if (common.tensor_parallel) chips.push(`TP ${common.tensor_parallel}`);
     if (common.pipeline_parallel) chips.push(`PP ${common.pipeline_parallel}`);
     if (common.data_parallel) chips.push(`DP ${common.data_parallel}`);
+    if (common.expert_parallel) {
+        const expert = typeof common.expert_parallel === 'object' ? common.expert_parallel.size || 'on' : common.expert_parallel;
+        chips.push(`EP ${expert}`);
+    }
+    if (common.context_parallel) {
+        const cp = common.context_parallel;
+        chips.push(`CP ${cp.decode_size || cp.prefill_size || cp.attn_cp_size || 'on'}`);
+    }
     if (common.gpu_memory_utilization) chips.push(`VRAM ${common.gpu_memory_utilization}`);
     if (common.max_concurrent_requests) chips.push(`seqs ${common.max_concurrent_requests}`);
+    if (common.max_batch_tokens) chips.push(`batch ${common.max_batch_tokens}`);
+    if (common.max_prefill_tokens) chips.push(`prefill ${common.max_prefill_tokens}`);
     if (deployment.mode) chips.push(deployment.mode);
     if (exposure.mode) chips.push(exposure.mode);
     return chips;
 }
+
+const STRUCTURED_COMMON_KEYS = [
+    'served_model_name',
+    'context_length',
+    'dtype',
+    'quantization',
+    'kv_cache_dtype',
+    'kv_cache_memory_bytes',
+    'gpu_memory_utilization',
+    'cpu_offload_gb',
+    'tensor_parallel',
+    'pipeline_parallel',
+    'data_parallel',
+    'expert_parallel',
+    'context_parallel',
+    'max_concurrent_requests',
+    'max_batch_tokens',
+    'max_prefill_tokens',
+    'startup_grace_seconds',
+    'trust_remote_code',
+    'enable_prefix_caching',
+    'reasoning_parser',
+    'tool_call_parser',
+    'enable_auto_tool_choice',
+    'chat_template',
+    'speculative',
+    'gpu_ids',
+];
+
+const STRUCTURED_ENGINE_KEYS = {
+    vllm: [
+        'load_format',
+        'all2all_backend',
+        'expert_placement_strategy',
+        'api_server_count',
+        'data_parallel_size_local',
+        'data_parallel_start_rank',
+        'max_num_partial_prefills',
+        'long_prefill_token_threshold',
+        'moe_backend',
+        'linear_backend',
+        'enable_expert_parallel',
+        'enable_eplb',
+        'enable_dbo',
+    ],
+    sglang: [
+        'load_format',
+        'page_size',
+        'ep_size',
+        'attn_cp_size',
+        'chunked_prefill_size',
+        'load_balance_method',
+        'moe_a2a_backend',
+        'moe_runner_backend',
+        'torchao_config',
+        'dsa_prefill_cp_mode',
+        'enable_dp_attention',
+        'enable_dsa_prefill_context_parallel',
+    ],
+    llama_cpp: [
+        'n_gpu_layers',
+        'main_gpu',
+        'split_mode',
+        'tensor_split',
+        'threads',
+        'threads_batch',
+        'batch_size',
+        'ubatch_size',
+        'cache_type_k',
+        'cache_type_v',
+        'mmproj_ref',
+        'flash_attention',
+    ],
+};
 
 function profileModelOptions() {
     const artifacts = (inferenceModelData && inferenceModelData.artifacts) || [];
@@ -1706,6 +1792,15 @@ function renderProfileSelects() {
         modelEl.innerHTML = profileModelOptions();
         if (current) modelEl.value = current;
     }
+    renderProfileEngineFields();
+}
+
+function renderProfileEngineFields() {
+    const engine = (document.getElementById('profile-engine') || {}).value || 'vllm';
+    const wanted = engine === 'llama.cpp' ? 'llama' : engine;
+    document.querySelectorAll('.engine-field').forEach(section => {
+        section.style.display = section.classList.contains(`engine-field-${wanted}`) ? '' : 'none';
+    });
 }
 
 function parseProfileModelValue(value) {
@@ -1767,6 +1862,171 @@ function omitKeys(value, keys) {
     return result;
 }
 
+function profileNumberValue(id) {
+    const raw = modelOptionalValue(id);
+    if (raw === null) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+}
+
+function profileBooleanValue(id) {
+    const el = document.getElementById(id);
+    return Boolean(el && el.checked);
+}
+
+function setProfileValue(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.value = value === undefined || value === null ? '' : value;
+}
+
+function setProfileChecked(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.checked = Boolean(value);
+}
+
+function clearProfileValues(ids) {
+    ids.forEach(id => setProfileValue(id, ''));
+}
+
+function clearProfileChecks(ids) {
+    ids.forEach(id => setProfileChecked(id, false));
+}
+
+function cleanObject(value) {
+    const result = {};
+    Object.entries(value || {}).forEach(([key, item]) => {
+        if (item === null || item === undefined || item === '') return;
+        if (Array.isArray(item) && item.length === 0) return;
+        if (typeof item === 'object' && !Array.isArray(item) && Object.keys(item).length === 0) return;
+        result[key] = item;
+    });
+    return result;
+}
+
+function engineConfigKey(engine) {
+    return engine === 'llama.cpp' ? 'llama_cpp' : engine;
+}
+
+function getEngineSpecificConfig(engineConfig, engine) {
+    const config = engineConfig || {};
+    if (engine === 'llama.cpp') {
+        return config.llama_cpp || config['llama.cpp'] || config.llamacpp || {};
+    }
+    return config[engine] || {};
+}
+
+function profileTensorSplitValue() {
+    const raw = modelOptionalValue('profile-llama-tensor-split');
+    if (!raw) return null;
+    return raw.split(',').map(part => part.trim()).filter(Boolean).map(part => {
+        const value = Number(part);
+        return Number.isFinite(value) ? value : part;
+    });
+}
+
+function structuredCommonConfig() {
+    const contextParallel = cleanObject({
+        decode_size: profileNumberValue('profile-context-parallel-decode'),
+        prefill_size: profileNumberValue('profile-context-parallel-prefill'),
+    });
+    const speculative = cleanObject({
+        num_tokens: profileNumberValue('profile-speculative-tokens'),
+    });
+    return cleanObject({
+        served_model_name: modelOptionalValue('profile-served-name'),
+        context_length: profileNumberValue('profile-context'),
+        dtype: modelOptionalValue('profile-dtype'),
+        quantization: modelOptionalValue('profile-quantization'),
+        kv_cache_dtype: modelOptionalValue('profile-kv-cache-dtype'),
+        kv_cache_memory_bytes: modelOptionalValue('profile-kv-cache-bytes'),
+        gpu_memory_utilization: profileNumberValue('profile-gpu-memory-utilization'),
+        cpu_offload_gb: profileNumberValue('profile-cpu-offload-gb'),
+        tensor_parallel: profileNumberValue('profile-tensor-parallel'),
+        pipeline_parallel: profileNumberValue('profile-pipeline-parallel'),
+        data_parallel: profileNumberValue('profile-data-parallel'),
+        expert_parallel: profileNumberValue('profile-expert-parallel'),
+        context_parallel: contextParallel,
+        max_concurrent_requests: profileNumberValue('profile-max-concurrent'),
+        max_batch_tokens: profileNumberValue('profile-max-batch-tokens'),
+        max_prefill_tokens: profileNumberValue('profile-max-prefill-tokens'),
+        startup_grace_seconds: profileNumberValue('profile-startup-grace'),
+        trust_remote_code: profileBooleanValue('profile-trust-remote-code') ? true : null,
+        enable_prefix_caching: profileBooleanValue('profile-prefix-caching') ? true : null,
+        reasoning_parser: modelOptionalValue('profile-reasoning-parser'),
+        tool_call_parser: modelOptionalValue('profile-tool-call-parser'),
+        enable_auto_tool_choice: profileBooleanValue('profile-auto-tool-choice') ? true : null,
+        chat_template: modelOptionalValue('profile-chat-template'),
+        speculative,
+    });
+}
+
+function structuredEngineConfig(engine) {
+    if (engine === 'vllm') {
+        return cleanObject({
+            load_format: modelOptionalValue('profile-vllm-load-format'),
+            all2all_backend: modelOptionalValue('profile-vllm-all2all-backend'),
+            expert_placement_strategy: modelOptionalValue('profile-vllm-expert-placement'),
+            api_server_count: profileNumberValue('profile-vllm-api-server-count'),
+            data_parallel_size_local: profileNumberValue('profile-vllm-dp-local-size'),
+            data_parallel_start_rank: profileNumberValue('profile-vllm-dp-start-rank'),
+            max_num_partial_prefills: profileNumberValue('profile-vllm-partial-prefills'),
+            long_prefill_token_threshold: profileNumberValue('profile-vllm-long-prefill-threshold'),
+            moe_backend: modelOptionalValue('profile-vllm-moe-backend'),
+            linear_backend: modelOptionalValue('profile-vllm-linear-backend'),
+            enable_expert_parallel: profileBooleanValue('profile-vllm-expert-parallel') ? true : null,
+            enable_eplb: profileBooleanValue('profile-vllm-eplb') ? true : null,
+            enable_dbo: profileBooleanValue('profile-vllm-dbo') ? true : null,
+        });
+    }
+    if (engine === 'sglang') {
+        return cleanObject({
+            load_format: modelOptionalValue('profile-sglang-load-format'),
+            page_size: profileNumberValue('profile-sglang-page-size'),
+            ep_size: profileNumberValue('profile-sglang-ep-size'),
+            attn_cp_size: profileNumberValue('profile-sglang-attn-cp-size'),
+            chunked_prefill_size: profileNumberValue('profile-sglang-chunked-prefill-size'),
+            load_balance_method: modelOptionalValue('profile-sglang-load-balance-method'),
+            moe_a2a_backend: modelOptionalValue('profile-sglang-moe-a2a-backend'),
+            moe_runner_backend: modelOptionalValue('profile-sglang-moe-runner-backend'),
+            torchao_config: modelOptionalValue('profile-sglang-torchao-config'),
+            dsa_prefill_cp_mode: modelOptionalValue('profile-sglang-dsa-cp-mode'),
+            enable_dp_attention: profileBooleanValue('profile-sglang-dp-attention') ? true : null,
+            enable_dsa_prefill_context_parallel: profileBooleanValue('profile-sglang-dsa-prefill-cp') ? true : null,
+        });
+    }
+    if (engine === 'llama.cpp') {
+        return cleanObject({
+            n_gpu_layers: profileNumberValue('profile-llama-gpu-layers'),
+            main_gpu: profileNumberValue('profile-llama-main-gpu'),
+            split_mode: modelOptionalValue('profile-llama-split-mode'),
+            tensor_split: profileTensorSplitValue(),
+            threads: profileNumberValue('profile-llama-threads'),
+            threads_batch: profileNumberValue('profile-llama-threads-batch'),
+            batch_size: profileNumberValue('profile-llama-batch-size'),
+            ubatch_size: profileNumberValue('profile-llama-ubatch-size'),
+            cache_type_k: modelOptionalValue('profile-llama-cache-type-k'),
+            cache_type_v: modelOptionalValue('profile-llama-cache-type-v'),
+            mmproj_ref: modelOptionalValue('profile-llama-mmproj-ref'),
+            flash_attention: profileBooleanValue('profile-llama-flash-attn') ? true : null,
+        });
+    }
+    return {};
+}
+
+function mergeEngineConfig(engine, structured, rawConfig) {
+    const key = engineConfigKey(engine);
+    const raw = rawConfig && typeof rawConfig === 'object' ? rawConfig : {};
+    const existing = getEngineSpecificConfig(raw, engine);
+    const result = { ...raw };
+    result[key] = cleanObject({ ...existing, ...structured });
+    if (!Object.keys(result[key]).length) delete result[key];
+    if (engine === 'llama.cpp') {
+        delete result['llama.cpp'];
+        delete result.llamacpp;
+    }
+    return cleanObject(result);
+}
+
 function buildProfileDraft() {
     const id = modelOptionalValue('profile-id');
     const displayName = modelOptionalValue('profile-display-name');
@@ -1777,22 +2037,17 @@ function buildProfileDraft() {
     const replicas = Number(document.getElementById('profile-replicas').value || 1);
     const port = Number(document.getElementById('profile-port').value || 0);
     const gpuIds = parseProfileGpuIds();
-    const commonFields = {
-        served_model_name: modelOptionalValue('profile-served-name'),
-        context_length: Number(document.getElementById('profile-context').value || 0) || null,
-        dtype: modelOptionalValue('profile-dtype'),
-        tensor_parallel: Number(document.getElementById('profile-tensor-parallel').value || 0) || null,
+    const common = {
+        ...profileJsonValue('profile-common-json', 'Common JSON'),
+        ...structuredCommonConfig(),
         gpu_ids: gpuIds.length ? gpuIds : null,
     };
-    const common = {
-        ...commonFields,
-        ...profileJsonValue('profile-common-json', 'Common JSON'),
-    };
     Object.keys(common).forEach(key => common[key] === null && delete common[key]);
-    const engineConfig = normalizeEngineConfigJson(
+    const rawEngineConfig = normalizeEngineConfigJson(
         engine,
         profileJsonValue('profile-engine-json', 'Engine JSON')
     );
+    const engineConfig = mergeEngineConfig(engine, structuredEngineConfig(engine), rawEngineConfig);
     const deployment = {
         mode: deploymentMode,
         replicas: deploymentMode === 'replicated' ? Math.max(1, replicas || 1) : 1,
@@ -1829,11 +2084,32 @@ function buildProfileDraft() {
 
 function resetProfileForm() {
     ['profile-edit-id', 'profile-id', 'profile-display-name', 'profile-served-name', 'profile-context',
-        'profile-dtype', 'profile-tensor-parallel', 'profile-port', 'profile-gpus', 'profile-hostname',
-        'profile-raw-args', 'profile-env', 'profile-common-json', 'profile-engine-json'].forEach(id => {
+        'profile-dtype', 'profile-quantization', 'profile-kv-cache-dtype', 'profile-kv-cache-bytes',
+        'profile-gpu-memory-utilization', 'profile-cpu-offload-gb', 'profile-tensor-parallel',
+        'profile-pipeline-parallel', 'profile-data-parallel', 'profile-expert-parallel',
+        'profile-context-parallel-decode', 'profile-context-parallel-prefill', 'profile-max-concurrent',
+        'profile-max-batch-tokens', 'profile-max-prefill-tokens', 'profile-startup-grace',
+        'profile-reasoning-parser', 'profile-tool-call-parser', 'profile-chat-template',
+        'profile-speculative-tokens', 'profile-port', 'profile-gpus', 'profile-hostname',
+        'profile-vllm-load-format', 'profile-vllm-all2all-backend', 'profile-vllm-expert-placement',
+        'profile-vllm-api-server-count', 'profile-vllm-dp-local-size', 'profile-vllm-dp-start-rank',
+        'profile-vllm-partial-prefills', 'profile-vllm-long-prefill-threshold', 'profile-vllm-moe-backend',
+        'profile-vllm-linear-backend', 'profile-sglang-load-format', 'profile-sglang-page-size',
+        'profile-sglang-ep-size', 'profile-sglang-attn-cp-size', 'profile-sglang-chunked-prefill-size',
+        'profile-sglang-load-balance-method', 'profile-sglang-moe-a2a-backend',
+        'profile-sglang-moe-runner-backend', 'profile-sglang-torchao-config', 'profile-sglang-dsa-cp-mode',
+        'profile-llama-gpu-layers', 'profile-llama-main-gpu', 'profile-llama-split-mode',
+        'profile-llama-tensor-split', 'profile-llama-threads', 'profile-llama-threads-batch',
+        'profile-llama-batch-size', 'profile-llama-ubatch-size', 'profile-llama-cache-type-k',
+        'profile-llama-cache-type-v', 'profile-llama-mmproj-ref', 'profile-raw-args', 'profile-env',
+        'profile-common-json', 'profile-engine-json'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
+    ['profile-trust-remote-code', 'profile-prefix-caching', 'profile-auto-tool-choice',
+        'profile-vllm-expert-parallel', 'profile-vllm-eplb', 'profile-vllm-dbo',
+        'profile-sglang-dp-attention', 'profile-sglang-dsa-prefill-cp',
+        'profile-llama-flash-attn'].forEach(id => setProfileChecked(id, false));
     const idEl = document.getElementById('profile-id');
     if (idEl) idEl.disabled = false;
     const engineEl = document.getElementById('profile-engine');
@@ -1849,6 +2125,7 @@ function resetProfileForm() {
     const exposureEl = document.getElementById('profile-exposure-mode');
     if (exposureEl) exposureEl.value = 'local';
     renderProfileSelects();
+    renderProfileEngineFields();
     setElementHtml('profile-preview-panel', '<div class="empty-state">No preview yet.</div>');
 }
 
@@ -1864,10 +2141,33 @@ function fillProfileForm(profile) {
     const snapshot = profile.model && profile.model.snapshot ? `@${profile.model.snapshot}` : '@';
     document.getElementById('profile-model').value = profile.model && profile.model.artifact_id ? `${profile.model.artifact_id}${snapshot}` : '';
     const common = profile.common || {};
-    document.getElementById('profile-served-name').value = common.served_model_name || '';
-    document.getElementById('profile-context').value = common.context_length || '';
-    document.getElementById('profile-dtype').value = common.dtype || '';
-    document.getElementById('profile-tensor-parallel').value = common.tensor_parallel || '';
+    const contextParallel = common.context_parallel || {};
+    const speculative = common.speculative || {};
+    setProfileValue('profile-served-name', common.served_model_name);
+    setProfileValue('profile-context', common.context_length);
+    setProfileValue('profile-dtype', common.dtype);
+    setProfileValue('profile-quantization', common.quantization);
+    setProfileValue('profile-kv-cache-dtype', common.kv_cache_dtype);
+    setProfileValue('profile-kv-cache-bytes', common.kv_cache_memory_bytes);
+    setProfileValue('profile-gpu-memory-utilization', common.gpu_memory_utilization);
+    setProfileValue('profile-cpu-offload-gb', common.cpu_offload_gb);
+    setProfileValue('profile-tensor-parallel', common.tensor_parallel);
+    setProfileValue('profile-pipeline-parallel', common.pipeline_parallel);
+    setProfileValue('profile-data-parallel', common.data_parallel);
+    setProfileValue('profile-expert-parallel', typeof common.expert_parallel === 'object' ? common.expert_parallel.size : common.expert_parallel);
+    setProfileValue('profile-context-parallel-decode', contextParallel.decode_size);
+    setProfileValue('profile-context-parallel-prefill', contextParallel.prefill_size);
+    setProfileValue('profile-max-concurrent', common.max_concurrent_requests);
+    setProfileValue('profile-max-batch-tokens', common.max_batch_tokens);
+    setProfileValue('profile-max-prefill-tokens', common.max_prefill_tokens);
+    setProfileValue('profile-startup-grace', common.startup_grace_seconds);
+    setProfileValue('profile-reasoning-parser', common.reasoning_parser);
+    setProfileValue('profile-tool-call-parser', common.tool_call_parser);
+    setProfileValue('profile-chat-template', common.chat_template);
+    setProfileValue('profile-speculative-tokens', speculative.num_tokens);
+    setProfileChecked('profile-trust-remote-code', common.trust_remote_code);
+    setProfileChecked('profile-prefix-caching', common.enable_prefix_caching);
+    setProfileChecked('profile-auto-tool-choice', common.enable_auto_tool_choice);
     document.getElementById('profile-port').value = profile.instances && profile.instances[0] ? profile.instances[0].port || '' : '';
     const deployment = profile.deployment || {};
     const gpuPolicy = deployment.gpu_policy || {};
@@ -1882,16 +2182,80 @@ function fillProfileForm(profile) {
     const advanced = profile.advanced || {};
     document.getElementById('profile-raw-args').value = (advanced.args || []).join('\n');
     document.getElementById('profile-env').value = Object.entries(advanced.env || {}).map(([key, value]) => `${key}=${value}`).join('\n');
-    document.getElementById('profile-common-json').value = jsonForTextarea(omitKeys(common, [
-        'served_model_name',
-        'context_length',
-        'dtype',
-        'tensor_parallel',
-        'gpu_ids',
-    ]));
+    document.getElementById('profile-common-json').value = jsonForTextarea(omitKeys(common, STRUCTURED_COMMON_KEYS));
     const engineConfig = profile.engine_config || {};
-    const engineSpecific = engineConfig[profile.engine] || engineConfig.llama_cpp || engineConfig.llamacpp || engineConfig;
-    document.getElementById('profile-engine-json').value = jsonForTextarea(engineSpecific);
+    const engineSpecific = getEngineSpecificConfig(engineConfig, profile.engine || 'vllm');
+    setProfileValue('profile-vllm-load-format', engineSpecific.load_format);
+    setProfileValue('profile-vllm-all2all-backend', engineSpecific.all2all_backend);
+    setProfileValue('profile-vllm-expert-placement', engineSpecific.expert_placement_strategy);
+    setProfileValue('profile-vllm-api-server-count', engineSpecific.api_server_count);
+    setProfileValue('profile-vllm-dp-local-size', engineSpecific.data_parallel_size_local);
+    setProfileValue('profile-vllm-dp-start-rank', engineSpecific.data_parallel_start_rank);
+    setProfileValue('profile-vllm-partial-prefills', engineSpecific.max_num_partial_prefills);
+    setProfileValue('profile-vllm-long-prefill-threshold', engineSpecific.long_prefill_token_threshold);
+    setProfileValue('profile-vllm-moe-backend', engineSpecific.moe_backend);
+    setProfileValue('profile-vllm-linear-backend', engineSpecific.linear_backend);
+    setProfileChecked('profile-vllm-expert-parallel', engineSpecific.enable_expert_parallel);
+    setProfileChecked('profile-vllm-eplb', engineSpecific.enable_eplb);
+    setProfileChecked('profile-vllm-dbo', engineSpecific.enable_dbo);
+    setProfileValue('profile-sglang-load-format', engineSpecific.load_format);
+    setProfileValue('profile-sglang-page-size', engineSpecific.page_size);
+    setProfileValue('profile-sglang-ep-size', engineSpecific.ep_size);
+    setProfileValue('profile-sglang-attn-cp-size', engineSpecific.attn_cp_size);
+    setProfileValue('profile-sglang-chunked-prefill-size', engineSpecific.chunked_prefill_size);
+    setProfileValue('profile-sglang-load-balance-method', engineSpecific.load_balance_method);
+    setProfileValue('profile-sglang-moe-a2a-backend', engineSpecific.moe_a2a_backend);
+    setProfileValue('profile-sglang-moe-runner-backend', engineSpecific.moe_runner_backend);
+    setProfileValue('profile-sglang-torchao-config', engineSpecific.torchao_config);
+    setProfileValue('profile-sglang-dsa-cp-mode', engineSpecific.dsa_prefill_cp_mode);
+    setProfileChecked('profile-sglang-dp-attention', engineSpecific.enable_dp_attention);
+    setProfileChecked('profile-sglang-dsa-prefill-cp', engineSpecific.enable_dsa_prefill_context_parallel);
+    setProfileValue('profile-llama-gpu-layers', engineSpecific.n_gpu_layers);
+    setProfileValue('profile-llama-main-gpu', engineSpecific.main_gpu);
+    setProfileValue('profile-llama-split-mode', engineSpecific.split_mode);
+    setProfileValue('profile-llama-tensor-split', Array.isArray(engineSpecific.tensor_split) ? engineSpecific.tensor_split.join(',') : engineSpecific.tensor_split);
+    setProfileValue('profile-llama-threads', engineSpecific.threads);
+    setProfileValue('profile-llama-threads-batch', engineSpecific.threads_batch);
+    setProfileValue('profile-llama-batch-size', engineSpecific.batch_size);
+    setProfileValue('profile-llama-ubatch-size', engineSpecific.ubatch_size);
+    setProfileValue('profile-llama-cache-type-k', engineSpecific.cache_type_k);
+    setProfileValue('profile-llama-cache-type-v', engineSpecific.cache_type_v);
+    setProfileValue('profile-llama-mmproj-ref', engineSpecific.mmproj_ref);
+    setProfileChecked('profile-llama-flash-attn', engineSpecific.flash_attention);
+    const selectedEngine = profile.engine || 'vllm';
+    if (selectedEngine !== 'vllm') {
+        clearProfileValues([
+            'profile-vllm-load-format', 'profile-vllm-all2all-backend', 'profile-vllm-expert-placement',
+            'profile-vllm-api-server-count', 'profile-vllm-dp-local-size', 'profile-vllm-dp-start-rank',
+            'profile-vllm-partial-prefills', 'profile-vllm-long-prefill-threshold', 'profile-vllm-moe-backend',
+            'profile-vllm-linear-backend',
+        ]);
+        clearProfileChecks(['profile-vllm-expert-parallel', 'profile-vllm-eplb', 'profile-vllm-dbo']);
+    }
+    if (selectedEngine !== 'sglang') {
+        clearProfileValues([
+            'profile-sglang-load-format', 'profile-sglang-page-size', 'profile-sglang-ep-size',
+            'profile-sglang-attn-cp-size', 'profile-sglang-chunked-prefill-size',
+            'profile-sglang-load-balance-method', 'profile-sglang-moe-a2a-backend',
+            'profile-sglang-moe-runner-backend', 'profile-sglang-torchao-config',
+            'profile-sglang-dsa-cp-mode',
+        ]);
+        clearProfileChecks(['profile-sglang-dp-attention', 'profile-sglang-dsa-prefill-cp']);
+    }
+    if (selectedEngine !== 'llama.cpp') {
+        clearProfileValues([
+            'profile-llama-gpu-layers', 'profile-llama-main-gpu', 'profile-llama-split-mode',
+            'profile-llama-tensor-split', 'profile-llama-threads', 'profile-llama-threads-batch',
+            'profile-llama-batch-size', 'profile-llama-ubatch-size', 'profile-llama-cache-type-k',
+            'profile-llama-cache-type-v', 'profile-llama-mmproj-ref',
+        ]);
+        clearProfileChecks(['profile-llama-flash-attn']);
+    }
+    document.getElementById('profile-engine-json').value = jsonForTextarea(omitKeys(
+        engineSpecific,
+        STRUCTURED_ENGINE_KEYS[engineConfigKey(profile.engine || 'vllm')] || []
+    ));
+    renderProfileEngineFields();
 }
 
 async function previewInferenceProfile() {
@@ -2129,7 +2493,10 @@ function profileSummaryFacts(profile) {
         ['Context', common.context_length || '--'],
         ['DType', common.dtype || '--'],
         ['Quantization', common.quantization || '--'],
-        ['Parallelism', `TP ${common.tensor_parallel || 1} · PP ${common.pipeline_parallel || 1} · DP ${common.data_parallel || 1}`],
+        ['KV Cache', `${common.kv_cache_dtype || '--'}${common.kv_cache_memory_bytes ? ` · ${common.kv_cache_memory_bytes}` : ''}`],
+        ['Parallelism', `TP ${common.tensor_parallel || 1} · PP ${common.pipeline_parallel || 1} · DP ${common.data_parallel || 1} · EP ${typeof common.expert_parallel === 'object' ? common.expert_parallel.size || 'on' : common.expert_parallel || 1}`],
+        ['Capacity', `${common.max_concurrent_requests || '--'} seqs · ${common.max_batch_tokens || '--'} batch tokens`],
+        ['Memory', `${common.gpu_memory_utilization || '--'} GPU target · ${common.cpu_offload_gb || 0}GB CPU offload`],
         ['Deployment', deployment.mode || 'single'],
         ['GPU claim', gpuPolicy.claim_mode || 'exclusive'],
     ];

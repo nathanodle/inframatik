@@ -371,16 +371,116 @@
                             <input type="number" id="profile-context" placeholder="65536" min="1" step="1" autocomplete="off">
                         </div>
                     </div>
+                    <div class="settings-subsection-header compact">Runtime</div>
                     <div class="model-form-grid">
                         <div class="form-group">
                             <label>Dtype</label>
                             <input type="text" id="profile-dtype" placeholder="auto" autocomplete="off">
                         </div>
                         <div class="form-group">
+                            <label>Quantization</label>
+                            <input type="text" id="profile-quantization" placeholder="fp8, awq, gptq" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>KV Cache Dtype</label>
+                            <input type="text" id="profile-kv-cache-dtype" placeholder="fp8, auto" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>KV Cache Bytes</label>
+                            <input type="text" id="profile-kv-cache-bytes" placeholder="40G, 42949672960" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>GPU Memory Target</label>
+                            <input type="number" id="profile-gpu-memory-utilization" placeholder="0.90" min="0" max="1" step="0.01" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>CPU Offload GB</label>
+                            <input type="number" id="profile-cpu-offload-gb" placeholder="0" min="0" step="0.5" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="settings-subsection-header compact">Parallelism</div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
                             <label>Tensor Parallel</label>
                             <input type="number" id="profile-tensor-parallel" placeholder="1" min="1" step="1" autocomplete="off">
                         </div>
+                        <div class="form-group">
+                            <label>Pipeline Parallel</label>
+                            <input type="number" id="profile-pipeline-parallel" placeholder="1" min="1" step="1" autocomplete="off">
+                        </div>
                     </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Data Parallel</label>
+                            <input type="number" id="profile-data-parallel" placeholder="1" min="1" step="1" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Expert Parallel</label>
+                            <input type="number" id="profile-expert-parallel" placeholder="size or blank" min="1" step="1" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Context Parallel Decode</label>
+                            <input type="number" id="profile-context-parallel-decode" placeholder="vLLM decode size" min="1" step="1" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Context Parallel Prefill</label>
+                            <input type="number" id="profile-context-parallel-prefill" placeholder="vLLM prefill size" min="1" step="1" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="settings-subsection-header compact">Capacity</div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Max Active Requests</label>
+                            <input type="number" id="profile-max-concurrent" placeholder="max seqs/running requests" min="1" step="1" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Max Batch Tokens</label>
+                            <input type="number" id="profile-max-batch-tokens" placeholder="batched token budget" min="1" step="1" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Max Prefill Tokens</label>
+                            <input type="number" id="profile-max-prefill-tokens" placeholder="SGLang prefill cap" min="1" step="1" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Startup Grace Seconds</label>
+                            <input type="number" id="profile-startup-grace" placeholder="600" min="1" step="1" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="settings-subsection-header compact">Behavior</div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Reasoning Parser</label>
+                            <input type="text" id="profile-reasoning-parser" placeholder="glm45, deepseek-r1" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Tool Call Parser</label>
+                            <input type="text" id="profile-tool-call-parser" placeholder="glm47, hermes" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Chat Template</label>
+                            <input type="text" id="profile-chat-template" placeholder="path or template name" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Speculative Tokens</label>
+                            <input type="number" id="profile-speculative-tokens" placeholder="MTP tokens" min="1" step="1" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="form-check-grid">
+                        <label class="model-checkbox"><input type="checkbox" id="profile-trust-remote-code"> Trust remote code</label>
+                        <label class="model-checkbox"><input type="checkbox" id="profile-prefix-caching"> Prefix caching</label>
+                        <label class="model-checkbox"><input type="checkbox" id="profile-auto-tool-choice"> Auto tool choice</label>
+                    </div>
+                    <div class="settings-subsection-header compact">Placement</div>
                     <div class="model-form-grid">
                         <div class="form-group">
                             <label>Mode</label>
@@ -423,6 +523,7 @@
                             </select>
                         </div>
                     </div>
+                    <div class="settings-subsection-header compact">Exposure</div>
                     <div class="model-form-grid">
                         <div class="form-group">
                             <label>Exposure</label>
@@ -437,6 +538,186 @@
                             <input type="text" id="profile-hostname" placeholder="llm.example.com" autocomplete="off">
                         </div>
                     </div>
+                    <details class="profile-engine-details">
+                        <summary>Engine Tuning</summary>
+                        <div class="engine-field engine-field-vllm">
+                            <div class="settings-subsection-header compact">vLLM</div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>Load Format</label>
+                                    <input type="text" id="profile-vllm-load-format" placeholder="auto, safetensors, bitsandbytes" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>All-to-All Backend</label>
+                                    <input type="text" id="profile-vllm-all2all-backend" placeholder="deepep_high_throughput" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>Expert Placement</label>
+                                    <input type="text" id="profile-vllm-expert-placement" placeholder="linear, round_robin" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>API Server Count</label>
+                                    <input type="number" id="profile-vllm-api-server-count" placeholder="1" min="1" step="1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>DP Local Size</label>
+                                    <input type="number" id="profile-vllm-dp-local-size" placeholder="local DP workers" min="1" step="1" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>DP Start Rank</label>
+                                    <input type="number" id="profile-vllm-dp-start-rank" placeholder="0" min="0" step="1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>Partial Prefills</label>
+                                    <input type="number" id="profile-vllm-partial-prefills" placeholder="max partial prefills" min="1" step="1" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Long Prefill Threshold</label>
+                                    <input type="number" id="profile-vllm-long-prefill-threshold" placeholder="tokens" min="1" step="1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>MoE Backend</label>
+                                    <input type="text" id="profile-vllm-moe-backend" placeholder="auto, pplx" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Linear Backend</label>
+                                    <input type="text" id="profile-vllm-linear-backend" placeholder="auto" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="form-check-grid">
+                                <label class="model-checkbox"><input type="checkbox" id="profile-vllm-expert-parallel"> Enable expert parallel</label>
+                                <label class="model-checkbox"><input type="checkbox" id="profile-vllm-eplb"> Enable EPLB</label>
+                                <label class="model-checkbox"><input type="checkbox" id="profile-vllm-dbo"> Enable DBO</label>
+                            </div>
+                        </div>
+                        <div class="engine-field engine-field-sglang">
+                            <div class="settings-subsection-header compact">SGLang</div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>Load Format</label>
+                                    <input type="text" id="profile-sglang-load-format" placeholder="auto, safetensors" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Page Size</label>
+                                    <input type="number" id="profile-sglang-page-size" placeholder="1" min="1" step="1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>EP Size</label>
+                                    <input type="number" id="profile-sglang-ep-size" placeholder="expert parallel size" min="1" step="1" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Attention CP Size</label>
+                                    <input type="number" id="profile-sglang-attn-cp-size" placeholder="context parallel size" min="1" step="1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>Chunked Prefill Size</label>
+                                    <input type="number" id="profile-sglang-chunked-prefill-size" placeholder="tokens" min="1" step="1" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Load Balance Method</label>
+                                    <input type="text" id="profile-sglang-load-balance-method" placeholder="round_robin, shortest_queue" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>MoE A2A Backend</label>
+                                    <input type="text" id="profile-sglang-moe-a2a-backend" placeholder="deepep, nccl" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>MoE Runner Backend</label>
+                                    <input type="text" id="profile-sglang-moe-runner-backend" placeholder="triton, flashinfer" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>TorchAO Config</label>
+                                    <input type="text" id="profile-sglang-torchao-config" placeholder="int8wo, fp8dq" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>DSA CP Mode</label>
+                                    <input type="text" id="profile-sglang-dsa-cp-mode" placeholder="default" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="form-check-grid">
+                                <label class="model-checkbox"><input type="checkbox" id="profile-sglang-dp-attention"> DP attention</label>
+                                <label class="model-checkbox"><input type="checkbox" id="profile-sglang-dsa-prefill-cp"> DSA prefill context parallel</label>
+                            </div>
+                        </div>
+                        <div class="engine-field engine-field-llama">
+                            <div class="settings-subsection-header compact">llama.cpp</div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>GPU Layers</label>
+                                    <input type="number" id="profile-llama-gpu-layers" placeholder="-1 for all" step="1" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Main GPU</label>
+                                    <input type="number" id="profile-llama-main-gpu" placeholder="0" min="0" step="1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>Split Mode</label>
+                                    <input type="text" id="profile-llama-split-mode" placeholder="layer, row, none" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Tensor Split</label>
+                                    <input type="text" id="profile-llama-tensor-split" placeholder="1,1,1,1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>Threads</label>
+                                    <input type="number" id="profile-llama-threads" placeholder="CPU threads" min="1" step="1" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Batch Threads</label>
+                                    <input type="number" id="profile-llama-threads-batch" placeholder="batch CPU threads" min="1" step="1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>Batch Size</label>
+                                    <input type="number" id="profile-llama-batch-size" placeholder="2048" min="1" step="1" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>UBatch Size</label>
+                                    <input type="number" id="profile-llama-ubatch-size" placeholder="512" min="1" step="1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>Cache Type K</label>
+                                    <input type="text" id="profile-llama-cache-type-k" placeholder="f16, q8_0" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Cache Type V</label>
+                                    <input type="text" id="profile-llama-cache-type-v" placeholder="f16, q8_0" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>MMProj Ref</label>
+                                    <input type="text" id="profile-llama-mmproj-ref" placeholder="vision projector artifact/path" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="form-check-grid">
+                                <label class="model-checkbox"><input type="checkbox" id="profile-llama-flash-attn"> Flash attention</label>
+                            </div>
+                        </div>
+                    </details>
                     <div class="model-form-grid">
                         <div class="form-group">
                             <label>Raw Args</label>

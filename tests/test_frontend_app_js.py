@@ -609,6 +609,14 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-common-json"' in index_html
     assert 'id="profile-engine-json"' in index_html
     assert 'id="profile-gpu-hints"' in index_html
+    assert 'id="profile-kv-cache-dtype"' in index_html
+    assert 'id="profile-gpu-memory-utilization"' in index_html
+    assert 'id="profile-expert-parallel"' in index_html
+    assert 'id="profile-max-concurrent"' in index_html
+    assert 'id="profile-reasoning-parser"' in index_html
+    assert 'id="profile-vllm-all2all-backend"' in index_html
+    assert 'id="profile-sglang-moe-a2a-backend"' in index_html
+    assert 'id="profile-llama-tensor-split"' in index_html
     assert 'id="inference-profiles-list"' in index_html
     assert 'id="inference-operations-list"' in index_html
     assert 'data-inference-tab="launchers"' in index_html
@@ -640,6 +648,10 @@ def test_static_inference_model_ui_assets_present():
     assert "profileJsonValue" in app_js
     assert "renderInferenceGpuHints" in app_js
     assert "profileConfigChips" in app_js
+    assert "structuredCommonConfig" in app_js
+    assert "structuredEngineConfig" in app_js
+    assert "mergeEngineConfig" in app_js
+    assert "renderProfileEngineFields" in app_js
     assert "removeProfileCloudflare" in app_js
     assert "submitModelImport" in app_js
     assert "submitModelUrlDownload" in app_js
@@ -659,6 +671,8 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-test-panel" in style_css
     assert ".profile-config-chips" in style_css
     assert ".profile-gpu-chip" in style_css
+    assert ".profile-engine-details" in style_css
+    assert ".form-check-grid" in style_css
     assert ".profile-preview-panel" in style_css
     assert ".profile-connect-panel" in style_css
     assert ".connect-action-grid" in style_css
