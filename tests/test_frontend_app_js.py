@@ -1054,6 +1054,8 @@ def test_app_js_cloudflare_section_gating_by_role():
                         const calls = [];
                         isMaster = false;
                         selectedNodeId = 'self-node';
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'jobs';
                         document.getElementById('profile-cf-delete-owned-qwen-cleanup').checked = true;
                         confirm = function(message) {
                             calls.push(['confirm', message]);
@@ -1062,22 +1064,90 @@ def test_app_js_cloudflare_section_gating_by_role():
                         api = async function(method, path) {
                             calls.push([method, path]);
                             if (method === 'DELETE' && path === '/api/inference/profiles/qwen-cleanup/cloudflare/exposure?delete_owned_tokens=true') {
-                                return { warnings: [] };
+                                return {
+                                    warnings: [],
+                                    profile: {
+                                        id: 'qwen-cleanup',
+                                        display_name: 'Qwen Cleanup',
+                                        exposure: { mode: 'local' },
+                                        cloudflare: { service_tokens: [] },
+                                    },
+                                };
                             }
                             throw new Error('unexpected API call: ' + method + ' ' + path);
                         };
                         refreshInferenceProfiles = async function() { calls.push(['refreshProfiles']); };
                         loadProfileConnect = async function(profileId) { calls.push(['loadConnect', profileId]); };
                         await removeProfileCloudflare('qwen-cleanup');
-                        return calls;
+                        return { calls, profile: inferenceProfilesData.find(item => item.id === 'qwen-cleanup') };
                     })()
                 `, context);
                 assert(
-                    removeCloudflareCalls.filter(call => call[0] === 'confirm').length === 1 &&
-                    removeCloudflareCalls.some(call => call[0] === 'DELETE' && call[1].endsWith('delete_owned_tokens=true')) &&
-                    removeCloudflareCalls.some(call => call[0] === 'refreshProfiles') &&
-                    removeCloudflareCalls.some(call => call[0] === 'loadConnect' && call[1] === 'qwen-cleanup'),
-                    'Cloudflare endpoint removal should read the delete-owned checkbox and use one confirmation'
+                    removeCloudflareCalls.calls.filter(call => call[0] === 'confirm').length === 1 &&
+                    removeCloudflareCalls.calls.some(call => call[0] === 'DELETE' && call[1].endsWith('delete_owned_tokens=true')) &&
+                    !removeCloudflareCalls.calls.some(call => call[0] === 'refreshProfiles') &&
+                    removeCloudflareCalls.calls.some(call => call[0] === 'loadConnect' && call[1] === 'qwen-cleanup') &&
+                    removeCloudflareCalls.profile.exposure.mode === 'local',
+                    'Cloudflare endpoint removal should patch local profile state and reload only the Connect panel'
+                );
+
+                const apiKeyPatchResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        isMaster = false;
+                        selectedNodeId = 'self-node';
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'jobs';
+                        inferenceProfilesData = [{
+                            id: 'qwen-key',
+                            display_name: 'Qwen Key',
+                            exposure: { mode: 'lan' },
+                            cloudflare: {},
+                            secrets: {},
+                        }];
+                        api = async function(method, path, body) {
+                            calls.push([method, path, body && body.render_bundle]);
+                            if (method === 'POST' && path === '/api/inference/profiles/qwen-key/api-key') {
+                                return {
+                                    status: 'rotated',
+                                    engine_api_key: 'llm_raw_secret',
+                                    profile: {
+                                        id: 'qwen-key',
+                                        display_name: 'Qwen Key',
+                                        exposure: { mode: 'lan' },
+                                        cloudflare: {},
+                                        secrets: { engine_api_key_id: 'sec-1' },
+                                    },
+                                    client_bundle: {
+                                        id: 'default',
+                                        target: { type: 'profile' },
+                                        exposure_mode: 'lan',
+                                        base_url: 'http://node.local:10000/v1',
+                                        model: 'qwen-key',
+                                        headers: { Authorization: 'Bearer llm_raw_secret' },
+                                        secret_state: { engine_api_key_configured: true },
+                                        examples: { curl: 'curl http://node.local:10000/v1/models' },
+                                    },
+                                };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        refreshInferenceProfiles = async function() { calls.push(['refreshProfiles']); };
+                        await rotateProfileApiKey('qwen-key');
+                        return {
+                            calls,
+                            profile: inferenceProfilesData.find(item => item.id === 'qwen-key'),
+                            html: document.getElementById('profile-detail-qwen-key').innerHTML,
+                        };
+                    })()
+                `, context);
+                assert(
+                    apiKeyPatchResult.calls.some(call => call[0] === 'POST' && call[1] === '/api/inference/profiles/qwen-key/api-key' && call[2] === true) &&
+                    !apiKeyPatchResult.calls.some(call => call[0] === 'refreshProfiles') &&
+                    apiKeyPatchResult.profile.secrets.engine_api_key_id === 'sec-1' &&
+                    apiKeyPatchResult.html.includes('engine key ready') &&
+                    apiKeyPatchResult.html.includes('data-copy="Bearer llm_raw_secret"'),
+                    'Engine API key rotation should patch local profile state and render the one-time secret without a broad refresh'
                 );
 
                 const restartButtonDisplay = vm.runInContext(`
@@ -2086,6 +2156,7 @@ def test_static_inference_model_ui_assets_present():
     assert "profileCanSaveRestart" in app_js
     assert "saveInferenceProfile({restart:true})" in index_html
     assert "/api/inference/profiles/${encodeURIComponent(profileId)}/export" in app_js
+    assert "patchInferenceProfile" in app_js
     assert "rotateProfileApiKey" in app_js
     assert "loadProfileConnect" in app_js
     assert "copyButton" in app_js

@@ -2907,6 +2907,22 @@ function profileById(profileId) {
     return inferenceProfilesData.find(item => item.id === profileId) || null;
 }
 
+function patchInferenceProfile(profile) {
+    if (!profile || !profile.id) return false;
+    let found = false;
+    inferenceProfilesData = (inferenceProfilesData || []).map(item => {
+        if (item.id !== profile.id) return item;
+        found = true;
+        return profile;
+    });
+    if (!found) inferenceProfilesData = [profile, ...(inferenceProfilesData || [])];
+    if (currentAppView === 'inference' && activeInferenceTab === 'profiles') {
+        renderInferenceProfiles(inferenceProfilesData);
+    }
+    renderProfileSelects();
+    return true;
+}
+
 function profileInstanceGpuText(instance) {
     const ids = instance.gpu_ids || [];
     if (!ids.length) return 'none';
@@ -3955,7 +3971,7 @@ async function loadProfileConnect(profileId) {
 async function rotateProfileApiKey(profileId) {
     try {
         const data = await api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/api-key`), { render_bundle: true });
-        await refreshInferenceProfiles();
+        patchInferenceProfile(data.profile);
         renderProfileConnect(profileId, data, { engine_api_key: data.engine_api_key });
     } catch (e) {
         setInferenceError(e.message);
@@ -3980,7 +3996,7 @@ async function provisionProfileCloudflare(profileId) {
             hostname,
             render_bundle: true,
         });
-        await refreshInferenceProfiles();
+        patchInferenceProfile(data.profile);
         renderProfileConnect(profileId, data, { client_secret: data.client_secret });
         setInferenceStatus(`Cloudflare endpoint ready for ${profileId}.`);
     } catch (e) {
@@ -3994,7 +4010,7 @@ async function removeProfileCloudflare(profileId) {
     const deleteOwned = Boolean(deleteOwnedEl && deleteOwnedEl.checked);
     try {
         const data = await api('DELETE', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/exposure?delete_owned_tokens=${deleteOwned ? 'true' : 'false'}`));
-        await refreshInferenceProfiles();
+        patchInferenceProfile(data.profile);
         await loadProfileConnect(profileId);
         const warnings = data.warnings || [];
         setInferenceStatus(warnings.length ? `Removed Cloudflare exposure with ${warnings.length} cleanup warning(s).` : 'Removed Cloudflare exposure.');
@@ -4030,7 +4046,7 @@ async function generateProfileCfToken(profileId) {
         const data = await api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/service-tokens`), {
             render_bundle: true,
         });
-        await refreshInferenceProfiles();
+        patchInferenceProfile(data.profile);
         renderProfileConnect(profileId, data, { client_secret: data.client_secret });
     } catch (e) {
         setInferenceError(e.message);
@@ -4043,7 +4059,7 @@ async function rotateProfileCfToken(profileId, tokenId) {
         const data = await api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/service-tokens/${encodeURIComponent(tokenId)}/rotate`), {
             render_bundle: true,
         });
-        await refreshInferenceProfiles();
+        patchInferenceProfile(data.profile);
         renderProfileConnect(profileId, data, { client_secret: data.client_secret });
     } catch (e) {
         setInferenceError(e.message);
@@ -4053,8 +4069,8 @@ async function rotateProfileCfToken(profileId, tokenId) {
 async function retireProfileCfToken(profileId, tokenId) {
     if (!confirm('Retire this Cloudflare client from the profile policy?')) return;
     try {
-        await api('DELETE', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/service-tokens/${encodeURIComponent(tokenId)}`));
-        await refreshInferenceProfiles();
+        const data = await api('DELETE', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/service-tokens/${encodeURIComponent(tokenId)}`));
+        patchInferenceProfile(data.profile);
         await loadProfileConnect(profileId);
     } catch (e) {
         setInferenceError(e.message);
