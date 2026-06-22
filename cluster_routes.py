@@ -8,7 +8,7 @@ import socket
 import tarfile
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -1243,6 +1243,132 @@ async def proxy_cf_service_update(node_id: str, body: dict = None):
     except ValueError as e:
         raise HTTPException(400, str(e))
     except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/models")
+async def proxy_models(node_id: str):
+    try:
+        return await proxy_to_node(node_id, "GET", "/api/models")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/models/resolve")
+async def proxy_models_resolve(node_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "POST", "/api/models/resolve", body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/models/storage")
+async def proxy_models_storage(node_id: str):
+    try:
+        return await proxy_to_node(node_id, "GET", "/api/models/storage")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.put("/api/nodes/{node_id}/models/storage")
+async def proxy_models_update_storage(node_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "PUT", "/api/models/storage", body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/models/import")
+async def proxy_models_import(node_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "POST", "/api/models/import", body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/models/download")
+async def proxy_models_download(node_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "POST", "/api/models/download", body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/models/jobs/{job_id}")
+async def proxy_models_job(node_id: str, job_id: str):
+    try:
+        return await proxy_to_node(node_id, "GET", f"/api/models/jobs/{job_id}")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/models/jobs/{job_id}/cancel")
+async def proxy_models_cancel_job(node_id: str, job_id: str):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/models/jobs/{job_id}/cancel")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.delete("/api/nodes/{node_id}/models/jobs/{job_id}/staging")
+async def proxy_models_clean_job_staging(node_id: str, job_id: str):
+    try:
+        return await proxy_to_node(node_id, "DELETE", f"/api/models/jobs/{job_id}/staging")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/models/{artifact_id}/manifest")
+async def proxy_models_manifest(node_id: str, artifact_id: str, snapshot: Optional[str] = None):
+    path = f"/api/models/{artifact_id}/manifest"
+    if snapshot:
+        path = f"{path}?{urlencode({'snapshot': snapshot})}"
+    try:
+        return await proxy_to_node(node_id, "GET", path)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/models/{artifact_id}/verify")
+async def proxy_models_verify(node_id: str, artifact_id: str, snapshot: Optional[str] = None):
+    path = f"/api/models/{artifact_id}/verify"
+    if snapshot:
+        path = f"{path}?{urlencode({'snapshot': snapshot})}"
+    try:
+        return await proxy_to_node(node_id, "POST", path)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.delete("/api/nodes/{node_id}/models/{artifact_id}")
+async def proxy_models_delete(
+    node_id: str,
+    artifact_id: str,
+    snapshot: Optional[str] = None,
+    force_stopped_references: bool = False,
+    new_active_snapshot: Optional[str] = None,
+):
+    params = {}
+    if snapshot:
+        params["snapshot"] = snapshot
+    if force_stopped_references:
+        params["force_stopped_references"] = "true"
+    if new_active_snapshot:
+        params["new_active_snapshot"] = new_active_snapshot
+    path = f"/api/models/{artifact_id}"
+    if params:
+        path = f"{path}?{urlencode(params)}"
+    try:
+        return await proxy_to_node(node_id, "DELETE", path)
+    except (ValueError, RuntimeError) as e:
         raise HTTPException(502, str(e))
 
 

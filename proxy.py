@@ -35,6 +35,9 @@ async def proxy_to_node(node_id: str, method: str, path: str, body: dict = None)
             elif method == "POST":
                 headers["Content-Type"] = "application/json"
                 resp = await client.post(url, headers=headers, json=body)
+            elif method == "PUT":
+                headers["Content-Type"] = "application/json"
+                resp = await client.put(url, headers=headers, json=body)
             elif method == "DELETE":
                 resp = await client.delete(url, headers=headers)
             else:
@@ -198,6 +201,85 @@ async def _handle_local_cf_service(
     return _NO_MATCH
 
 
+async def _handle_local_models(method: str, route_path: str, query: dict[str, list[str]], body: dict = None):
+    if not route_path.startswith("/api/models"):
+        return _NO_MATCH
+
+    import model_storage
+
+    if route_path == "/api/models" and method == "GET":
+        return await model_storage.list_models()
+
+    if route_path == "/api/models/resolve" and method == "POST":
+        payload = body or {}
+        return await model_storage.resolve_source(payload.get("source") or {})
+
+    if route_path == "/api/models/storage":
+        if method == "GET":
+            return model_storage.get_storage_info()
+        if method == "PUT":
+            payload = body or {}
+            return model_storage.update_storage_root(payload.get("root"))
+        return _NO_MATCH
+
+    if route_path == "/api/models/import" and method == "POST":
+        payload = body or {}
+        return await model_storage.start_import_job(
+            path=payload.get("path"),
+            artifact_id=payload.get("artifact_id"),
+            display_name=payload.get("display_name"),
+            snapshot=payload.get("snapshot"),
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+        )
+
+    if route_path == "/api/models/download" and method == "POST":
+        payload = body or {}
+        return await model_storage.start_download_job(
+            source=payload.get("source") or {},
+            artifact_id=payload.get("artifact_id"),
+            display_name=payload.get("display_name"),
+            snapshot=payload.get("snapshot"),
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+        )
+
+    if route_path.startswith("/api/models/jobs/"):
+        tail = route_path[len("/api/models/jobs/"):]
+        parts = tail.split("/")
+        job_id = parts[0]
+        suffix = "/" + "/".join(parts[1:]) if len(parts) > 1 else ""
+        if method == "GET" and suffix == "":
+            return await model_storage.get_job_status(job_id)
+        if method == "POST" and suffix == "/cancel":
+            return await model_storage.cancel_job(job_id)
+        if method == "DELETE" and suffix == "/staging":
+            return await model_storage.clean_job_staging(job_id)
+        return _NO_MATCH
+
+    if route_path.startswith("/api/models/"):
+        tail = route_path[len("/api/models/"):]
+        parts = tail.split("/")
+        artifact_id = parts[0]
+        suffix = "/" + "/".join(parts[1:]) if len(parts) > 1 else ""
+        snapshot_values = query.get("snapshot") or []
+        snapshot = snapshot_values[-1] if snapshot_values else None
+        if method == "GET" and suffix == "/manifest":
+            return model_storage.get_manifest(artifact_id, snapshot=snapshot)
+        if method == "POST" and suffix == "/verify":
+            return model_storage.verify_artifact(artifact_id, snapshot=snapshot)
+        if method == "DELETE" and suffix == "":
+            force = _query_bool(query, "force_stopped_references")
+            new_active_values = query.get("new_active_snapshot") or []
+            return model_storage.delete_artifact(
+                artifact_id,
+                snapshot=snapshot,
+                force_stopped_references=force,
+                new_active_snapshot=new_active_values[-1] if new_active_values else None,
+            )
+        return _NO_MATCH
+
+    return _NO_MATCH
+
+
 async def _handle_local(method: str, path: str, body: dict = None):
     """Handle a proxied request locally by calling the appropriate Python functions."""
     route_path, query = _split_route(path)
@@ -225,5 +307,9 @@ async def _handle_local(method: str, path: str, body: dict = None):
     cf_response = await _handle_local_cf_service(method, route_path, query, body)
     if cf_response is not _NO_MATCH:
         return cf_response
+
+    model_response = await _handle_local_models(method, route_path, query, body)
+    if model_response is not _NO_MATCH:
+        return model_response
 
     raise ValueError(f"Unknown local route: {method} {path}")

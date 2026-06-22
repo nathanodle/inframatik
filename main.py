@@ -27,6 +27,8 @@ from updater import get_version
 from cluster_routes import cluster_router
 from cf_routes import cf_router
 from mcp_routes import mcp_router
+from model_routes import model_router
+from model_storage import mark_interrupted_jobs
 from ws_routes import ws_router
 from nodes import stale_checker_loop, heartbeat_sender_loop
 from node_snapshots import snapshot_collector_loop
@@ -37,6 +39,7 @@ logger = logging.getLogger("inframatik.main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = get_node_config()
+    mark_interrupted_jobs()
     tasks = []
     if config:
         if config.get("role") == "master":
@@ -58,6 +61,7 @@ app = FastAPI(title="inframatik", lifespan=lifespan)
 app.include_router(cluster_router)
 app.include_router(cf_router)
 app.include_router(mcp_router)
+app.include_router(model_router)
 app.include_router(ws_router)
 
 STATIC_DIR = Path(__file__).parent / "static"
