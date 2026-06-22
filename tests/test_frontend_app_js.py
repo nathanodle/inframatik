@@ -1147,7 +1147,13 @@ def test_app_js_cloudflare_section_gating_by_role():
                 assert(
                     replicatedConnectHtml.includes('Instance Endpoints') &&
                     replicatedConnectHtml.includes('Security Posture') &&
+                    replicatedConnectHtml.includes('Credential Chain') &&
                     replicatedConnectHtml.includes('Local only') &&
+                    replicatedConnectHtml.includes('Cloudflare Access') &&
+                    replicatedConnectHtml.includes('Not used') &&
+                    replicatedConnectHtml.includes('2 instance endpoints') &&
+                    replicatedConnectHtml.includes('Per-instance URLs below') &&
+                    !replicatedConnectHtml.includes('Cloudflare Service Tokens') &&
                     replicatedConnectHtml.includes('Instance 0') &&
                     replicatedConnectHtml.includes('Instance 1') &&
                     replicatedConnectHtml.includes('data-copy="http://127.0.0.1:10000/v1"') &&
@@ -1210,8 +1216,11 @@ def test_app_js_cloudflare_section_gating_by_role():
                 assert(
                     cleanupHtml.includes('Cloudflare Cleanup Pending') &&
                     cleanupHtml.includes('Security Posture') &&
+                    cleanupHtml.includes('Credential Chain') &&
                     cleanupHtml.includes('Cloudflare Access') &&
                     cleanupHtml.includes('Service Auth ready') &&
+                    cleanupHtml.includes('Service Auth') &&
+                    cleanupHtml.includes('2 active clients') &&
                     cleanupHtml.includes('Cloudflare clients') &&
                     cleanupHtml.includes('Generate Client') &&
                     cleanupHtml.includes('profile-cf-delete-owned-qwen-cleanup') &&
@@ -2622,6 +2631,9 @@ def test_static_inference_model_ui_assets_present():
     assert ".connect-posture-panel" in style_css
     assert ".connect-posture-grid" in style_css
     assert ".connect-posture-item" in style_css
+    assert ".credential-chain-panel" in style_css
+    assert ".credential-chain-grid" in style_css
+    assert ".credential-chain-item" in style_css
     assert ".connect-action-grid" in style_css
     assert ".connect-inline-form" in style_css
     assert ".connect-mini-facts" in style_css

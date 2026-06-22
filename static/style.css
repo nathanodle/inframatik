@@ -1990,6 +1990,45 @@ body {
     margin-top: 9px;
 }
 
+.credential-chain-panel {
+    margin-top: 10px;
+}
+
+.credential-chain-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+}
+
+.credential-chain-item {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.16);
+}
+
+.credential-chain-item span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.credential-chain-item div {
+    margin-top: 6px;
+}
+
+.credential-chain-item small {
+    display: block;
+    margin-top: 7px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 .connect-inline-form {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

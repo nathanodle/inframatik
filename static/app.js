@@ -4059,6 +4059,58 @@ function renderConnectionPosture(profileId, context) {
     `;
 }
 
+function renderCredentialChain(context) {
+    const mode = context.mode || 'local';
+    const isCloudflare = Boolean(context.isCloudflare);
+    const instanceBundles = Array.isArray(context.instanceBundles) ? context.instanceBundles : [];
+    const explicitEndpoint = (context.bundle && context.bundle.base_url) || context.endpointHostname || '';
+    const endpoint = explicitEndpoint || (instanceBundles.length ? `${instanceBundles.length} instance endpoint${instanceBundles.length === 1 ? '' : 's'}` : '--');
+    const activeTokenCount = context.activeTokenCount || 0;
+    const rows = [
+        {
+            label: 'Endpoint',
+            value: endpoint,
+            detail: explicitEndpoint
+                ? (isCloudflare ? 'Cloudflare hostname' : mode === 'lan' ? 'LAN address' : 'Node-local URL')
+                : instanceBundles.length ? 'Per-instance URLs below' : 'No endpoint available yet',
+            tone: endpoint && endpoint !== '--' ? 'green' : 'yellow',
+        },
+        {
+            label: 'Cloudflare Access',
+            value: isCloudflare ? (context.cfReady ? 'Service Auth' : 'Not provisioned') : 'Not used',
+            detail: isCloudflare
+                ? (activeTokenCount ? `${activeTokenCount} active client${activeTokenCount === 1 ? '' : 's'}` : 'Generate a client after provisioning')
+                : 'No edge credential required',
+            tone: isCloudflare ? (context.cfReady && activeTokenCount ? 'green' : 'yellow') : '',
+        },
+        {
+            label: 'Engine API key',
+            value: context.hasEngineKey ? 'Bearer token' : 'Missing',
+            detail: context.hasEngineKey ? 'Authorization header required by generated examples' : 'Recommended before exposing beyond local-only',
+            tone: context.hasEngineKey ? 'green' : (mode === 'local' ? '' : 'yellow'),
+        },
+    ];
+    return `
+        <div class="profile-connect-panel credential-chain-panel">
+            <div class="connect-section-header compact">
+                <div>
+                    <div class="launcher-card-title">Credential Chain</div>
+                    <div class="launcher-card-meta">What a client must pass before the request reaches the model server</div>
+                </div>
+            </div>
+            <div class="credential-chain-grid">
+                ${rows.map(row => `
+                    <div class="credential-chain-item">
+                        <span>${esc(row.label)}</span>
+                        <div>${connectBadge(row.value, row.tone)}</div>
+                        <small>${esc(row.detail)}</small>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
 function renderProfileConnect(profileId, data, secrets = {}) {
     const profile = inferenceProfilesData.find(item => item.id === profileId) || {};
     const exposure = profile.exposure || {};
@@ -4073,6 +4125,7 @@ function renderProfileConnect(profileId, data, secrets = {}) {
     const endpointHostname = cloudflare.hostname || exposure.hostname || '';
     const cfResourcesReady = Boolean(cloudflare.hostname && cloudflare.access_app_id && cloudflare.access_policy_id);
     const cfResourcesConfigured = Boolean(cloudflare.hostname || cloudflare.access_app_id || cloudflare.access_policy_id);
+    const isCloudflare = exposure.mode === 'cloudflare' || cfResourcesConfigured;
     const canGenerateClient = Boolean(cloudflare.access_policy_id);
     const cloudflareFacts = [
         ['Hostname', endpointHostname || '--'],
@@ -4131,6 +4184,16 @@ function renderProfileConnect(profileId, data, secrets = {}) {
             endpointHostname,
             cleanupRecords,
         })}
+        ${renderCredentialChain({
+            mode: exposure.mode || 'local',
+            bundle,
+            instanceBundles,
+            isCloudflare,
+            cfReady: cfResourcesReady,
+            activeTokenCount: activeTokens.length,
+            endpointHostname,
+            hasEngineKey,
+        })}
         <div class="connect-action-grid">
             <section>
                 <div class="connect-section-header">
@@ -4142,7 +4205,7 @@ function renderProfileConnect(profileId, data, secrets = {}) {
                 </div>
                 <button class="btn" onclick="rotateProfileApiKey(${profileIdArg})">${hasEngineKey ? 'Rotate' : 'Generate'} API Key</button>
             </section>
-            <section>
+            ${isCloudflare ? `<section>
                 <div class="connect-section-header">
                     <div>
                         <div class="launcher-card-title">Cloudflare Endpoint</div>
@@ -4177,15 +4240,17 @@ function renderProfileConnect(profileId, data, secrets = {}) {
                     ${connectBadge(canGenerateClient ? 'policy ready' : 'needs endpoint', canGenerateClient ? 'green' : 'yellow')}
                 </div>
                 <button class="btn" onclick="generateProfileCfToken(${profileIdArg})" ${canGenerateClient ? '' : 'disabled'}>Generate New Client</button>
-            </section>
+            </section>` : ''}
         </div>
         ${renderClientBundle(bundle, secrets)}
         ${renderInstanceBundleOptions(instanceBundles)}
         ${renderCloudflareCleanupRecords(profileId, cleanupRecords)}
-        <div class="connect-section-header compact">
-            <div class="launcher-card-title">Cloudflare Service Tokens</div>
-        </div>
-        ${tokens.length ? `<div class="profile-token-list">${tokenRows}</div>` : '<div class="empty-state compact">No Cloudflare service-token clients attached.</div>'}
+        ${isCloudflare || tokens.length ? `
+            <div class="connect-section-header compact">
+                <div class="launcher-card-title">Cloudflare Service Tokens</div>
+            </div>
+            ${tokens.length ? `<div class="profile-token-list">${tokenRows}</div>` : '<div class="empty-state compact">No Cloudflare service-token clients attached.</div>'}
+        ` : ''}
     `;
     setProfileDetail(profileId, html, 'connect');
 }
