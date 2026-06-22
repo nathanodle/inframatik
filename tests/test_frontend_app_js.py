@@ -2377,6 +2377,183 @@ def test_app_js_cloudflare_section_gating_by_role():
     )
 
 
+def test_app_js_inference_node_selection_renders_cached_snapshot_immediately():
+    _run_node(
+        textwrap.dedent(
+            r"""
+            const fs = require('fs');
+            const vm = require('vm');
+
+            function makeElement(id) {
+                return {
+                    id,
+                    style: {},
+                    dataset: {},
+                    value: '',
+                    textContent: '',
+                    innerHTML: '',
+                    disabled: false,
+                    selectedIndex: 0,
+                    options: [],
+                    className: '',
+                    classList: {
+                        add() {},
+                        remove() {},
+                        contains() { return false; },
+                    },
+                    addEventListener() {},
+                    querySelectorAll() { return []; },
+                    querySelector() { return null; },
+                    replaceWith(next) {
+                        if (next && next.id) elements.set(next.id, next);
+                    },
+                };
+            }
+
+            const elements = new Map();
+            const document = {
+                cookie: '',
+                activeElement: null,
+                addEventListener() {},
+                createElement(tagName = '') {
+                    if (String(tagName).toLowerCase() === 'template') {
+                        return {
+                            _innerHTML: '',
+                            content: { firstElementChild: null },
+                            set innerHTML(value) {
+                                this._innerHTML = String(value ?? '');
+                                const match = this._innerHTML.match(/id="([^"]+)"/);
+                                const child = makeElement(match ? match[1] : 'template-child');
+                                child.innerHTML = this._innerHTML;
+                                this.content.firstElementChild = child;
+                            },
+                            get innerHTML() { return this._innerHTML; },
+                        };
+                    }
+                    const el = makeElement('created');
+                    Object.defineProperty(el, 'textContent', {
+                        get() { return this._textContent || ''; },
+                        set(value) {
+                            this._textContent = String(value ?? '');
+                            this.innerHTML = this._textContent
+                                .replace(/&/g, '&amp;')
+                                .replace(/</g, '&lt;')
+                                .replace(/>/g, '&gt;')
+                                .replace(/"/g, '&quot;');
+                        },
+                    });
+                    return el;
+                },
+                getElementById(id) {
+                    if (!elements.has(id)) elements.set(id, makeElement(id));
+                    return elements.get(id);
+                },
+                querySelectorAll() { return []; },
+                querySelector() { return { dataset: { tab: 'overview' } }; },
+            };
+
+            const context = {
+                console,
+                document,
+                window: { location: { hostname: 'localhost' } },
+                location: { protocol: 'http:', host: 'localhost' },
+                WebSocket: function WebSocket() { return {}; },
+                fetch: async () => { throw new Error('fetch should not run'); },
+                setTimeout,
+                clearTimeout,
+                setInterval: () => 1,
+                clearInterval: () => {},
+            };
+            context.globalThis = context;
+
+            vm.createContext(context);
+            vm.runInContext(fs.readFileSync('static/app.js', 'utf8'), context, {
+                filename: 'static/app.js',
+            });
+
+            vm.runInContext(`
+                (async () => {
+                    const calls = [];
+                    let workerAOverviewLoads = 0;
+                    const overviewA = {
+                        profiles: {
+                            profiles: [{
+                                id: 'qwen-a',
+                                display_name: 'Qwen A',
+                                engine: 'vllm',
+                                engine_launcher_id: 'vllm-main',
+                                model: { artifact_id: 'qwen-a', snapshot: 'v1' },
+                                common: { context_length: 4096 },
+                                deployment: {},
+                                exposure: { mode: 'local' },
+                                instances: [],
+                                state: 'stopped',
+                            }],
+                        },
+                        models: { artifacts: [{ id: 'qwen-a', display_name: 'Qwen A', active_snapshot: 'v1' }], jobs: [] },
+                        launchers: { launchers: [{ id: 'vllm-main', display_name: 'vLLM', engine: 'vllm' }] },
+                        operations: { operations: [] },
+                        system: { gpus: [] },
+                        partial_errors: {},
+                    };
+
+                    isMaster = true;
+                    nodeRole = 'master';
+                    selfNodeId = 'master';
+                    selectedNodeId = 'worker-a';
+                    currentAppView = 'inference';
+                    activeInferenceTab = 'profiles';
+                    nodes = [
+                        { node_id: 'worker-a', node_name: 'Worker A', status: 'online' },
+                        { node_id: 'worker-b', node_name: 'Worker B', status: 'online' },
+                    ];
+                    wsConnected = true;
+                    api = async function(method, path) {
+                        calls.push([method, path]);
+                        if (method === 'GET' && path === '/api/nodes/worker-a/inference/overview') {
+                            workerAOverviewLoads += 1;
+                            if (workerAOverviewLoads === 1) return overviewA;
+                            return new Promise(() => {});
+                        }
+                        if (method === 'GET' && path === '/api/nodes/worker-b/inference/overview') {
+                            return new Promise(() => {});
+                        }
+                        throw new Error('unexpected API call: ' + method + ' ' + path);
+                    };
+
+                    await refreshInferenceProfiles();
+                    if (!document.getElementById('inference-profiles-list').innerHTML.includes('Qwen A')) {
+                        throw new Error('initial overview should render worker A profile');
+                    }
+
+                    selectNode('worker-b');
+                    if (!document.getElementById('inference-profiles-list').innerHTML.includes('Loading profiles')) {
+                        throw new Error('uncached worker should show a pending state while loading');
+                    }
+
+                    selectNode('worker-a');
+                    const profileHtml = document.getElementById('inference-profiles-list').innerHTML;
+                    const status = document.getElementById('inference-status').textContent;
+                    if (!profileHtml.includes('Qwen A')) {
+                        throw new Error('cached worker profile should render immediately before fresh overview resolves');
+                    }
+                    if (!status.includes('Showing cached state')) {
+                        throw new Error('cached render should disclose that a fresh refresh is in progress');
+                    }
+                    const workerACalls = calls.filter(call => call[1] === '/api/nodes/worker-a/inference/overview').length;
+                    if (workerACalls !== 2) {
+                        throw new Error('switching back should still start a fresh background overview request');
+                    }
+                })().catch((error) => {
+                    console.error(error.stack || error.message);
+                    process.exit(1);
+                });
+            `, context);
+            """
+        )
+    )
+
+
 def test_app_js_system_render_limits_hidden_tab_dom_writes():
     _run_node(
         textwrap.dedent(

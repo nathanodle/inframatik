@@ -88,6 +88,7 @@ let inferenceLaunchersData = [];
 let inferenceProfilesData = [];
 let inferenceOperationsData = [];
 let inferenceSystemData = null;
+let inferenceNodeSnapshots = new Map();
 let pendingInferenceProfileActions = new Map();
 let pendingInferenceInstanceActions = new Map();
 let inferenceFailureLogFetches = new Set();
@@ -1571,6 +1572,7 @@ function setInferenceTab(tab) {
     document.querySelectorAll('.inference-tab-content').forEach(t => t.classList.remove('active'));
     const panel = document.getElementById('inference-tab-' + activeInferenceTab);
     if (panel) panel.classList.add('active');
+    renderCachedInferenceNodeSnapshot(selectedNodeId, { status: false });
 }
 
 function setProfileEditorSection(section) {
@@ -1682,6 +1684,14 @@ function setInferenceStatus(message) {
     setElementText('inference-status', message || '');
 }
 
+function clearTransientInferenceStatus() {
+    const el = document.getElementById('inference-status');
+    const text = el ? String(el.textContent || '') : '';
+    if (text.startsWith('Showing cached') || text.startsWith('Loaded with limited data:')) {
+        setInferenceStatus('');
+    }
+}
+
 function inferenceFreshnessLabel(timestamp) {
     if (!timestamp) return '';
     const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
@@ -1771,6 +1781,75 @@ function showInferencePendingState() {
     setElementHtml('inference-operations-list', '<div class="empty-state">Loading operations...</div>');
 }
 
+function inferenceNodeCacheKey(nodeId = selectedNodeId) {
+    return nodeId ? String(nodeId) : '';
+}
+
+function inferenceSnapshotAgeLabel(snapshot) {
+    const fetchedAt = snapshot && Number(snapshot.fetched_at || 0);
+    if (!fetchedAt) return 'previously';
+    return inferenceFreshnessLabel(fetchedAt) || 'previously';
+}
+
+function saveInferenceNodeSnapshot(nodeId = selectedNodeId, patch = {}) {
+    const key = inferenceNodeCacheKey(nodeId);
+    if (!key) return;
+    const existing = inferenceNodeSnapshots.get(key) || {};
+    inferenceNodeSnapshots.set(key, {
+        ...existing,
+        ...patch,
+        fetched_at: Date.now(),
+    });
+}
+
+function renderInferenceSnapshotForActiveTab(snapshot) {
+    const models = snapshot.models || { artifacts: [], jobs: [] };
+    const storage = snapshot.storage || {};
+    const profiles = snapshot.profiles || [];
+    const launchers = snapshot.launchers || [];
+    const operations = snapshot.operations || [];
+
+    renderProfileSelects();
+    renderInferenceGpuHints();
+
+    if (activeInferenceTab === 'profiles') {
+        renderInferenceProfiles(profiles);
+        renderInferenceOperations(operations);
+    } else if (activeInferenceTab === 'launchers') {
+        renderLaunchers(launchers);
+    } else if (activeInferenceTab === 'jobs') {
+        renderInferenceOperations(operations);
+        renderModelJobs(models.jobs || []);
+    } else if (activeInferenceTab === 'storage') {
+        renderModelStorageInfo(storage);
+    } else {
+        renderInferenceSummary(models, storage);
+        renderModelInventory(models.artifacts || []);
+        renderModelJobs(models.jobs || []);
+    }
+}
+
+function renderCachedInferenceNodeSnapshot(nodeId = selectedNodeId, options = {}) {
+    const key = inferenceNodeCacheKey(nodeId);
+    const snapshot = key ? inferenceNodeSnapshots.get(key) : null;
+    if (!snapshot) return false;
+
+    inferenceModelData = snapshot.models || { artifacts: [], jobs: [] };
+    inferenceStorageData = snapshot.storage || null;
+    inferenceLaunchersData = snapshot.launchers || [];
+    inferenceProfilesData = snapshot.profiles || [];
+    inferenceOperationsData = snapshot.operations || [];
+    inferenceSystemData = snapshot.system || null;
+
+    renderInferenceSnapshotForActiveTab(snapshot);
+    hydrateVisibleInferenceFailures(nodeId);
+    updateInferencePolling();
+    if (options.status !== false) {
+        setInferenceStatus(`Showing cached state from ${inferenceSnapshotAgeLabel(snapshot)} for ${selectedNodeLabel()}; refreshing...`);
+    }
+    return true;
+}
+
 async function loadInferenceView() {
     if (isMaster && (!nodes || nodes.length === 0)) {
         await refreshSidebar();
@@ -1779,7 +1858,9 @@ async function loadInferenceView() {
     const subtitle = document.getElementById('inference-page-subtitle');
     if (subtitle) subtitle.textContent = `${selectedNodeLabel()} · node-local inference storage`;
     renderInferenceLiveStatus('load');
-    showInferencePendingState();
+    if (!renderCachedInferenceNodeSnapshot(selectedNodeId)) {
+        showInferencePendingState();
+    }
     await refreshActiveInferenceTab();
 }
 
@@ -1811,13 +1892,20 @@ async function refreshInferenceProfiles() {
         inferenceLaunchersData = launchers.launchers || [];
         inferenceOperationsData = operations.operations || [];
         inferenceSystemData = overview.system || null;
+        saveInferenceNodeSnapshot(nodeId, {
+            models: inferenceModelData,
+            launchers: inferenceLaunchersData,
+            profiles: inferenceProfilesData,
+            operations: inferenceOperationsData,
+            system: inferenceSystemData,
+        });
         const partialErrors = overview.partial_errors || {};
         const partialKeys = Object.keys(partialErrors);
         const statusEl = document.getElementById('inference-status');
         if (partialKeys.length) {
             setInferenceStatus(`Loaded with limited data: ${partialKeys.join(', ')}`);
-        } else if (statusEl && statusEl.textContent.startsWith('Loaded with limited data:')) {
-            setInferenceStatus('');
+        } else if (statusEl) {
+            clearTransientInferenceStatus();
         }
         renderProfileSelects();
         renderInferenceGpuHints();
@@ -1843,9 +1931,14 @@ async function refreshInferenceJobs() {
         if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
         inferenceModelData = models;
         inferenceOperationsData = operations.operations || [];
+        saveInferenceNodeSnapshot(nodeId, {
+            models: inferenceModelData,
+            operations: inferenceOperationsData,
+        });
         renderInferenceOperations(inferenceOperationsData);
         renderModelJobs(models.jobs || []);
         hydrateVisibleInferenceFailures(nodeId);
+        clearTransientInferenceStatus();
         updateInferencePolling();
     } catch (e) {
         setInferenceError(e.message);
@@ -2088,6 +2181,7 @@ function patchInferenceLauncher(launcher) {
     ].sort((a, b) => String(a.engine || '').localeCompare(String(b.engine || '')) || String(a.id || '').localeCompare(String(b.id || '')));
     inferenceLaunchersData = next;
     renderLauncherState();
+    saveInferenceNodeSnapshot(selectedNodeId, { launchers: inferenceLaunchersData });
     return true;
 }
 
@@ -2097,6 +2191,7 @@ function removeInferenceLauncher(launcherId) {
     inferenceLaunchersData = inferenceLaunchersData.filter(item => item.id !== launcherId);
     launcherValidationProfileContext.delete(launcherId);
     renderLauncherState();
+    saveInferenceNodeSnapshot(selectedNodeId, { launchers: inferenceLaunchersData });
     return inferenceLaunchersData.length !== before;
 }
 
@@ -3443,6 +3538,7 @@ function patchInferenceProfile(profile) {
         else renderInferenceProfiles(inferenceProfilesData);
     }
     renderProfileSelects();
+    saveInferenceNodeSnapshot(selectedNodeId, { profiles: inferenceProfilesData });
     return true;
 }
 
@@ -3459,6 +3555,7 @@ function removeInferenceProfile(profileId) {
         renderInferenceProfiles(inferenceProfilesData);
     }
     renderProfileSelects();
+    saveInferenceNodeSnapshot(selectedNodeId, { profiles: inferenceProfilesData });
     return inferenceProfilesData.length !== before;
 }
 
@@ -3852,6 +3949,7 @@ function mergeInferenceOperation(operation, options = {}) {
     if (options.hydrateLogs !== false) {
         hydrateInferenceFailureDiagnostics(operation);
     }
+    saveInferenceNodeSnapshot(selectedNodeId, { operations: inferenceOperationsData });
     updateInferencePolling();
 }
 
@@ -3862,6 +3960,10 @@ function applyTerminalInferenceOperation(operation) {
     if (operation.profile_id && profileDetailModes.get(operation.profile_id) === 'details') {
         loadProfileDetails(operation.profile_id);
     }
+    saveInferenceNodeSnapshot(selectedNodeId, {
+        profiles: inferenceProfilesData,
+        operations: inferenceOperationsData,
+    });
 }
 
 function operationProfileState(operation) {
@@ -3954,6 +4056,10 @@ function mergeInferenceOperationSnapshot(operations, nodeId = selectedNodeId) {
     }
     renderInferenceOperations(inferenceOperationsData);
     hydrateVisibleInferenceFailures(nodeId);
+    saveInferenceNodeSnapshot(nodeId, {
+        profiles: inferenceProfilesData,
+        operations: inferenceOperationsData,
+    });
     updateInferencePolling();
 }
 
@@ -4001,6 +4107,9 @@ async function refreshInferenceModelSnapshot() {
         const models = await api('GET', modelNodePath('/api/models'));
         if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
         inferenceModelData = models;
+        saveInferenceNodeSnapshot(nodeId, {
+            models: inferenceModelData,
+        });
         renderProfileSelects();
         renderPolledModelState();
         updateInferencePolling();
@@ -4017,6 +4126,7 @@ function removeModelArtifactLocal(artifactId) {
         artifacts: (inferenceModelData.artifacts || []).filter(item => item.id !== artifactId),
     };
     renderModelInventoryState();
+    saveInferenceNodeSnapshot(selectedNodeId, { models: inferenceModelData });
     return (inferenceModelData.artifacts || []).length !== before;
 }
 
@@ -4044,6 +4154,7 @@ function patchModelVerification(result) {
         }),
     };
     if (changed) renderModelInventoryState();
+    if (changed) saveInferenceNodeSnapshot(selectedNodeId, { models: inferenceModelData });
     return changed;
 }
 
@@ -4067,6 +4178,7 @@ function mergeModelJob(job) {
     if (job.state === 'ready' && !artifactChanged && currentAppView === 'inference') {
         refreshInferenceModelSnapshot();
     }
+    saveInferenceNodeSnapshot(selectedNodeId, { models: inferenceModelData });
     updateInferencePolling();
 }
 
@@ -4900,7 +5012,11 @@ async function refreshInferenceLaunchers() {
         const data = await api('GET', modelNodePath('/api/inference/launchers'));
         if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
         inferenceLaunchersData = data.launchers || [];
+        saveInferenceNodeSnapshot(nodeId, {
+            launchers: inferenceLaunchersData,
+        });
         renderLaunchers(inferenceLaunchersData);
+        clearTransientInferenceStatus();
     } catch (e) {
         setInferenceError(e.message);
     }
@@ -5342,6 +5458,7 @@ async function refreshInferenceActivity() {
         if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
         if (models) {
             inferenceModelData = models;
+            saveInferenceNodeSnapshot(nodeId, { models: inferenceModelData });
             renderPolledModelState();
         }
         if (operations) {
@@ -5383,10 +5500,15 @@ async function refreshInferenceModels() {
         if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
         inferenceModelData = models;
         inferenceStorageData = storage;
+        saveInferenceNodeSnapshot(nodeId, {
+            models: inferenceModelData,
+            storage: inferenceStorageData,
+        });
         renderInferenceSummary(models, storage);
         renderModelInventory(models.artifacts || []);
         renderModelJobs(models.jobs || []);
         renderModelStorageInfo(storage);
+        clearTransientInferenceStatus();
         updateInferencePolling();
     } catch (e) {
         setInferenceError(e.message);
