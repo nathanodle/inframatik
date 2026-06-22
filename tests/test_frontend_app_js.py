@@ -781,27 +781,40 @@ def test_app_js_cloudflare_section_gating_by_role():
                         const calls = [];
                         currentAppView = 'inference';
                         activeInferenceTab = 'profiles';
-                        inferenceLaunchersData = [{ id: 'vllm-main', display_name: 'vLLM Main', engine: 'vllm', executable: '/opt/vllm/bin/python' }];
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        inferenceLaunchersData = [];
                         const originalRenderLaunchers = renderLaunchers;
                         const originalValidateLauncher = validateLauncher;
+                        const originalApi = api;
                         renderLaunchers = function(launchers) { calls.push(['renderLaunchers', launchers.map(item => item.id).join(',')]); };
                         validateLauncher = async function(launcherId) { calls.push(['validateLauncher', launcherId]); };
                         setInferenceStatus = function(message) { calls.push(['status', message]); };
+                        setInferenceError = function(message) { if (message) calls.push(['error', message]); };
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'GET' && path === '/api/inference/launchers') {
+                                return { launchers: [{ id: 'vllm-main', display_name: 'vLLM Main', engine: 'vllm', executable: '/opt/vllm/bin/python' }] };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
                         try {
                             await openLauncherValidation('vllm-main');
                             return { calls, activeInferenceTab };
                         } finally {
                             renderLaunchers = originalRenderLaunchers;
                             validateLauncher = originalValidateLauncher;
+                            api = originalApi;
                         }
                     })()
                 `, context);
                 assert(
                     launcherFixActionResult.activeInferenceTab === 'launchers' &&
+                    launcherFixActionResult.calls.some(call => call[0] === 'GET' && call[1] === '/api/inference/launchers') &&
                     launcherFixActionResult.calls.some(call => call[0] === 'renderLaunchers' && call[1] === 'vllm-main') &&
                     launcherFixActionResult.calls.some(call => call[0] === 'validateLauncher' && call[1] === 'vllm-main') &&
                     launcherFixActionResult.calls.some(call => call[0] === 'status' && String(call[1]).includes('Validating launcher')),
-                    'failed startup launcher fix action should switch to Launchers and validate the profile launcher'
+                    'failed startup launcher fix action should load Launchers and validate the profile launcher'
                 );
 
                 const startupOperationListHtml = vm.runInContext(`

@@ -3038,7 +3038,18 @@ function operationFailureDiagnosis(operation, detail) {
 async function openLauncherValidation(launcherId) {
     if (!launcherId) return;
     setInferenceTab('launchers');
-    renderLaunchers(inferenceLaunchersData || []);
+    let launcher = (inferenceLaunchersData || []).find(item => item.id === launcherId);
+    if (!launcher) {
+        setElementHtml('launchers-list', '<div class="empty-state">Loading launchers...</div>');
+        await refreshInferenceLaunchers();
+        launcher = (inferenceLaunchersData || []).find(item => item.id === launcherId);
+    } else {
+        renderLaunchers(inferenceLaunchersData || []);
+    }
+    if (!launcher) {
+        setInferenceError(`Launcher ${launcherId} was not found on ${selectedNodeLabel()}.`);
+        return;
+    }
     setInferenceStatus(`Validating launcher ${launcherId}.`);
     await validateLauncher(launcherId);
 }
