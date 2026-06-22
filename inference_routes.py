@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 import inference_launchers
+import inference_planner
 
 
 inference_router = APIRouter()
@@ -30,6 +31,11 @@ class LauncherUpdateBody(BaseModel):
 
 def _raise_http_error(exc: inference_launchers.LauncherError):
     raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+@inference_router.post("/api/inference/profiles/preview")
+async def api_preview_inference_profile(body: dict):
+    return inference_planner.preview_profile(body)
 
 
 @inference_router.get("/api/inference/launchers")

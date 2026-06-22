@@ -1260,6 +1260,33 @@ def get_manifest(artifact_id: str, snapshot: Optional[str] = None) -> dict:
     return manifest
 
 
+def resolve_model_runtime(artifact_id: str, snapshot: Optional[str] = None) -> dict:
+    """Resolve a managed model reference without mutating model storage state."""
+    artifact_id = validate_artifact_id(artifact_id)
+    registry = _load_registry()
+    artifact = registry.get("artifacts", {}).get(artifact_id)
+    if not artifact:
+        raise ModelNotFoundError(f"Model artifact not found: {artifact_id}")
+    snapshot_id = validate_snapshot(snapshot) if snapshot else artifact.get("active_snapshot")
+    snap = artifact.get("snapshots", {}).get(snapshot_id)
+    if not snap:
+        raise ModelNotFoundError(f"Model snapshot not found: {artifact_id}@{snapshot_id}")
+    manifest = get_manifest(artifact_id, snapshot_id)
+    snapshot_path = Path(snap.get("snapshot_path", ""))
+    runtime_raw = snap.get("runtime_path") or artifact.get("runtime_path")
+    runtime_path = Path(runtime_raw) if runtime_raw else _runtime_path_from_manifest(snapshot_path, manifest)
+    return {
+        "artifact_id": artifact_id,
+        "snapshot": snapshot_id,
+        "artifact": dict(artifact),
+        "snapshot_meta": dict(snap),
+        "manifest": manifest,
+        "manifest_path": snap.get("manifest_path"),
+        "snapshot_path": str(snapshot_path),
+        "runtime_path": str(runtime_path),
+    }
+
+
 def verify_artifact(artifact_id: str, snapshot: Optional[str] = None) -> dict:
     artifact_id = validate_artifact_id(artifact_id)
     manifest = get_manifest(artifact_id, snapshot)

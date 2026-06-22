@@ -281,6 +281,14 @@ async def _handle_local_models(method: str, route_path: str, query: dict[str, li
 
 
 async def _handle_local_inference(method: str, route_path: str, query: dict[str, list[str]], body: dict = None):
+    if not route_path.startswith("/api/inference"):
+        return _NO_MATCH
+
+    if route_path == "/api/inference/profiles/preview" and method == "POST":
+        import inference_planner
+
+        return inference_planner.preview_profile(body or {})
+
     if not route_path.startswith("/api/inference/launchers"):
         return _NO_MATCH
 

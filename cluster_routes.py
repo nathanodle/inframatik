@@ -1418,6 +1418,16 @@ async def proxy_delete_inference_launcher(
         raise HTTPException(502, str(e))
 
 
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles/preview")
+async def proxy_preview_inference_profile(node_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "POST", "/api/inference/profiles/preview", body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
 @cluster_router.post("/api/nodes/{node_id}/inference/launchers/{launcher_id}/validate")
 async def proxy_validate_inference_launcher(node_id: str, launcher_id: str):
     try:
