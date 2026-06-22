@@ -757,8 +757,10 @@ def test_app_js_cloudflare_section_gating_by_role():
                     failedStartupHtml.includes('Start failed; started instances were stopped') &&
                     failedStartupHtml.includes('Unit infra-llm-qwen.service restarted 3 times before TCP readiness') &&
                     failedStartupHtml.includes('Likely cause') &&
-                    failedStartupHtml.includes('systemd unit is restarting') &&
+                    failedStartupHtml.includes('cannot load a required shared library') &&
                     failedStartupHtml.includes('Next action') &&
+                    failedStartupHtml.includes('Validate the engine launcher') &&
+                    failedStartupHtml.includes('Suggested Env') &&
                     failedStartupHtml.includes('Rollback') &&
                     failedStartupHtml.includes('Rollback stopped 1 started instance') &&
                     failedStartupHtml.includes('ImportError: libcudart.so.12'),
