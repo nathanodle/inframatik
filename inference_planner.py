@@ -920,6 +920,22 @@ def _render_vllm(argv: list[str], model_path: str, common: dict, cfg: dict, inst
     _append(argv, "--data-parallel-start-rank", cfg.get("data_parallel_start_rank"))
     _append(argv, "--data-parallel-address", cfg.get("data_parallel_address"))
     _append(argv, "--data-parallel-rpc-port", cfg.get("data_parallel_rpc_port"))
+    _append(argv, "--data-parallel-backend", cfg.get("data_parallel_backend"))
+    _append(argv, "--data-parallel-rank", cfg.get("data_parallel_rank"))
+    lb_mode = str(cfg.get("data_parallel_lb_mode") or "").strip().lower().replace("-", "_")
+    if lb_mode == "hybrid":
+        _append_bool(argv, "--data-parallel-hybrid-lb", True)
+    elif lb_mode == "external":
+        _append_bool(argv, "--data-parallel-external-lb", True)
+    elif lb_mode in {"multi_port_external", "multi_port"}:
+        _append_bool(argv, "--data-parallel-multi-port-external-lb", True)
+    elif lb_mode:
+        blockers.append(_blocker("engine_config.vllm.data_parallel_lb_mode", "vLLM DP LB mode must be hybrid, external, or multi_port_external"))
+    if cfg.get("headless") and cfg.get("api_server_count"):
+        blockers.append(_blocker("engine_config.vllm.api_server_count", "vLLM headless mode cannot run API servers; leave API Server Count blank"))
+    if cfg.get("headless") and lb_mode == "hybrid":
+        blockers.append(_blocker("engine_config.vllm.data_parallel_lb_mode", "vLLM headless mode is not compatible with hybrid DP load balancing"))
+    _append_bool(argv, "--headless", cfg.get("headless"))
     _append(argv, "--api-server-count", cfg.get("api_server_count"))
     _append(argv, "--decode-context-parallel-size", cfg.get("decode_context_parallel_size") or context.get("decode_size"))
     _append(argv, "--prefill-context-parallel-size", cfg.get("prefill_context_parallel_size") or context.get("prefill_size"))
@@ -967,6 +983,7 @@ def _render_sglang(argv: list[str], model_path: str, common: dict, cfg: dict, in
     _append(argv, "--max-running-requests", common.get("max_concurrent_requests"))
     _append(argv, "--max-total-tokens", common.get("max_batch_tokens"))
     _append(argv, "--max-prefill-tokens", common.get("max_prefill_tokens"))
+    _append(argv, "--max-queued-requests", common.get("max_queued_requests"))
     _append_bool(argv, "--trust-remote-code", common.get("trust_remote_code"))
     _append(argv, "--reasoning-parser", common.get("reasoning_parser"))
     _append(argv, "--tool-call-parser", common.get("tool_call_parser"))
@@ -994,6 +1011,10 @@ def _render_sglang(argv: list[str], model_path: str, common: dict, cfg: dict, in
     _append(argv, "--dsa-prefill-cp-mode", cfg.get("dsa_prefill_cp_mode"))
     _append(argv, "--chunked-prefill-size", cfg.get("chunked_prefill_size"))
     _append(argv, "--torchao-config", cfg.get("torchao_config"))
+    _append(argv, "--hf-chat-template-name", cfg.get("hf_chat_template_name"))
+    _append(argv, "--dist-init-addr", cfg.get("dist_init_addr"))
+    _append(argv, "--nnodes", cfg.get("nnodes"))
+    _append(argv, "--node-rank", cfg.get("node_rank"))
     _append_json(argv, "--sampling-defaults", cfg.get("sampling_defaults"))
     _append_json(argv, "--cuda-graph-config", cfg.get("cuda_graph_config"))
     _append_json(argv, "--hicache-config", cfg.get("hicache"))

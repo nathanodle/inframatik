@@ -1833,6 +1833,7 @@ const STRUCTURED_COMMON_KEYS = [
     'max_concurrent_requests',
     'max_batch_tokens',
     'max_prefill_tokens',
+    'max_queued_requests',
     'startup_grace_seconds',
     'trust_remote_code',
     'enable_prefix_caching',
@@ -1856,6 +1857,9 @@ const STRUCTURED_ENGINE_KEYS = {
         'data_parallel_start_rank',
         'data_parallel_address',
         'data_parallel_rpc_port',
+        'data_parallel_backend',
+        'data_parallel_rank',
+        'data_parallel_lb_mode',
         'context_parallel_backend',
         'max_num_partial_prefills',
         'max_long_partial_prefills',
@@ -1876,6 +1880,7 @@ const STRUCTURED_ENGINE_KEYS = {
         'enable_ep_weight_filter',
         'enable_eplb',
         'enable_dbo',
+        'headless',
     ],
     sglang: [
         'load_format',
@@ -1888,6 +1893,10 @@ const STRUCTURED_ENGINE_KEYS = {
         'moe_runner_backend',
         'torchao_config',
         'dsa_prefill_cp_mode',
+        'hf_chat_template_name',
+        'dist_init_addr',
+        'nnodes',
+        'node_rank',
         'sampling_defaults',
         'cuda_graph_config',
         'hicache',
@@ -2130,6 +2139,7 @@ function structuredCommonConfig() {
         max_concurrent_requests: profileNumberValue('profile-max-concurrent'),
         max_batch_tokens: profileNumberValue('profile-max-batch-tokens'),
         max_prefill_tokens: profileNumberValue('profile-max-prefill-tokens'),
+        max_queued_requests: profileNumberValue('profile-max-queued-requests'),
         startup_grace_seconds: profileNumberValue('profile-startup-grace'),
         trust_remote_code: profileBooleanValue('profile-trust-remote-code') ? true : null,
         enable_prefix_caching: profileBooleanValue('profile-prefix-caching') ? true : null,
@@ -2154,6 +2164,9 @@ function structuredEngineConfig(engine) {
             data_parallel_start_rank: profileNumberValue('profile-vllm-dp-start-rank'),
             data_parallel_address: modelOptionalValue('profile-vllm-dp-address'),
             data_parallel_rpc_port: profileNumberValue('profile-vllm-dp-rpc-port'),
+            data_parallel_backend: modelOptionalValue('profile-vllm-dp-backend'),
+            data_parallel_rank: profileNumberValue('profile-vllm-dp-rank'),
+            data_parallel_lb_mode: modelOptionalValue('profile-vllm-dp-lb-mode'),
             context_parallel_backend: modelOptionalValue('profile-vllm-context-backend'),
             max_num_partial_prefills: profileNumberValue('profile-vllm-partial-prefills'),
             max_long_partial_prefills: profileNumberValue('profile-vllm-long-partial-prefills'),
@@ -2174,6 +2187,7 @@ function structuredEngineConfig(engine) {
             enable_ep_weight_filter: profileBooleanValue('profile-vllm-ep-weight-filter') ? true : null,
             enable_eplb: profileBooleanValue('profile-vllm-eplb') ? true : null,
             enable_dbo: profileBooleanValue('profile-vllm-dbo') ? true : null,
+            headless: profileBooleanValue('profile-vllm-headless') ? true : null,
         });
     }
     if (engine === 'sglang') {
@@ -2188,6 +2202,10 @@ function structuredEngineConfig(engine) {
             moe_runner_backend: modelOptionalValue('profile-sglang-moe-runner-backend'),
             torchao_config: modelOptionalValue('profile-sglang-torchao-config'),
             dsa_prefill_cp_mode: modelOptionalValue('profile-sglang-dsa-cp-mode'),
+            hf_chat_template_name: modelOptionalValue('profile-sglang-hf-chat-template-name'),
+            dist_init_addr: modelOptionalValue('profile-sglang-dist-init-addr'),
+            nnodes: profileNumberValue('profile-sglang-nnodes'),
+            node_rank: profileNumberValue('profile-sglang-node-rank'),
             sampling_defaults: profileJsonValue('profile-sglang-sampling-defaults', 'SGLang Sampling Defaults'),
             cuda_graph_config: profileJsonValue('profile-sglang-cuda-graph-config', 'SGLang CUDA Graph Config'),
             hicache: profileJsonValue('profile-sglang-hicache', 'SGLang HiCache Config'),
@@ -2290,13 +2308,14 @@ function resetProfileForm() {
         'profile-gpu-memory-utilization', 'profile-cpu-offload-gb', 'profile-tensor-parallel',
         'profile-pipeline-parallel', 'profile-data-parallel', 'profile-expert-parallel',
         'profile-context-parallel-decode', 'profile-context-parallel-prefill', 'profile-max-concurrent',
-        'profile-max-batch-tokens', 'profile-max-prefill-tokens', 'profile-startup-grace',
+        'profile-max-batch-tokens', 'profile-max-prefill-tokens', 'profile-max-queued-requests', 'profile-startup-grace',
         'profile-reasoning-parser', 'profile-tool-call-parser', 'profile-chat-template',
         'profile-speculative-model', 'profile-speculative-tokens', 'profile-log-level',
         'profile-port', 'profile-gpus', 'profile-hostname',
         'profile-vllm-load-format', 'profile-vllm-all2all-backend', 'profile-vllm-expert-placement',
         'profile-vllm-api-server-count', 'profile-vllm-dp-local-size', 'profile-vllm-dp-start-rank',
-        'profile-vllm-dp-address', 'profile-vllm-dp-rpc-port', 'profile-vllm-partial-prefills',
+        'profile-vllm-dp-address', 'profile-vllm-dp-rpc-port', 'profile-vllm-dp-backend',
+        'profile-vllm-dp-rank', 'profile-vllm-dp-lb-mode', 'profile-vllm-partial-prefills',
         'profile-vllm-long-partial-prefills', 'profile-vllm-long-prefill-threshold',
         'profile-vllm-scheduling-policy', 'profile-vllm-moe-backend', 'profile-vllm-linear-backend',
         'profile-vllm-distributed-executor', 'profile-vllm-context-backend',
@@ -2308,6 +2327,8 @@ function resetProfileForm() {
         'profile-sglang-ep-size', 'profile-sglang-attn-cp-size', 'profile-sglang-chunked-prefill-size',
         'profile-sglang-load-balance-method', 'profile-sglang-moe-a2a-backend',
         'profile-sglang-moe-runner-backend', 'profile-sglang-torchao-config', 'profile-sglang-dsa-cp-mode',
+        'profile-sglang-hf-chat-template-name', 'profile-sglang-dist-init-addr',
+        'profile-sglang-nnodes', 'profile-sglang-node-rank',
         'profile-sglang-grammar-backend', 'profile-sglang-sampling-defaults',
         'profile-sglang-cuda-graph-config', 'profile-sglang-hicache',
         'profile-llama-gpu-layers', 'profile-llama-main-gpu', 'profile-llama-split-mode',
@@ -2320,6 +2341,7 @@ function resetProfileForm() {
     });
     ['profile-trust-remote-code', 'profile-prefix-caching', 'profile-auto-tool-choice',
         'profile-vllm-expert-parallel', 'profile-vllm-ep-weight-filter', 'profile-vllm-eplb', 'profile-vllm-dbo',
+        'profile-vllm-headless',
         'profile-sglang-dp-attention', 'profile-sglang-dsa-prefill-cp',
         'profile-llama-flash-attn'].forEach(id => setProfileChecked(id, false));
     const idEl = document.getElementById('profile-id');
@@ -2387,6 +2409,7 @@ function fillProfileForm(profile) {
     setProfileValue('profile-max-concurrent', common.max_concurrent_requests);
     setProfileValue('profile-max-batch-tokens', common.max_batch_tokens);
     setProfileValue('profile-max-prefill-tokens', common.max_prefill_tokens);
+    setProfileValue('profile-max-queued-requests', common.max_queued_requests);
     setProfileValue('profile-startup-grace', common.startup_grace_seconds);
     setProfileValue('profile-reasoning-parser', common.reasoning_parser);
     setProfileValue('profile-tool-call-parser', common.tool_call_parser);
@@ -2423,6 +2446,9 @@ function fillProfileForm(profile) {
     setProfileValue('profile-vllm-dp-start-rank', engineSpecific.data_parallel_start_rank);
     setProfileValue('profile-vllm-dp-address', engineSpecific.data_parallel_address);
     setProfileValue('profile-vllm-dp-rpc-port', engineSpecific.data_parallel_rpc_port);
+    setProfileValue('profile-vllm-dp-backend', engineSpecific.data_parallel_backend);
+    setProfileValue('profile-vllm-dp-rank', engineSpecific.data_parallel_rank);
+    setProfileValue('profile-vllm-dp-lb-mode', engineSpecific.data_parallel_lb_mode);
     setProfileValue('profile-vllm-context-backend', engineSpecific.context_parallel_backend);
     setProfileValue('profile-vllm-partial-prefills', engineSpecific.max_num_partial_prefills);
     setProfileValue('profile-vllm-long-partial-prefills', engineSpecific.max_long_partial_prefills);
@@ -2443,6 +2469,7 @@ function fillProfileForm(profile) {
     setProfileChecked('profile-vllm-ep-weight-filter', engineSpecific.enable_ep_weight_filter);
     setProfileChecked('profile-vllm-eplb', engineSpecific.enable_eplb);
     setProfileChecked('profile-vllm-dbo', engineSpecific.enable_dbo);
+    setProfileChecked('profile-vllm-headless', engineSpecific.headless);
     setProfileValue('profile-sglang-load-format', engineSpecific.load_format);
     setProfileValue('profile-sglang-page-size', engineSpecific.page_size);
     setProfileValue('profile-sglang-ep-size', engineSpecific.ep_size);
@@ -2453,6 +2480,10 @@ function fillProfileForm(profile) {
     setProfileValue('profile-sglang-moe-runner-backend', engineSpecific.moe_runner_backend);
     setProfileValue('profile-sglang-torchao-config', engineSpecific.torchao_config);
     setProfileValue('profile-sglang-dsa-cp-mode', engineSpecific.dsa_prefill_cp_mode);
+    setProfileValue('profile-sglang-hf-chat-template-name', engineSpecific.hf_chat_template_name);
+    setProfileValue('profile-sglang-dist-init-addr', engineSpecific.dist_init_addr);
+    setProfileValue('profile-sglang-nnodes', engineSpecific.nnodes);
+    setProfileValue('profile-sglang-node-rank', engineSpecific.node_rank);
     setProfileValue('profile-sglang-grammar-backend', engineSpecific.grammar_backend);
     setProfileValue('profile-sglang-sampling-defaults', jsonForTextarea(engineSpecific.sampling_defaults));
     setProfileValue('profile-sglang-cuda-graph-config', jsonForTextarea(engineSpecific.cuda_graph_config));
@@ -2476,7 +2507,8 @@ function fillProfileForm(profile) {
         clearProfileValues([
             'profile-vllm-load-format', 'profile-vllm-all2all-backend', 'profile-vllm-expert-placement',
             'profile-vllm-api-server-count', 'profile-vllm-dp-local-size', 'profile-vllm-dp-start-rank',
-            'profile-vllm-dp-address', 'profile-vllm-dp-rpc-port', 'profile-vllm-partial-prefills',
+            'profile-vllm-dp-address', 'profile-vllm-dp-rpc-port', 'profile-vllm-dp-backend',
+            'profile-vllm-dp-rank', 'profile-vllm-dp-lb-mode', 'profile-vllm-partial-prefills',
             'profile-vllm-long-partial-prefills', 'profile-vllm-long-prefill-threshold',
             'profile-vllm-scheduling-policy', 'profile-vllm-moe-backend', 'profile-vllm-linear-backend',
             'profile-vllm-distributed-executor', 'profile-vllm-context-backend',
@@ -2485,7 +2517,7 @@ function fillProfileForm(profile) {
             'profile-vllm-reasoning-plugin', 'profile-vllm-tool-plugin',
             'profile-vllm-eplb-config', 'profile-vllm-compilation-config', 'profile-vllm-attention-config',
         ]);
-        clearProfileChecks(['profile-vllm-expert-parallel', 'profile-vllm-ep-weight-filter', 'profile-vllm-eplb', 'profile-vllm-dbo']);
+        clearProfileChecks(['profile-vllm-expert-parallel', 'profile-vllm-ep-weight-filter', 'profile-vllm-eplb', 'profile-vllm-dbo', 'profile-vllm-headless']);
     }
     if (selectedEngine !== 'sglang') {
         clearProfileValues([
@@ -2493,7 +2525,9 @@ function fillProfileForm(profile) {
             'profile-sglang-attn-cp-size', 'profile-sglang-chunked-prefill-size',
             'profile-sglang-load-balance-method', 'profile-sglang-moe-a2a-backend',
             'profile-sglang-moe-runner-backend', 'profile-sglang-torchao-config',
-            'profile-sglang-dsa-cp-mode', 'profile-sglang-grammar-backend',
+            'profile-sglang-dsa-cp-mode', 'profile-sglang-hf-chat-template-name',
+            'profile-sglang-dist-init-addr', 'profile-sglang-nnodes', 'profile-sglang-node-rank',
+            'profile-sglang-grammar-backend',
             'profile-sglang-sampling-defaults', 'profile-sglang-cuda-graph-config',
             'profile-sglang-hicache',
         ]);

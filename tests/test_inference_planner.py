@@ -189,6 +189,9 @@ def test_vllm_preview_renders_argv_env_redaction_and_raw_args(tmp_path: Path):
                         "enable_expert_parallel": True,
                         "all2all_backend": "deepep_high_throughput",
                         "api_server_count": 2,
+                        "data_parallel_backend": "ray",
+                        "data_parallel_rank": 1,
+                        "data_parallel_lb_mode": "external",
                         "max_num_partial_prefills": 4,
                         "long_prefill_token_threshold": 32768,
                         "moe_backend": "auto",
@@ -222,6 +225,9 @@ def test_vllm_preview_renders_argv_env_redaction_and_raw_args(tmp_path: Path):
         assert "--speculative-model" in command["argv"]
         assert "--num-speculative-tokens" in command["argv"]
         assert "--api-server-count" in command["argv"]
+        assert "--data-parallel-backend" in command["argv"]
+        assert "--data-parallel-rank" in command["argv"]
+        assert "--data-parallel-external-lb" in command["argv"]
         assert "--max-num-partial-prefills" in command["argv"]
         assert "--long-prefill-token-threshold" in command["argv"]
         assert "--moe-backend" in command["argv"]
@@ -263,6 +269,7 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
                         "tensor_parallel": 2,
                         "data_parallel": 2,
                         "max_prefill_tokens": 2048,
+                        "max_queued_requests": 64,
                         "max_batch_tokens": 8192,
                         "reasoning_parser": "deepseek-r1",
                         "tool_call_parser": "hermes",
@@ -276,6 +283,10 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
                         "chunked_prefill_size": 4096,
                         "moe_a2a_backend": "deepep",
                         "moe_runner_backend": "triton",
+                        "hf_chat_template_name": "tool_use",
+                        "dist_init_addr": "sgl-0:50000",
+                        "nnodes": 2,
+                        "node_rank": 1,
                     }},
                 }
             )
@@ -306,9 +317,14 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
         assert "--enable-dp-attention" in sg_argv
         assert "--dp-size" in sg_argv
         assert "--max-prefill-tokens" in sg_argv
+        assert "--max-queued-requests" in sg_argv
         assert "--chunked-prefill-size" in sg_argv
         assert "--moe-a2a-backend" in sg_argv
         assert "--moe-runner-backend" in sg_argv
+        assert "--hf-chat-template-name" in sg_argv
+        assert "--dist-init-addr" in sg_argv
+        assert "--nnodes" in sg_argv
+        assert "--node-rank" in sg_argv
         assert "--speculative-draft-model-path" in sg_argv
         assert "--speculative-num-steps" in sg_argv
 
@@ -320,6 +336,57 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
         assert "--threads-batch" in llama_argv
         assert "--cache-type-k" in llama_argv
         assert "--cache-type-v" in llama_argv
+
+
+def test_vllm_headless_dp_validation(tmp_path: Path):
+    with _temp_inference(tmp_path) as ctx:
+        _write_model(ctx["store"])
+        exe = tmp_path / "vllm"
+        _make_executable(exe)
+        inference_launchers.create_launcher(
+            launcher_id="vllm-main",
+            display_name="vLLM",
+            engine="vllm",
+            executable=str(exe),
+        )
+
+        valid = inference_planner.preview_profile(
+            {
+                "id": "vllm-headless",
+                "engine": "vllm",
+                "engine_launcher_id": "vllm-main",
+                "model": {"artifact_id": "qwen", "snapshot": "v1"},
+                "common": {"port": 10000, "data_parallel": 2},
+                "engine_config": {"vllm": {
+                    "headless": True,
+                    "data_parallel_size_local": 2,
+                    "data_parallel_backend": "mp",
+                }},
+            }
+        )
+        assert valid["valid_for_save"] is True
+        argv = valid["command_preview"][0]["argv"]
+        assert "--headless" in argv
+        assert "--data-parallel-backend" in argv
+
+        blocked = inference_planner.preview_profile(
+            {
+                "id": "vllm-headless-blocked",
+                "engine": "vllm",
+                "engine_launcher_id": "vllm-main",
+                "model": {"artifact_id": "qwen", "snapshot": "v1"},
+                "common": {"port": 10001, "data_parallel": 2},
+                "engine_config": {"vllm": {
+                    "headless": True,
+                    "api_server_count": 1,
+                    "data_parallel_lb_mode": "hybrid",
+                }},
+            }
+        )
+        assert blocked["valid_for_save"] is False
+        blocker_fields = {item["field"] for item in blocked["blockers"]}
+        assert "engine_config.vllm.api_server_count" in blocker_fields
+        assert "engine_config.vllm.data_parallel_lb_mode" in blocker_fields
 
 
 def test_planner_blocks_invalid_refs_ports_and_gpus(tmp_path: Path):

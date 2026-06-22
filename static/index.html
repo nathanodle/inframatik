@@ -461,6 +461,12 @@
                             <input type="number" id="profile-max-prefill-tokens" placeholder="SGLang prefill cap" min="1" step="1" autocomplete="off">
                         </div>
                         <div class="form-group">
+                            <label>Queue Limit</label>
+                            <input type="number" id="profile-max-queued-requests" placeholder="SGLang queued requests" min="1" step="1" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
                             <label>Startup Grace Seconds</label>
                             <input type="number" id="profile-startup-grace" placeholder="600" min="1" step="1" autocomplete="off">
                         </div>
@@ -611,6 +617,31 @@
                             </div>
                             <div class="model-form-grid">
                                 <div class="form-group">
+                                    <label>DP Backend</label>
+                                    <input type="text" id="profile-vllm-dp-backend" placeholder="mp, ray" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>DP Rank</label>
+                                    <input type="number" id="profile-vllm-dp-rank" placeholder="external LB rank" min="0" step="1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>DP LB Mode</label>
+                                    <select id="profile-vllm-dp-lb-mode">
+                                        <option value="">Default</option>
+                                        <option value="hybrid">Hybrid</option>
+                                        <option value="external">External</option>
+                                        <option value="multi_port_external">Multi-port external</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Headless</label>
+                                    <label class="model-checkbox"><input type="checkbox" id="profile-vllm-headless"> Engine-only node</label>
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
                                     <label>Partial Prefills</label>
                                     <input type="number" id="profile-vllm-partial-prefills" placeholder="max partial prefills" min="1" step="1" autocomplete="off">
                                 </div>
@@ -750,6 +781,26 @@
                                 <div class="form-group">
                                     <label>DSA CP Mode</label>
                                     <input type="text" id="profile-sglang-dsa-cp-mode" placeholder="default" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>HF Chat Template Name</label>
+                                    <input type="text" id="profile-sglang-hf-chat-template-name" placeholder="tool_use, default" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Dist Init Addr</label>
+                                    <input type="text" id="profile-sglang-dist-init-addr" placeholder="host:port" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
+                                    <label>Nodes</label>
+                                    <input type="number" id="profile-sglang-nnodes" placeholder="2" min="1" step="1" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Node Rank</label>
+                                    <input type="number" id="profile-sglang-node-rank" placeholder="0" min="0" step="1" autocomplete="off">
                                 </div>
                             </div>
                             <div class="model-form-grid">

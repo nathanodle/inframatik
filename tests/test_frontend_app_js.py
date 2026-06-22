@@ -2541,13 +2541,27 @@ def test_static_inference_model_ui_assets_present():
     assert "profile-speculative-model" in index_html
     assert "profile-log-level" in index_html
     assert "profile-vllm-distributed-executor" in index_html
+    assert "profile-vllm-dp-backend" in index_html
+    assert "profile-vllm-dp-rank" in index_html
+    assert "profile-vllm-dp-lb-mode" in index_html
+    assert "profile-vllm-headless" in index_html
     assert "profile-vllm-kv-offloading-size" in index_html
     assert "profile-vllm-compilation-config" in index_html
     assert "profile-vllm-ep-weight-filter" in index_html
     assert "profile-sglang-sampling-defaults" in index_html
+    assert "profile-sglang-hf-chat-template-name" in index_html
+    assert "profile-sglang-dist-init-addr" in index_html
+    assert "profile-sglang-nnodes" in index_html
+    assert "profile-sglang-node-rank" in index_html
     assert "profile-sglang-cuda-graph-config" in index_html
     assert "profile-sglang-hicache" in index_html
     assert "distributed_executor_backend" in app_js
+    assert "data_parallel_backend" in app_js
+    assert "data_parallel_rank" in app_js
+    assert "data_parallel_lb_mode" in app_js
+    assert "max_queued_requests" in app_js
+    assert "hf_chat_template_name" in app_js
+    assert "dist_init_addr" in app_js
     assert "kv_offloading_size" in app_js
     assert "sampling_defaults" in app_js
     assert "mergeEngineConfig" in app_js
