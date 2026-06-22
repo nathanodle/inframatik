@@ -1810,6 +1810,49 @@ body {
     margin: 8px 0;
 }
 
+.profile-preview-issues {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px;
+    margin: 10px 0 12px;
+}
+
+.profile-preview-issue-group {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.14);
+}
+
+.profile-preview-issue-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.profile-preview-issue-head strong,
+.profile-preview-issue-head small {
+    display: block;
+}
+
+.profile-preview-issue-head strong {
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.profile-preview-issue-head small {
+    margin-top: 2px;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.profile-preview-issue-head .btn {
+    min-height: 28px;
+    padding: 5px 8px;
+}
+
 .profile-warning {
     color: var(--yellow);
     background: var(--yellow-glow);

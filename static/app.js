@@ -1531,6 +1531,14 @@ async function submitNewService() {
 // ---- Inference models ----
 
 const PROFILE_EDITOR_SECTIONS = ['basics', 'runtime', 'placement', 'exposure', 'engine', 'advanced'];
+const PROFILE_EDITOR_SECTION_LABELS = {
+    basics: 'Basics',
+    runtime: 'Runtime',
+    placement: 'Placement',
+    exposure: 'Exposure',
+    engine: 'Engine',
+    advanced: 'Advanced',
+};
 
 function modelNodePath(path) {
     return nodePathFor(selectedNodeId, path);
@@ -2663,6 +2671,58 @@ async function saveInferenceProfile(options = {}) {
     }
 }
 
+function profileIssueMessage(issue) {
+    if (!issue) return '';
+    if (typeof issue === 'string') return issue;
+    return issue.message || issue.detail || JSON.stringify(issue);
+}
+
+function groupProfileIssues(blockers = [], warnings = []) {
+    const groups = new Map(PROFILE_EDITOR_SECTIONS.map(section => [section, { blockers: [], warnings: [] }]));
+    blockers.forEach(issue => {
+        const section = profileIssueSection(issue && issue.field);
+        groups.get(section).blockers.push(issue);
+    });
+    warnings.forEach(issue => {
+        const section = profileIssueSection(issue && issue.field);
+        groups.get(section).warnings.push(issue);
+    });
+    return Array.from(groups.entries())
+        .map(([section, items]) => ({ section, ...items }))
+        .filter(group => group.blockers.length || group.warnings.length);
+}
+
+function renderProfilePreviewIssues(blockers = [], warnings = []) {
+    const groups = groupProfileIssues(blockers, warnings);
+    if (!groups.length) return '';
+    return `
+        <div class="profile-preview-issues">
+            ${groups.map(group => {
+                const sectionLabel = PROFILE_EDITOR_SECTION_LABELS[group.section] || group.section;
+                const countLabel = [
+                    group.blockers.length ? `${group.blockers.length} blocker${group.blockers.length === 1 ? '' : 's'}` : '',
+                    group.warnings.length ? `${group.warnings.length} warning${group.warnings.length === 1 ? '' : 's'}` : '',
+                ].filter(Boolean).join(' · ');
+                return `
+                    <div class="profile-preview-issue-group">
+                        <div class="profile-preview-issue-head">
+                            <div>
+                                <strong>${esc(sectionLabel)}</strong>
+                                <small>${esc(countLabel)}</small>
+                            </div>
+                            <button type="button" class="btn" onclick="setProfileEditorSection('${esc(group.section)}')">Open</button>
+                        </div>
+                        <div class="profile-issue-list">
+                            ${group.blockers.map(issue => `<div class="model-job-error">${esc(profileIssueMessage(issue))}</div>`).join('')}
+                            ${group.warnings.map(issue => `<div class="profile-warning">${esc(profileIssueMessage(issue))}</div>`).join('')}
+                        </div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
 function renderProfilePreview(plan) {
     updateProfileEditorIssueBadges(plan);
     const blockers = plan.blockers || [];
@@ -2689,8 +2749,7 @@ function renderProfilePreview(plan) {
                 ${plan.valid_for_save ? '<span class="model-badge green">Valid</span>' : '<span class="model-badge red">Blocked</span>'}
             </span>
         </div>
-        ${blockers.length ? `<div class="profile-issue-list">${blockers.map(item => `<div class="model-job-error">${esc(item.message || item)}</div>`).join('')}</div>` : ''}
-        ${warnings.length ? `<div class="profile-issue-list">${warnings.map(item => `<div class="profile-warning">${esc(item.message || item)}</div>`).join('')}</div>` : ''}
+        ${renderProfilePreviewIssues(blockers, warnings)}
         <div class="profile-preview-facts">
             <div><span>Ports</span><code>${esc(allocatedPorts)}</code><small>${esc(portPlan.mode || '--')} · ${esc(portPlan.range || 'inference')} ${portPlan.range_start ? `${esc(portPlan.range_start)}-${esc(portPlan.range_end)}` : ''}</small></div>
             <div><span>GPU Plan</span><code>${esc(gpuAssignments)}</code><small>${esc(gpuPlan.mode || '--')} · ${esc(gpuPlan.claim_mode || 'exclusive')}</small></div>

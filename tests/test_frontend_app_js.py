@@ -1182,6 +1182,40 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile preview should render port/GPU, command env, systemd, Cloudflare, and restart facts'
                 );
 
+                const previewIssueHtml = vm.runInContext(`
+                    renderProfilePreview({
+                        valid_for_save: false,
+                        blockers: [
+                            { field: 'model.artifact_id', message: 'Model is required.' },
+                            { field: 'deployment.gpu_policy.gpu_ids', message: 'GPU 8 does not exist.' },
+                        ],
+                        warnings: [
+                            { field: 'exposure.hostname', message: 'Cloudflare hostname will be provisioned on save.' },
+                            { field: 'advanced.env', message: 'Raw env values are used as-is.' },
+                        ],
+                        resolved_instances: [],
+                        port_plan: {},
+                        gpu_plan: {},
+                        command_preview: [],
+                        systemd_preview: { units: [] },
+                        cloudflare_plan: {},
+                    });
+                    document.getElementById('profile-preview-panel').innerHTML;
+                `, context);
+                assert(
+                    previewIssueHtml.includes('profile-preview-issues') &&
+                    previewIssueHtml.includes('Basics') &&
+                    previewIssueHtml.includes('Placement') &&
+                    previewIssueHtml.includes('Exposure') &&
+                    previewIssueHtml.includes('Advanced') &&
+                    previewIssueHtml.includes('Model is required.') &&
+                    previewIssueHtml.includes('GPU 8 does not exist.') &&
+                    previewIssueHtml.includes('Cloudflare hostname will be provisioned on save.') &&
+                    previewIssueHtml.includes('Raw env values are used as-is.') &&
+                    previewIssueHtml.includes("setProfileEditorSection('placement')"),
+                    'profile preview should group blockers and warnings by editor section with jump actions'
+                );
+
                 const bundleHtml = vm.runInContext(`
                     renderClientBundle({
                         id: 'default',
@@ -2586,6 +2620,9 @@ def test_static_inference_model_ui_assets_present():
     assert "setProfileEditorSection" in app_js
     assert "profileIssueSection" in app_js
     assert "updateProfileEditorIssueBadges" in app_js
+    assert "renderProfilePreviewIssues" in app_js
+    assert "groupProfileIssues" in app_js
+    assert "PROFILE_EDITOR_SECTION_LABELS" in app_js
     assert 'id="profile-gpu-hints"' in index_html
     assert 'id="profile-kv-cache-dtype"' in index_html
     assert 'id="profile-gpu-memory-utilization"' in index_html
@@ -2782,6 +2819,9 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-engine-details" in style_css
     assert ".form-check-grid" in style_css
     assert ".profile-preview-panel" in style_css
+    assert ".profile-preview-issues" in style_css
+    assert ".profile-preview-issue-group" in style_css
+    assert ".profile-preview-issue-head" in style_css
     assert ".profile-preview-facts" in style_css
     assert ".profile-preview-resource-grid" in style_css
     assert ".profile-command-env" in style_css
