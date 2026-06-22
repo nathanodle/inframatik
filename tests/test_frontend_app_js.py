@@ -800,6 +800,186 @@ def test_app_js_node_selection_starts_priority_refresh_immediately():
     )
 
 
+def test_app_js_inference_ws_state_transitions_manage_activity_polling():
+    _run_node(
+        textwrap.dedent(
+            r"""
+            const fs = require('fs');
+            const vm = require('vm');
+
+            function makeElement(id) {
+                return {
+                    id,
+                    style: {},
+                    dataset: {},
+                    value: '',
+                    textContent: '',
+                    innerHTML: '',
+                    disabled: false,
+                    selectedIndex: 0,
+                    options: [],
+                    className: '',
+                    classList: {
+                        add() {},
+                        remove() {},
+                        contains() { return false; },
+                    },
+                    addEventListener() {},
+                    querySelectorAll() { return []; },
+                    querySelector() { return null; },
+                };
+            }
+
+            const elements = new Map();
+            const document = {
+                cookie: '',
+                addEventListener() {},
+                createElement() {
+                    const el = makeElement('created');
+                    Object.defineProperty(el, 'textContent', {
+                        get() { return this._textContent || ''; },
+                        set(value) {
+                            this._textContent = String(value ?? '');
+                            this.innerHTML = this._textContent
+                                .replace(/&/g, '&amp;')
+                                .replace(/</g, '&lt;')
+                                .replace(/>/g, '&gt;')
+                                .replace(/"/g, '&quot;');
+                        },
+                    });
+                    return el;
+                },
+                getElementById(id) {
+                    if (!elements.has(id)) elements.set(id, makeElement(id));
+                    return elements.get(id);
+                },
+                querySelectorAll() { return []; },
+                querySelector() { return makeElement('query-result'); },
+            };
+
+            const calls = [];
+            const timerCallbacks = new Map();
+            let nextTimerId = 10;
+            const context = {
+                console,
+                document,
+                window: { location: { hostname: 'localhost' } },
+                location: { protocol: 'http:', host: 'localhost' },
+                WebSocket: function WebSocket() { return {}; },
+                fetch: async () => { throw new Error('fetch should not run'); },
+                setTimeout,
+                clearTimeout,
+                setInterval: (fn, ms) => {
+                    const id = nextTimerId++;
+                    calls.push(['setInterval', id, ms]);
+                    timerCallbacks.set(id, fn);
+                    return id;
+                },
+                clearInterval: (id) => {
+                    calls.push(['clearInterval', id]);
+                    timerCallbacks.delete(id);
+                },
+                calls,
+                timerCallbacks,
+            };
+            context.globalThis = context;
+
+            vm.createContext(context);
+            vm.runInContext(fs.readFileSync('static/app.js', 'utf8'), context, {
+                filename: 'static/app.js',
+            });
+
+            vm.runInContext(`
+                (async () => {
+                    function assert(condition, message) {
+                        if (!condition) throw new Error(message);
+                    }
+
+                    isMaster = false;
+                    nodeRole = 'worker';
+                    selfNodeId = 'node-a';
+                    selectedNodeId = 'node-a';
+                    currentAppView = 'inference';
+                    activeInferenceTab = 'launchers';
+                    inferenceModelData = { artifacts: [], jobs: [] };
+                    inferenceOperationsData = [{ id: 'op-1', state: 'running', profile_id: 'qwen' }];
+                    renderInferenceOperations = function(operations) {
+                        calls.push(['renderOperations', operations[0] && operations[0].state]);
+                    };
+                    hydrateVisibleInferenceFailures = function(nodeId) {
+                        calls.push(['hydrateFailures', nodeId]);
+                    };
+                    setInferenceError = function(message) {
+                        if (message) calls.push(['error', message]);
+                    };
+                    api = async function(method, path) {
+                        calls.push(['api', method, path]);
+                        if (path === '/api/inference/operations') {
+                            return { operations: [{ id: 'op-1', state: 'succeeded', profile_id: 'qwen' }] };
+                        }
+                        throw new Error('unexpected API call: ' + method + ' ' + path);
+                    };
+
+                    wsConnected = true;
+                    handleWsDisconnected();
+                    const activeTimerId = inferenceJobsTimer;
+                    assert(wsConnected === false, 'websocket close should mark the socket disconnected');
+                    assert(activeTimerId !== null, 'websocket close should start fallback polling for active operations');
+                    assert(
+                        calls.some(call => call[0] === 'setInterval' && call[1] === activeTimerId && call[2] === 2500),
+                        'fallback polling should run on the inference activity cadence'
+                    );
+
+                    await timerCallbacks.get(activeTimerId)();
+                    assert(
+                        calls.some(call => call[0] === 'api' && call[2] === '/api/inference/operations'),
+                        'activity polling should refresh operations even when the Launchers tab is active'
+                    );
+                    assert(
+                        inferenceOperationsData[0].state === 'succeeded',
+                        'activity polling should merge the refreshed terminal operation'
+                    );
+                    assert(inferenceJobsTimer === null, 'terminal operation should stop fallback polling');
+                    assert(
+                        calls.some(call => call[0] === 'clearInterval' && call[1] === activeTimerId),
+                        'terminal operation should clear the fallback timer'
+                    );
+
+                    calls.length = 0;
+                    inferenceOperationsData = [{ id: 'op-2', state: 'running', profile_id: 'qwen' }];
+                    api = async function(method, path) {
+                        calls.push(['api', method, path]);
+                        if (path === '/api/inference/operations') {
+                            return { operations: [{ id: 'op-2', state: 'succeeded', profile_id: 'qwen' }] };
+                        }
+                        throw new Error('unexpected API call: ' + method + ' ' + path);
+                    };
+                    handleWsDisconnected();
+                    const reconnectTimerId = inferenceJobsTimer;
+                    assert(reconnectTimerId !== null, 'second disconnect should start fallback polling');
+
+                    await handleWsConnected();
+                    assert(wsConnected === true, 'websocket reconnect should mark the socket connected');
+                    assert(
+                        calls.some(call => call[0] === 'clearInterval' && call[1] === reconnectTimerId),
+                        'websocket reconnect should stop fallback polling'
+                    );
+                    assert(
+                        calls.some(call => call[0] === 'api' && call[2] === '/api/inference/operations'),
+                        'websocket reconnect should do a one-shot activity resync'
+                    );
+                    assert(inferenceOperationsData[0].state === 'succeeded', 'reconnect resync should refresh stale active operation state');
+                    assert(inferenceJobsTimer === null, 'websocket reconnect should leave fallback polling stopped');
+                })().catch((error) => {
+                    console.error(error.stack || error.message);
+                    process.exit(1);
+                });
+            `, context);
+            """
+        )
+    )
+
+
 def test_static_index_contains_setup_guidance_and_empty_state_copy():
     index_html = (ROOT / "static" / "index.html").read_text()
 
@@ -1003,6 +1183,7 @@ if __name__ == "__main__":
     test_app_js_cloudflare_section_gating_by_role()
     test_app_js_system_render_limits_hidden_tab_dom_writes()
     test_app_js_node_selection_starts_priority_refresh_immediately()
+    test_app_js_inference_ws_state_transitions_manage_activity_polling()
     test_static_index_contains_setup_guidance_and_empty_state_copy()
     test_static_inference_model_ui_assets_present()
     test_worker_enrollment_ui_uses_same_origin_backend_endpoint()

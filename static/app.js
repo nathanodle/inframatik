@@ -14,7 +14,7 @@ function connectWs() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${proto}//${location.host}/ws`);
     ws.onopen = () => {
-        wsConnected = true;
+        handleWsConnected();
     };
     ws.onmessage = (event) => {
         try {
@@ -29,16 +29,32 @@ function connectWs() {
         } catch (e) {}
     };
     ws.onclose = () => {
-        wsConnected = false;
+        handleWsDisconnected();
         ws = null;
         // Reconnect after a short delay
         setTimeout(() => { if (authToken || document.cookie.includes('inframatik_session')) connectWs(); }, 3000);
     };
-    ws.onerror = () => { wsConnected = false; };
+    ws.onerror = () => { handleWsDisconnected(); };
 }
 
 function onWsProgress(task, callback) {
     wsProgressCallbacks[task] = callback;
+}
+
+async function handleWsConnected() {
+    wsConnected = true;
+    updateInferencePolling();
+    await resyncInferenceAfterWsReconnect();
+}
+
+function handleWsDisconnected() {
+    wsConnected = false;
+    updateInferencePolling();
+}
+
+async function resyncInferenceAfterWsReconnect() {
+    if (currentAppView !== 'inference' || !hasActiveInferenceActivity()) return;
+    await refreshInferenceActivity();
 }
 
 // ---- Cluster state ----
@@ -3887,17 +3903,64 @@ function stopInferencePolling() {
     }
 }
 
-function updateInferencePolling() {
-    const hasActiveModelJob = inferenceModelData
+function hasActiveInferenceModelJob() {
+    return inferenceModelData
         && Array.isArray(inferenceModelData.jobs)
         && inferenceModelData.jobs.some(job => ACTIVE_MODEL_JOB_STATES.has(job.state));
-    const hasActiveOperation = Array.isArray(inferenceOperationsData)
+}
+
+function hasActiveInferenceOperation() {
+    return Array.isArray(inferenceOperationsData)
         && inferenceOperationsData.some(op => ACTIVE_INFERENCE_OPERATION_STATES.has(op.state));
+}
+
+function hasActiveInferenceActivity() {
+    return hasActiveInferenceModelJob() || hasActiveInferenceOperation();
+}
+
+async function refreshInferenceActivity() {
+    const nodeId = selectedNodeId;
+    if (!nodeId || currentAppView !== 'inference') return;
+    if (['profiles', 'models', 'jobs', 'storage'].includes(activeInferenceTab)) {
+        await refreshActiveInferenceTab();
+        return;
+    }
+
+    const needsModels = hasActiveInferenceModelJob();
+    const needsOperations = hasActiveInferenceOperation();
+    if (!needsModels && !needsOperations) {
+        updateInferencePolling();
+        return;
+    }
+
+    setInferenceError('');
+    try {
+        const [models, operations] = await Promise.all([
+            needsModels ? api('GET', modelNodePath('/api/models')) : Promise.resolve(null),
+            needsOperations ? api('GET', modelNodePath('/api/inference/operations')) : Promise.resolve(null),
+        ]);
+        if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        if (models) inferenceModelData = models;
+        if (operations) {
+            inferenceOperationsData = operations.operations || [];
+            renderInferenceOperations(inferenceOperationsData);
+            hydrateVisibleInferenceFailures(nodeId);
+        }
+        updateInferencePolling();
+    } catch (e) {
+        setInferenceError(e.message);
+        stopInferencePolling();
+    }
+}
+
+function updateInferencePolling() {
+    const hasActiveModelJob = hasActiveInferenceModelJob();
+    const hasActiveOperation = hasActiveInferenceOperation();
     const needsOperationPoll = hasActiveOperation && !shouldUseInferenceOperationWs(selectedNodeId);
     const needsModelJobPoll = hasActiveModelJob && !shouldUseInferenceOperationWs(selectedNodeId);
     const shouldPoll = currentAppView === 'inference' && (needsModelJobPoll || needsOperationPoll);
     if (shouldPoll && !inferenceJobsTimer) {
-        inferenceJobsTimer = setInterval(refreshActiveInferenceTab, 2500);
+        inferenceJobsTimer = setInterval(refreshInferenceActivity, 2500);
     } else if (!shouldPoll && inferenceJobsTimer) {
         stopInferencePolling();
     }
