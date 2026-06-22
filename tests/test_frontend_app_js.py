@@ -477,6 +477,60 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'ready model job events should patch inventory locally without refreshing the active tab'
                 );
 
+                const readyModelJobFallbackResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        selectedNodeId = 'self-node';
+                        selfNodeId = 'self-node';
+                        isMaster = false;
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'models';
+                        inferenceModelData = { artifacts: [], jobs: [] };
+                        inferenceStorageData = {};
+                        refreshActiveInferenceTab = async function() { calls.push(['refreshActiveInferenceTab']); };
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'GET' && path === '/api/models') {
+                                return {
+                                    artifacts: [{
+                                        id: 'qwen-fallback',
+                                        display_name: 'Qwen Fallback',
+                                        active_snapshot: 'v1',
+                                        active_snapshot_state: 'ready',
+                                        snapshots: { v1: { state: 'ready' } },
+                                    }],
+                                    jobs: [{ id: 'mdl-ready-fallback', state: 'ready', artifact_id: 'qwen-fallback', snapshot: 'v1' }],
+                                };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        handleModelJobEvent({
+                            id: 'mdl-ready-fallback',
+                            kind: 'import',
+                            artifact_id: 'qwen-fallback',
+                            snapshot: 'v1',
+                            state: 'ready',
+                            progress: 100,
+                        });
+                        await Promise.resolve();
+                        await Promise.resolve();
+                        return {
+                            calls,
+                            artifacts: inferenceModelData.artifacts.map(item => item.id),
+                            inventoryHtml: document.getElementById('models-list').innerHTML,
+                            modelOptions: document.getElementById('profile-model').innerHTML,
+                        };
+                    })()
+                `, context);
+                assert(
+                    !readyModelJobFallbackResult.calls.some(call => call[0] === 'refreshActiveInferenceTab') &&
+                    readyModelJobFallbackResult.calls.some(call => call[0] === 'GET' && call[1] === '/api/models') &&
+                    readyModelJobFallbackResult.artifacts.includes('qwen-fallback') &&
+                    readyModelJobFallbackResult.inventoryHtml.includes('Qwen Fallback') &&
+                    readyModelJobFallbackResult.modelOptions.includes('qwen-fallback@v1'),
+                    'ready model job events without artifact payload should refresh only the model snapshot, not the active tab'
+                );
+
                 const modelActionPatchResult = await vm.runInContext(`
                     (async () => {
                         const calls = [];
@@ -3097,6 +3151,7 @@ def test_static_inference_model_ui_assets_present():
     assert "handleModelJobEvent" in app_js
     assert "handleModelJobEvent(msg.job, msg)" in app_js
     assert "mergeModelArtifactFromJob" in app_js
+    assert "refreshInferenceModelSnapshot" in app_js
     assert "renderPolledModelState" in app_js
     assert "patchInferenceLauncher" in app_js
     assert "removeInferenceLauncher" in app_js

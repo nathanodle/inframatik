@@ -3920,6 +3920,21 @@ function renderPolledModelState() {
     }
 }
 
+async function refreshInferenceModelSnapshot() {
+    const nodeId = selectedNodeId;
+    if (!nodeId || currentAppView !== 'inference') return;
+    try {
+        const models = await api('GET', modelNodePath('/api/models'));
+        if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        inferenceModelData = models;
+        renderProfileSelects();
+        renderPolledModelState();
+        updateInferencePolling();
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
 function removeModelArtifactLocal(artifactId) {
     if (!artifactId || !inferenceModelData) return false;
     const before = (inferenceModelData.artifacts || []).length;
@@ -3976,7 +3991,7 @@ function mergeModelJob(job) {
         }
     }
     if (job.state === 'ready' && !artifactChanged && currentAppView === 'inference') {
-        refreshActiveInferenceTab();
+        refreshInferenceModelSnapshot();
     }
     updateInferencePolling();
 }
