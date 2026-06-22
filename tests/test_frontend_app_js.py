@@ -1093,6 +1093,126 @@ def test_app_js_node_selection_starts_priority_refresh_immediately():
     )
 
 
+def test_app_js_main_refresh_loop_is_view_scoped():
+    _run_node(
+        textwrap.dedent(
+            r"""
+            const fs = require('fs');
+            const vm = require('vm');
+
+            function makeElement(id) {
+                return {
+                    id,
+                    style: {},
+                    dataset: {},
+                    value: '',
+                    textContent: '',
+                    innerHTML: '',
+                    disabled: false,
+                    selectedIndex: 0,
+                    options: [],
+                    classList: {
+                        add() {},
+                        remove() {},
+                        contains() { return false; },
+                    },
+                    addEventListener() {},
+                    querySelectorAll() { return []; },
+                    querySelector() { return null; },
+                };
+            }
+
+            const elements = new Map();
+            const document = {
+                cookie: '',
+                addEventListener() {},
+                createElement() { return makeElement('created'); },
+                getElementById(id) {
+                    if (!elements.has(id)) elements.set(id, makeElement(id));
+                    return elements.get(id);
+                },
+                querySelectorAll() { return []; },
+                querySelector() { return makeElement('query-result'); },
+            };
+
+            const calls = [];
+            let nextIntervalId = 100;
+            const context = {
+                console,
+                document,
+                window: { location: { hostname: 'localhost' } },
+                location: { protocol: 'http:', host: 'localhost' },
+                WebSocket: function WebSocket() { return {}; },
+                fetch: async () => { throw new Error('fetch should not run'); },
+                setTimeout,
+                clearTimeout,
+                setInterval: (fn, ms) => {
+                    const id = nextIntervalId++;
+                    calls.push(['setInterval', id, ms]);
+                    return id;
+                },
+                clearInterval: (id) => {
+                    calls.push(['clearInterval', id]);
+                },
+                calls,
+            };
+            context.globalThis = context;
+
+            vm.createContext(context);
+            vm.runInContext(fs.readFileSync('static/app.js', 'utf8'), context, {
+                filename: 'static/app.js',
+            });
+
+            vm.runInContext(`
+                (async () => {
+                    function assert(condition, message) {
+                        if (!condition) throw new Error(message);
+                    }
+
+                    nodeRole = 'master';
+                    isMaster = true;
+                    selectedNodeId = 'node-a';
+                    currentAppView = 'main';
+                    refreshInterval = 77;
+                    loadInferenceView = async function() { calls.push(['loadInferenceView']); };
+                    loadSettingsView = async function() { calls.push(['loadSettingsView']); };
+                    refreshAll = async function() { calls.push(['refreshAll', currentAppView]); };
+
+                    await showAppView('inference');
+                    assert(currentAppView === 'inference', 'inference view should be active');
+                    assert(refreshInterval === null, 'main refresh interval should be cleared in inference view');
+                    assert(calls.some(call => call[0] === 'clearInterval' && call[1] === 77), 'inference view should clear the previous main interval');
+                    assert(calls.some(call => call[0] === 'loadInferenceView'), 'inference view should load');
+                    assert(!calls.some(call => call[0] === 'setInterval'), 'inference view should not start the main refresh interval');
+
+                    calls.length = 0;
+                    await showAppView('settings');
+                    assert(currentAppView === 'settings', 'settings view should be active');
+                    assert(refreshInterval === null, 'settings view should leave main refresh stopped');
+                    assert(calls.some(call => call[0] === 'loadSettingsView'), 'settings view should load');
+                    assert(!calls.some(call => call[0] === 'setInterval'), 'settings view should not start the main refresh interval');
+
+                    calls.length = 0;
+                    await showAppView('main');
+                    assert(currentAppView === 'main', 'main view should be active');
+                    assert(calls.some(call => call[0] === 'refreshAll' && call[1] === 'main'), 'main view should refresh immediately');
+                    assert(calls.some(call => call[0] === 'setInterval' && call[2] === 5000), 'main view should start the dashboard refresh interval');
+                    const intervalId = refreshInterval;
+                    assert(intervalId !== null, 'main refresh interval id should be stored');
+
+                    calls.length = 0;
+                    await showAppView('inference');
+                    assert(calls.some(call => call[0] === 'clearInterval' && call[1] === intervalId), 'leaving main should clear the new interval');
+                })().catch((error) => {
+                    console.error(error.stack || error.message);
+                    process.exit(1);
+                });
+            `, context);
+            """
+        )
+    )
+
+
 def test_app_js_inference_ws_state_transitions_manage_activity_polling():
     _run_node(
         textwrap.dedent(
@@ -1796,6 +1916,7 @@ if __name__ == "__main__":
     test_app_js_cloudflare_section_gating_by_role()
     test_app_js_system_render_limits_hidden_tab_dom_writes()
     test_app_js_node_selection_starts_priority_refresh_immediately()
+    test_app_js_main_refresh_loop_is_view_scoped()
     test_app_js_inference_ws_state_transitions_manage_activity_polling()
     test_app_js_launcher_venv_builder_sets_python_module_command()
     test_app_js_profile_editor_sections_toggle()

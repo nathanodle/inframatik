@@ -157,13 +157,15 @@ async function showAppView(view) {
     currentAppView = view === 'settings' || view === 'inference' ? view : 'main';
     syncAppViewChrome();
     if (currentAppView === 'settings') {
+        stopRefreshLoop();
         stopInferencePolling();
         await loadSettingsView();
     } else if (currentAppView === 'inference') {
+        stopRefreshLoop();
         await loadInferenceView();
     } else if (selectedNodeId) {
         stopInferencePolling();
-        await refreshAll();
+        await startRefreshLoop();
     }
 }
 
@@ -6326,10 +6328,18 @@ async function refreshAll(options = {}) {
     }
 }
 
+function stopRefreshLoop() {
+    if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+    }
+}
+
 function startRefreshLoop() {
-    if (refreshInterval) clearInterval(refreshInterval);
-    refreshAll();
+    stopRefreshLoop();
+    const initial = refreshAll();
     refreshInterval = setInterval(refreshAll, 5000);
+    return initial;
 }
 
 async function loadVersionTag() {
