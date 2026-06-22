@@ -2020,6 +2020,57 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile editor should include explicitly enabled metrics in structured common config'
                 );
 
+                const loraDraftResult = vm.runInContext(`
+                    resetProfileForm();
+                    document.getElementById('profile-id').value = 'qwen-lora';
+                    document.getElementById('profile-engine').value = 'vllm';
+                    document.getElementById('profile-launcher').value = 'vllm-main';
+                    document.getElementById('profile-model').value = 'qwen@v1';
+                    document.getElementById('profile-lora-enabled').checked = true;
+                    document.getElementById('profile-lora-paths').value = '[{"name":"style","path":"/models/style-lora"}]';
+                    buildProfileDraft().common.lora;
+                `, context);
+                assert(
+                    loraDraftResult.enabled === true &&
+                    Array.isArray(loraDraftResult.paths) &&
+                    loraDraftResult.paths[0].name === 'style' &&
+                    loraDraftResult.paths[0].path === '/models/style-lora',
+                    'profile editor should include LoRA adapters in structured common config'
+                );
+
+                const loraRoundTripResult = vm.runInContext(`
+                    fillProfileForm({
+                        id: 'qwen-lora-edit',
+                        display_name: 'Qwen LoRA Edit',
+                        engine: 'sglang',
+                        engine_launcher_id: 'sglang-main',
+                        model: { artifact_id: 'qwen', snapshot: 'v1' },
+                        common: {
+                            lora: {
+                                enabled: true,
+                                paths: [{ name: 'tool', path: '/models/tool-lora' }],
+                            },
+                        },
+                        deployment: {},
+                        advanced: {},
+                        engine_config: {},
+                        exposure: {},
+                        instances: [],
+                        state: 'stopped',
+                    });
+                    ({
+                        checked: document.getElementById('profile-lora-enabled').checked,
+                        text: document.getElementById('profile-lora-paths').value,
+                        commonJson: document.getElementById('profile-common-json').value,
+                    });
+                `, context);
+                assert(
+                    loraRoundTripResult.checked === true &&
+                    loraRoundTripResult.text.includes('/models/tool-lora') &&
+                    !loraRoundTripResult.commonJson.includes('lora'),
+                    'profile editor should round-trip LoRA fields without duplicating them into raw common JSON'
+                );
+
                 const saveRestartCalls = await vm.runInContext(`
                     (async () => {
                         const calls = [];
@@ -2073,6 +2124,7 @@ def test_app_js_cloudflare_section_gating_by_role():
                         currentAppView = 'inference';
                         activeInferenceTab = 'launchers';
                         inferenceLaunchersData = [];
+                        document.getElementById('profile-engine').value = 'vllm';
                         refreshInferenceLaunchers = async function() { calls.push(['refreshLaunchers']); };
                         confirm = function(message) { calls.push(['confirm', message]); return true; };
                         api = async function(method, path, body) {
@@ -3326,6 +3378,9 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-sglang-moe-a2a-backend"' in index_html
     assert 'id="profile-llama-tensor-split"' in index_html
     assert 'id="profile-metrics"' in index_html
+    assert 'id="profile-lora-enabled"' in index_html
+    assert 'id="profile-lora-paths"' in index_html
+    assert "lora" in app_js
     assert 'id="inference-profiles-list"' in index_html
     assert 'id="inference-operations-list"' in index_html
     assert 'id="inference-live-status"' in index_html

@@ -182,6 +182,7 @@ def test_vllm_preview_renders_argv_env_redaction_and_raw_args(tmp_path: Path):
                         "tool_call_parser": "glm47",
                         "enable_auto_tool_choice": True,
                         "speculative": {"model": "draft-model", "num_tokens": 5},
+                        "lora": {"enabled": True, "paths": [{"name": "style", "path": "/models/style-lora"}]},
                         "host": "127.0.0.1",
                         "port": 10000,
                     },
@@ -225,6 +226,8 @@ def test_vllm_preview_renders_argv_env_redaction_and_raw_args(tmp_path: Path):
         assert "--enable-auto-tool-choice" in command["argv"]
         assert "--speculative-model" in command["argv"]
         assert "--num-speculative-tokens" in command["argv"]
+        assert "--enable-lora" in command["argv"]
+        assert "--lora-modules" in command["argv"]
         assert command["argv"].count("--enable-expert-parallel") == 1
         assert "--api-server-count" in command["argv"]
         assert "--data-parallel-backend" in command["argv"]
@@ -278,6 +281,7 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
                         "reasoning_parser": "deepseek-r1",
                         "tool_call_parser": "hermes",
                         "speculative": {"model": "draft", "num_tokens": 3},
+                        "lora": {"paths": [{"name": "tools", "path": "/models/tools-lora"}]},
                         "port": 10001,
                     },
                     "engine_config": {"sglang": {
@@ -335,6 +339,8 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
         assert sg_argv[sg_argv.index("--ep-size") + 1] == "2"
         assert "--speculative-draft-model-path" in sg_argv
         assert "--speculative-num-steps" in sg_argv
+        assert "--enable-lora" in sg_argv
+        assert "--lora-paths" in sg_argv
 
         llama_argv = llama_result["command_preview"][0]["argv"]
         assert llama_argv[:3] == [str(llama), "--model", str(gguf_path)]

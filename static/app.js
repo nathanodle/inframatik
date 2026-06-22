@@ -1919,6 +1919,7 @@ function profileConfigChips(profile) {
         const cp = common.context_parallel;
         chips.push(`CP ${cp.decode_size || cp.prefill_size || cp.attn_cp_size || 'on'}`);
     }
+    if (common.lora) chips.push('LoRA');
     if (common.gpu_memory_utilization) chips.push(`VRAM ${common.gpu_memory_utilization}`);
     if (common.max_concurrent_requests) chips.push(`seqs ${common.max_concurrent_requests}`);
     if (common.max_batch_tokens) chips.push(`batch ${common.max_batch_tokens}`);
@@ -1956,6 +1957,7 @@ const STRUCTURED_COMMON_KEYS = [
     'chat_template',
     'log_level',
     'speculative',
+    'lora',
     'gpu_ids',
 ];
 
@@ -2192,6 +2194,16 @@ function profileJsonValue(id, label) {
     return parsed;
 }
 
+function profileJsonAnyValue(id, label) {
+    const raw = modelOptionalValue(id);
+    if (!raw) return null;
+    try {
+        return JSON.parse(raw);
+    } catch (e) {
+        throw new Error(`${label} must be valid JSON: ${e.message}`);
+    }
+}
+
 function normalizeEngineConfigJson(engine, value) {
     const config = value && typeof value === 'object' ? value : {};
     const known = ['vllm', 'sglang', 'llama.cpp', 'llama_cpp', 'llamacpp'];
@@ -2281,6 +2293,11 @@ function structuredCommonConfig() {
         model: modelOptionalValue('profile-speculative-model'),
         num_tokens: profileNumberValue('profile-speculative-tokens'),
     });
+    const loraPaths = profileJsonAnyValue('profile-lora-paths', 'LoRA Modules');
+    const lora = cleanObject({
+        enabled: profileBooleanValue('profile-lora-enabled') ? true : null,
+        paths: loraPaths,
+    });
     return cleanObject({
         served_model_name: modelOptionalValue('profile-served-name'),
         context_length: profileNumberValue('profile-context'),
@@ -2309,6 +2326,7 @@ function structuredCommonConfig() {
         chat_template: modelOptionalValue('profile-chat-template'),
         log_level: modelOptionalValue('profile-log-level'),
         speculative,
+        lora,
     });
 }
 
@@ -2469,7 +2487,7 @@ function resetProfileForm() {
         'profile-context-parallel-decode', 'profile-context-parallel-prefill', 'profile-max-concurrent',
         'profile-max-batch-tokens', 'profile-max-prefill-tokens', 'profile-max-queued-requests', 'profile-startup-grace',
         'profile-reasoning-parser', 'profile-tool-call-parser', 'profile-chat-template',
-        'profile-speculative-model', 'profile-speculative-tokens', 'profile-log-level',
+        'profile-speculative-model', 'profile-speculative-tokens', 'profile-lora-paths', 'profile-log-level',
         'profile-port', 'profile-ports', 'profile-gpus', 'profile-hostname',
         'profile-vllm-load-format', 'profile-vllm-all2all-backend', 'profile-vllm-expert-placement',
         'profile-vllm-api-server-count', 'profile-vllm-dp-local-size', 'profile-vllm-dp-start-rank',
@@ -2499,7 +2517,7 @@ function resetProfileForm() {
         if (el) el.value = '';
     });
     ['profile-trust-remote-code', 'profile-prefix-caching', 'profile-auto-tool-choice',
-        'profile-metrics',
+        'profile-metrics', 'profile-lora-enabled',
         'profile-vllm-expert-parallel', 'profile-vllm-ep-weight-filter', 'profile-vllm-eplb', 'profile-vllm-dbo',
         'profile-vllm-headless',
         'profile-sglang-dp-attention', 'profile-sglang-dsa-prefill-cp',
@@ -2555,6 +2573,7 @@ function fillProfileForm(profile) {
     const common = profile.common || {};
     const contextParallel = common.context_parallel || {};
     const speculative = common.speculative || {};
+    const lora = common.lora || {};
     setProfileValue('profile-served-name', common.served_model_name);
     setProfileValue('profile-context', common.context_length);
     setProfileValue('profile-dtype', common.dtype);
@@ -2580,6 +2599,8 @@ function fillProfileForm(profile) {
     setProfileValue('profile-log-level', common.log_level);
     setProfileValue('profile-speculative-model', speculative.model);
     setProfileValue('profile-speculative-tokens', speculative.num_tokens);
+    setProfileValue('profile-lora-paths', jsonForTextarea(lora.paths));
+    setProfileChecked('profile-lora-enabled', lora.enabled || (Array.isArray(lora.paths) && lora.paths.length > 0));
     setProfileChecked('profile-trust-remote-code', common.trust_remote_code);
     setProfileChecked('profile-prefix-caching', common.enable_prefix_caching);
     setProfileChecked('profile-auto-tool-choice', common.enable_auto_tool_choice);

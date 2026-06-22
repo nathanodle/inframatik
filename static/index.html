@@ -511,11 +511,19 @@
                             <input type="text" id="profile-log-level" placeholder="info, debug, warning" autocomplete="off">
                         </div>
                     </div>
+                    <div class="settings-subsection-header compact">Adapters</div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>LoRA Modules</label>
+                            <textarea id="profile-lora-paths" rows="4" placeholder='[{"name":"adapter","path":"/models/adapter"}]'></textarea>
+                        </div>
+                    </div>
                     <div class="form-check-grid">
                         <label class="model-checkbox"><input type="checkbox" id="profile-trust-remote-code"> Trust remote code</label>
                         <label class="model-checkbox"><input type="checkbox" id="profile-prefix-caching"> Prefix caching</label>
                         <label class="model-checkbox"><input type="checkbox" id="profile-auto-tool-choice"> Auto tool choice</label>
                         <label class="model-checkbox"><input type="checkbox" id="profile-metrics"> Metrics endpoint</label>
+                        <label class="model-checkbox"><input type="checkbox" id="profile-lora-enabled"> Enable LoRA</label>
                     </div>
                     </div>
                     <div class="profile-editor-section" data-profile-editor-panel="placement" role="tabpanel">
