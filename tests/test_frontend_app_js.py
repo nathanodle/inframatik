@@ -658,6 +658,20 @@ def test_static_inference_model_ui_assets_present():
     assert "profileConfigChips" in app_js
     assert "structuredCommonConfig" in app_js
     assert "structuredEngineConfig" in app_js
+    assert "draft = buildProfileDraft()" in app_js
+    assert "setInferenceError(e.message)" in app_js
+    assert "profile-speculative-model" in index_html
+    assert "profile-log-level" in index_html
+    assert "profile-vllm-distributed-executor" in index_html
+    assert "profile-vllm-kv-offloading-size" in index_html
+    assert "profile-vllm-compilation-config" in index_html
+    assert "profile-vllm-ep-weight-filter" in index_html
+    assert "profile-sglang-sampling-defaults" in index_html
+    assert "profile-sglang-cuda-graph-config" in index_html
+    assert "profile-sglang-hicache" in index_html
+    assert "distributed_executor_backend" in app_js
+    assert "kv_offloading_size" in app_js
+    assert "sampling_defaults" in app_js
     assert "mergeEngineConfig" in app_js
     assert "renderProfileEngineFields" in app_js
     assert "removeProfileCloudflare" in app_js
