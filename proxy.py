@@ -280,6 +280,44 @@ async def _handle_local_models(method: str, route_path: str, query: dict[str, li
     return _NO_MATCH
 
 
+async def _handle_local_inference(method: str, route_path: str, query: dict[str, list[str]], body: dict = None):
+    if not route_path.startswith("/api/inference/launchers"):
+        return _NO_MATCH
+
+    import inference_launchers
+
+    if route_path == "/api/inference/launchers":
+        if method == "GET":
+            return inference_launchers.list_launchers(include_validation=_query_bool(query, "include_validation"))
+        if method == "POST":
+            payload = body or {}
+            return inference_launchers.create_launcher(
+                launcher_id=payload.get("id"),
+                display_name=payload.get("display_name"),
+                engine=payload.get("engine"),
+                executable=payload.get("executable"),
+                base_args=payload.get("base_args"),
+                working_dir=payload.get("working_dir"),
+                env=payload.get("env"),
+            )
+        return _NO_MATCH
+
+    tail = route_path[len("/api/inference/launchers/"):]
+    parts = tail.split("/")
+    launcher_id = parts[0]
+    suffix = "/" + "/".join(parts[1:]) if len(parts) > 1 else ""
+    if method == "PUT" and suffix == "":
+        return inference_launchers.update_launcher(launcher_id, body or {})
+    if method == "DELETE" and suffix == "":
+        return inference_launchers.delete_launcher(
+            launcher_id,
+            force_stopped_references=_query_bool(query, "force_stopped_references"),
+        )
+    if method == "POST" and suffix == "/validate":
+        return inference_launchers.validate_launcher_path(launcher_id)
+    return _NO_MATCH
+
+
 async def _handle_local(method: str, path: str, body: dict = None):
     """Handle a proxied request locally by calling the appropriate Python functions."""
     route_path, query = _split_route(path)
@@ -307,6 +345,10 @@ async def _handle_local(method: str, path: str, body: dict = None):
     cf_response = await _handle_local_cf_service(method, route_path, query, body)
     if cf_response is not _NO_MATCH:
         return cf_response
+
+    inference_response = await _handle_local_inference(method, route_path, query, body)
+    if inference_response is not _NO_MATCH:
+        return inference_response
 
     model_response = await _handle_local_models(method, route_path, query, body)
     if model_response is not _NO_MATCH:

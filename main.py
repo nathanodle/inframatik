@@ -26,6 +26,7 @@ from node_config import get_node_config, service_token_capability_allows
 from updater import get_version
 from cluster_routes import cluster_router
 from cf_routes import cf_router
+from inference_routes import inference_router
 from mcp_routes import mcp_router
 from model_routes import model_router
 from model_storage import mark_interrupted_jobs
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="inframatik", lifespan=lifespan)
 app.include_router(cluster_router)
 app.include_router(cf_router)
+app.include_router(inference_router)
 app.include_router(mcp_router)
 app.include_router(model_router)
 app.include_router(ws_router)

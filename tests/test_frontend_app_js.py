@@ -602,17 +602,26 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="model-import-path"' in index_html
     assert 'id="model-url-url"' in index_html
     assert 'id="model-hf-repo"' in index_html
+    assert 'data-inference-tab="launchers"' in index_html
+    assert 'id="launcher-executable"' in index_html
+    assert 'id="launcher-arg-rows"' in index_html
+    assert 'id="launcher-env-rows"' in index_html
     assert 'id="model-jobs-list"' in index_html
     assert 'id="model-store-root-input"' in index_html
     assert "/api/models" in app_js
+    assert "/api/inference/launchers" in app_js
     assert "submitModelImport" in app_js
     assert "submitModelUrlDownload" in app_js
     assert "submitModelHfDownload" in app_js
+    assert "submitLauncherForm" in app_js
+    assert "validateLauncher" in app_js
     assert "cleanModelJobStaging" in app_js
     assert "force_stopped_references=true" in app_js
     assert "path.startsWith('/api/models')" in app_js
+    assert "path.startsWith('/api/inference')" in app_js
     assert ".model-table-row" in style_css
     assert ".model-job-row" in style_css
+    assert ".launcher-card" in style_css
 
 
 def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():

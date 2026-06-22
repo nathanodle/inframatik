@@ -318,6 +318,7 @@
             <h2>Models</h2>
             <div class="tabs">
                 <button class="inference-tab active" data-inference-tab="models">Models</button>
+                <button class="inference-tab" data-inference-tab="launchers">Launchers</button>
                 <button class="inference-tab" data-inference-tab="jobs">Jobs</button>
                 <button class="inference-tab" data-inference-tab="storage">Storage</button>
             </div>
@@ -423,6 +424,65 @@
 
             <div class="model-table-wrap" id="models-list">
                 <div class="empty-state">Loading models...</div>
+            </div>
+        </section>
+
+        <section class="inference-tab-content" id="inference-tab-launchers">
+            <div class="launcher-layout">
+                <section class="settings-panel launcher-form-panel">
+                    <div class="settings-subsection-header">Engine Launcher</div>
+                    <input type="hidden" id="launcher-edit-id">
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Launcher ID</label>
+                            <input type="text" id="launcher-id" placeholder="vllm-main" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Engine</label>
+                            <select id="launcher-engine">
+                                <option value="vllm">vLLM</option>
+                                <option value="sglang">SGLang</option>
+                                <option value="llama.cpp">llama.cpp</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Display Name</label>
+                        <input type="text" id="launcher-display-name" placeholder="vLLM main" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Executable</label>
+                        <input type="text" id="launcher-executable" placeholder="/home/user/vllm/bin/vllm" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Working Directory</label>
+                        <input type="text" id="launcher-working-dir" placeholder="optional" autocomplete="off">
+                    </div>
+                    <div class="launcher-token-section">
+                        <div class="launcher-token-header">
+                            <label>Base Args</label>
+                            <button class="btn" type="button" onclick="addLauncherArgRow()">Add Arg</button>
+                        </div>
+                        <div id="launcher-arg-rows" class="launcher-token-rows"></div>
+                    </div>
+                    <div class="launcher-token-section">
+                        <div class="launcher-token-header">
+                            <label>Env</label>
+                            <button class="btn" type="button" onclick="addLauncherEnvRow()">Add Env</button>
+                        </div>
+                        <div id="launcher-env-rows" class="launcher-token-rows"></div>
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn" onclick="resetLauncherFormAndEnableId()">Reset</button>
+                        <button class="btn primary" onclick="submitLauncherForm()">Save Launcher</button>
+                    </div>
+                </section>
+
+                <section class="launcher-list-panel">
+                    <div id="launchers-list">
+                        <div class="empty-state">Loading launchers...</div>
+                    </div>
+                </section>
             </div>
         </section>
 

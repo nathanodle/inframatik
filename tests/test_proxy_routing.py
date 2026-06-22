@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cloudflared
+import inference_launchers
 import proxy
 import services
 import system
@@ -280,6 +281,44 @@ def test_handle_local_cf_service_status_logs_restart_update():
 def test_handle_local_cf_service_nonmatch():
     result = _run(proxy._handle_local_cf_service("GET", "/api/system", {}))
     assert result is proxy._NO_MATCH
+
+
+def test_handle_local_inference_launchers_dispatch():
+    original_list = inference_launchers.list_launchers
+    original_create = inference_launchers.create_launcher
+    original_update = inference_launchers.update_launcher
+    original_validate = inference_launchers.validate_launcher_path
+    original_delete = inference_launchers.delete_launcher
+    calls = []
+
+    inference_launchers.list_launchers = lambda include_validation=False: {
+        "launchers": [],
+        "include_validation": include_validation,
+    }
+    inference_launchers.create_launcher = lambda **kwargs: calls.append(("create", kwargs)) or {"id": kwargs["launcher_id"]}
+    inference_launchers.update_launcher = lambda launcher_id, body: calls.append(("update", launcher_id, body)) or {"id": launcher_id}
+    inference_launchers.validate_launcher_path = lambda launcher_id: calls.append(("validate", launcher_id)) or {"valid": True}
+    inference_launchers.delete_launcher = lambda launcher_id, force_stopped_references=False: calls.append(("delete", launcher_id, force_stopped_references)) or {"deleted": launcher_id}
+    try:
+        listed = _run(proxy._handle_local_inference("GET", "/api/inference/launchers", {"include_validation": ["true"]}))
+        created = _run(proxy._handle_local_inference("POST", "/api/inference/launchers", {}, {"id": "vllm-main", "engine": "vllm", "executable": "/x"}))
+        updated = _run(proxy._handle_local_inference("PUT", "/api/inference/launchers/vllm-main", {}, {"base_args": ["serve"]}))
+        validated = _run(proxy._handle_local_inference("POST", "/api/inference/launchers/vllm-main/validate", {}))
+        deleted = _run(proxy._handle_local_inference("DELETE", "/api/inference/launchers/vllm-main", {"force_stopped_references": ["true"]}))
+    finally:
+        inference_launchers.list_launchers = original_list
+        inference_launchers.create_launcher = original_create
+        inference_launchers.update_launcher = original_update
+        inference_launchers.validate_launcher_path = original_validate
+        inference_launchers.delete_launcher = original_delete
+
+    assert listed["include_validation"] is True
+    assert created == {"id": "vllm-main"}
+    assert updated == {"id": "vllm-main"}
+    assert validated == {"valid": True}
+    assert deleted == {"deleted": "vllm-main"}
+    assert calls[0][0] == "create"
+    assert calls[-1] == ("delete", "vllm-main", True)
 
 
 def test_handle_local_system_dispatch():

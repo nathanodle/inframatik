@@ -976,6 +976,116 @@ body {
     max-width: 860px;
 }
 
+.launcher-layout {
+    display: grid;
+    grid-template-columns: minmax(340px, 0.9fr) minmax(0, 1.4fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.launcher-form-panel,
+.launcher-list-panel {
+    min-width: 0;
+}
+
+.launcher-token-section {
+    margin-top: 12px;
+}
+
+.launcher-token-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.launcher-token-header label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.launcher-token-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.launcher-arg-row,
+.launcher-env-row {
+    display: grid;
+    gap: 8px;
+    align-items: center;
+}
+
+.launcher-arg-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.launcher-env-row {
+    grid-template-columns: minmax(120px, 0.6fr) minmax(0, 1fr) auto;
+}
+
+.launcher-arg-row input,
+.launcher-env-row input {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+}
+
+.launcher-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    margin-bottom: 10px;
+}
+
+.launcher-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.launcher-card-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+}
+
+.launcher-card-meta,
+.launcher-command-preview {
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.launcher-command-preview {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    margin-top: 10px;
+}
+
+.launcher-validation {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+}
+
 /* ---- Settings page ---- */
 .settings-page {
     min-height: calc(100vh - 57px);
@@ -1825,6 +1935,10 @@ body {
     }
 
     .model-job-main {
+        grid-template-columns: 1fr;
+    }
+
+    .launcher-layout {
         grid-template-columns: 1fr;
     }
 

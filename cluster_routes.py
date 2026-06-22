@@ -1372,6 +1372,60 @@ async def proxy_models_delete(
         raise HTTPException(502, str(e))
 
 
+@cluster_router.get("/api/nodes/{node_id}/inference/launchers")
+async def proxy_inference_launchers(node_id: str, include_validation: bool = False):
+    path = "/api/inference/launchers"
+    if include_validation:
+        path = f"{path}?{urlencode({'include_validation': 'true'})}"
+    try:
+        return await proxy_to_node(node_id, "GET", path)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/launchers")
+async def proxy_create_inference_launcher(node_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "POST", "/api/inference/launchers", body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.put("/api/nodes/{node_id}/inference/launchers/{launcher_id}")
+async def proxy_update_inference_launcher(node_id: str, launcher_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "PUT", f"/api/inference/launchers/{launcher_id}", body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.delete("/api/nodes/{node_id}/inference/launchers/{launcher_id}")
+async def proxy_delete_inference_launcher(
+    node_id: str,
+    launcher_id: str,
+    force_stopped_references: bool = False,
+):
+    path = f"/api/inference/launchers/{launcher_id}"
+    if force_stopped_references:
+        path = f"{path}?{urlencode({'force_stopped_references': 'true'})}"
+    try:
+        return await proxy_to_node(node_id, "DELETE", path)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/launchers/{launcher_id}/validate")
+async def proxy_validate_inference_launcher(node_id: str, launcher_id: str):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/launchers/{launcher_id}/validate")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
 # ---------------------------------------------------------------------------
 # Updates / deployment
 # ---------------------------------------------------------------------------

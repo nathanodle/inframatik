@@ -57,6 +57,7 @@ let refreshGeneration = 0;
 let priorityRefreshes = 0;
 let inferenceModelData = null;
 let inferenceStorageData = null;
+let inferenceLaunchersData = [];
 let inferenceJobsTimer = null;
 let activeInferenceTab = 'models';
 const ACTIVE_MODEL_JOB_STATES = new Set(['queued', 'running', 'hashing', 'verifying']);
@@ -227,8 +228,9 @@ function nodePathFor(nodeId, path) {
         // Rewrite /api/services/foo/start -> /api/nodes/{id}/services/foo/start
         // Rewrite /api/tunnel -> /api/nodes/{id}/tunnel
         // Rewrite /api/models -> /api/nodes/{id}/models
+        // Rewrite /api/inference -> /api/nodes/{id}/inference
         // Rewrite /api/ports/next -> /api/ports/next (local only, don't proxy)
-        if (path.startsWith('/api/system') || path.startsWith('/api/services') || path.startsWith('/api/tunnel') || path.startsWith('/api/models')) {
+        if (path.startsWith('/api/system') || path.startsWith('/api/services') || path.startsWith('/api/tunnel') || path.startsWith('/api/models') || path.startsWith('/api/inference')) {
             // Strip /api prefix: /api/system -> /system, then build /api/nodes/{id}/system
             const subpath = path.slice(4); // remove '/api'
             return `/api/nodes/${nodeId}${subpath}`;
@@ -266,7 +268,7 @@ document.addEventListener('click', (e) => {
     }
     if (e.target.classList.contains('inference-tab')) {
         setInferenceTab(e.target.dataset.inferenceTab || 'models');
-        if (currentAppView === 'inference') refreshInferenceModels();
+        if (currentAppView === 'inference') refreshActiveInferenceTab();
     }
 });
 
@@ -1422,7 +1424,7 @@ function modelNodePath(path) {
 }
 
 function setInferenceTab(tab) {
-    activeInferenceTab = ['models', 'jobs', 'storage'].includes(tab) ? tab : 'models';
+    activeInferenceTab = ['models', 'launchers', 'jobs', 'storage'].includes(tab) ? tab : 'models';
     document.querySelectorAll('.inference-tab').forEach(t => {
         if (t.dataset.inferenceTab === activeInferenceTab) t.classList.add('active');
         else t.classList.remove('active');
@@ -1472,6 +1474,7 @@ function showInferencePendingState() {
     `);
     setElementHtml('models-list', '<div class="empty-state">Loading models...</div>');
     setElementHtml('model-jobs-list', '<div class="empty-state">Loading jobs...</div>');
+    setElementHtml('launchers-list', '<div class="empty-state">Loading launchers...</div>');
 }
 
 async function loadInferenceView() {
@@ -1482,7 +1485,216 @@ async function loadInferenceView() {
     const subtitle = document.getElementById('inference-page-subtitle');
     if (subtitle) subtitle.textContent = `${selectedNodeLabel()} · node-local inference storage`;
     showInferencePendingState();
-    await refreshInferenceModels();
+    await refreshActiveInferenceTab();
+}
+
+async function refreshActiveInferenceTab() {
+    if (activeInferenceTab === 'launchers') {
+        await refreshInferenceLaunchers();
+    } else {
+        await refreshInferenceModels();
+    }
+}
+
+async function refreshInferenceLaunchers() {
+    const nodeId = selectedNodeId;
+    if (!nodeId) return;
+    setInferenceError('');
+    try {
+        const data = await api('GET', modelNodePath('/api/inference/launchers'));
+        if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        inferenceLaunchersData = data.launchers || [];
+        renderLaunchers(inferenceLaunchersData);
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+function resetLauncherForm() {
+    const editId = document.getElementById('launcher-edit-id');
+    if (editId) editId.value = '';
+    ['launcher-id', 'launcher-display-name', 'launcher-executable', 'launcher-working-dir'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const engine = document.getElementById('launcher-engine');
+    if (engine) engine.value = 'vllm';
+    setElementHtml('launcher-arg-rows', '');
+    setElementHtml('launcher-env-rows', '');
+}
+
+function addLauncherArgRow(value = '') {
+    const el = document.getElementById('launcher-arg-rows');
+    if (!el) return;
+    const row = document.createElement('div');
+    row.className = 'launcher-arg-row';
+    row.innerHTML = `
+        <input type="text" class="launcher-arg-input" value="${esc(value)}" placeholder="argv token" autocomplete="off">
+        <button class="btn danger" type="button" onclick="this.parentElement.remove()">Remove</button>
+    `;
+    el.appendChild(row);
+}
+
+function addLauncherEnvRow(key = '', value = '') {
+    const el = document.getElementById('launcher-env-rows');
+    if (!el) return;
+    const row = document.createElement('div');
+    row.className = 'launcher-env-row';
+    row.innerHTML = `
+        <input type="text" class="launcher-env-key" value="${esc(key)}" placeholder="KEY" autocomplete="off">
+        <input type="text" class="launcher-env-value" value="${esc(value)}" placeholder="value" autocomplete="off">
+        <button class="btn danger" type="button" onclick="this.parentElement.remove()">Remove</button>
+    `;
+    el.appendChild(row);
+}
+
+function collectLauncherBaseArgs() {
+    return Array.from(document.querySelectorAll('.launcher-arg-input'))
+        .map(input => input.value.trim())
+        .filter(Boolean);
+}
+
+function collectLauncherEnv(editing) {
+    const rows = Array.from(document.querySelectorAll('.launcher-env-row'));
+    const pairs = rows.map(row => ({
+        key: (row.querySelector('.launcher-env-key') || {}).value?.trim() || '',
+        value: (row.querySelector('.launcher-env-value') || {}).value || '',
+    })).filter(pair => pair.key);
+    if (editing && pairs.length && pairs.every(pair => !pair.value)) {
+        return null;
+    }
+    const env = {};
+    pairs.forEach(pair => {
+        if (pair.value) env[pair.key] = pair.value;
+    });
+    return pairs.length ? env : (editing ? null : {});
+}
+
+async function submitLauncherForm() {
+    const editId = modelOptionalValue('launcher-edit-id');
+    const body = {
+        id: modelOptionalValue('launcher-id'),
+        display_name: modelOptionalValue('launcher-display-name'),
+        engine: document.getElementById('launcher-engine').value,
+        executable: modelOptionalValue('launcher-executable'),
+        base_args: collectLauncherBaseArgs(),
+        working_dir: modelOptionalValue('launcher-working-dir'),
+    };
+    const env = collectLauncherEnv(!!editId);
+    if (env !== null) body.env = env;
+    if (!body.executable || !body.engine) {
+        setInferenceError('Engine and executable are required.');
+        return;
+    }
+    setInferenceError('');
+    try {
+        if (editId) {
+            delete body.id;
+            Object.keys(body).forEach(key => body[key] === null && delete body[key]);
+            await api('PUT', modelNodePath(`/api/inference/launchers/${encodeURIComponent(editId)}`), body);
+            setInferenceStatus(`Updated launcher ${editId}.`);
+        } else {
+            await api('POST', modelNodePath('/api/inference/launchers'), body);
+            setInferenceStatus('Launcher saved.');
+        }
+        resetLauncherFormAndEnableId();
+        await refreshInferenceLaunchers();
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+function renderLaunchers(launchers) {
+    const el = document.getElementById('launchers-list');
+    if (!el) return;
+    if (!launchers.length) {
+        setHtmlIfChanged(el, '<div class="empty-state">No engine launchers configured yet.</div>');
+        return;
+    }
+    setHtmlIfChanged(el, launchers.map(launcher => {
+        const preview = (launcher.command_preview || [launcher.executable, ...(launcher.base_args || [])]).join(' ');
+        const envKeys = (launcher.redacted_env_keys || []).join(', ') || 'none';
+        return `
+            <div class="launcher-card">
+                <div class="launcher-card-header">
+                    <div>
+                        <div class="launcher-card-title">${esc(launcher.display_name || launcher.id)}</div>
+                        <div class="launcher-card-meta">${esc(launcher.id)} · ${esc(launcher.engine)} · env: ${esc(envKeys)}</div>
+                    </div>
+                    <div class="model-actions">
+                        <button class="btn" onclick="editLauncher('${esc(launcher.id)}')">Edit</button>
+                        <button class="btn" onclick="validateLauncher('${esc(launcher.id)}')">Validate</button>
+                        <button class="btn danger" onclick="deleteLauncher('${esc(launcher.id)}','${esc(launcher.display_name || launcher.id)}')">Delete</button>
+                    </div>
+                </div>
+                <div class="launcher-card-meta">${esc(launcher.executable)}${launcher.working_dir ? ` · cwd ${esc(launcher.working_dir)}` : ''}</div>
+                <div class="launcher-command-preview">${esc(preview)}</div>
+                <div class="launcher-validation" id="launcher-validation-${esc(launcher.id)}"></div>
+            </div>
+        `;
+    }).join(''));
+}
+
+function editLauncher(launcherId) {
+    const launcher = inferenceLaunchersData.find(item => item.id === launcherId);
+    if (!launcher) return;
+    document.getElementById('launcher-edit-id').value = launcher.id;
+    document.getElementById('launcher-id').value = launcher.id;
+    document.getElementById('launcher-id').disabled = true;
+    document.getElementById('launcher-display-name').value = launcher.display_name || '';
+    document.getElementById('launcher-engine').value = launcher.engine || 'vllm';
+    document.getElementById('launcher-executable').value = launcher.executable || '';
+    document.getElementById('launcher-working-dir').value = launcher.working_dir || '';
+    setElementHtml('launcher-arg-rows', '');
+    (launcher.base_args || []).forEach(arg => addLauncherArgRow(arg));
+    setElementHtml('launcher-env-rows', '');
+    (launcher.redacted_env_keys || []).forEach(key => addLauncherEnvRow(key, ''));
+    setInferenceStatus(`Editing ${launcher.id}.`);
+}
+
+function resetLauncherFormAndEnableId() {
+    resetLauncherForm();
+    const idEl = document.getElementById('launcher-id');
+    if (idEl) idEl.disabled = false;
+}
+
+async function validateLauncher(launcherId) {
+    const resultEl = document.getElementById(`launcher-validation-${launcherId}`);
+    if (resultEl) resultEl.textContent = 'Validating...';
+    try {
+        const result = await api('POST', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}/validate`));
+        if (resultEl) {
+            resultEl.style.color = result.valid ? 'var(--green)' : 'var(--red)';
+            resultEl.textContent = result.valid ? 'Executable is valid.' : result.errors.join('; ');
+        }
+    } catch (e) {
+        if (resultEl) {
+            resultEl.style.color = 'var(--red)';
+            resultEl.textContent = e.message;
+        }
+    }
+}
+
+async function deleteLauncher(launcherId, displayName) {
+    if (!confirm(`Delete launcher "${displayName}"?`)) return;
+    setInferenceError('');
+    try {
+        await api('DELETE', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}`));
+        setInferenceStatus(`Deleted launcher ${launcherId}.`);
+        await refreshInferenceLaunchers();
+    } catch (e) {
+        const detail = e.detail;
+        if (detail && detail.requires_force) {
+            const refs = (detail.references || []).map(ref => ref.name || ref.profile_id).join(', ');
+            if (confirm(`Stopped profiles reference this launcher: ${refs}. Delete anyway?`)) {
+                await api('DELETE', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}?force_stopped_references=true`));
+                setInferenceStatus(`Deleted launcher ${launcherId}.`);
+                await refreshInferenceLaunchers();
+                return;
+            }
+        }
+        setInferenceError(e.message);
+    }
 }
 
 function stopInferencePolling() {
