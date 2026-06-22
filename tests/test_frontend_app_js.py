@@ -592,6 +592,29 @@ def test_static_index_contains_setup_guidance_and_empty_state_copy():
     assert "worker-key-value" not in index_html
 
 
+def test_static_inference_model_ui_assets_present():
+    app_js = (ROOT / "static" / "app.js").read_text()
+    index_html = (ROOT / "static" / "index.html").read_text()
+    style_css = (ROOT / "static" / "style.css").read_text()
+
+    assert 'id="inference-view"' in index_html
+    assert 'id="inference-view-tab"' in index_html
+    assert 'id="model-import-path"' in index_html
+    assert 'id="model-url-url"' in index_html
+    assert 'id="model-hf-repo"' in index_html
+    assert 'id="model-jobs-list"' in index_html
+    assert 'id="model-store-root-input"' in index_html
+    assert "/api/models" in app_js
+    assert "submitModelImport" in app_js
+    assert "submitModelUrlDownload" in app_js
+    assert "submitModelHfDownload" in app_js
+    assert "cleanModelJobStaging" in app_js
+    assert "force_stopped_references=true" in app_js
+    assert "path.startsWith('/api/models')" in app_js
+    assert ".model-table-row" in style_css
+    assert ".model-job-row" in style_css
+
+
 def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():
     app_js = (ROOT / "static" / "app.js").read_text()
     index_html = (ROOT / "static" / "index.html").read_text()
@@ -630,5 +653,6 @@ if __name__ == "__main__":
     test_app_js_system_render_limits_hidden_tab_dom_writes()
     test_app_js_node_selection_starts_priority_refresh_immediately()
     test_static_index_contains_setup_guidance_and_empty_state_copy()
+    test_static_inference_model_ui_assets_present()
     test_worker_enrollment_ui_uses_same_origin_backend_endpoint()
     print("ok")

@@ -55,6 +55,11 @@ let refreshQueued = false;
 let refreshQueuedForceCf = false;
 let refreshGeneration = 0;
 let priorityRefreshes = 0;
+let inferenceModelData = null;
+let inferenceStorageData = null;
+let inferenceJobsTimer = null;
+let activeInferenceTab = 'models';
+const ACTIVE_MODEL_JOB_STATES = new Set(['queued', 'running', 'hashing', 'verifying']);
 
 // ---- Helpers ----
 
@@ -63,29 +68,42 @@ function shouldShowLocalCfSection() {
 }
 
 function syncAppViewChrome() {
+    const configured = nodeRole && nodeRole !== 'unconfigured';
     const settingsAvailable = nodeRole && nodeRole !== 'unconfigured' && nodeRole !== 'worker';
+    if (!configured && currentAppView === 'inference') {
+        currentAppView = 'main';
+    }
     if (!settingsAvailable && currentAppView === 'settings') {
         currentAppView = 'main';
     }
 
     const mainView = document.getElementById('main-view');
+    const inferenceView = document.getElementById('inference-view');
     const settingsView = document.getElementById('settings-view');
     const mainTab = document.getElementById('main-view-tab');
+    const inferenceTab = document.getElementById('inference-view-tab');
     const settingsTab = document.getElementById('settings-view-tab');
     const appNav = document.getElementById('app-nav');
     const sidebar = document.getElementById('sidebar');
 
     if (mainView) mainView.style.display = currentAppView === 'main' ? '' : 'none';
+    if (inferenceView) inferenceView.style.display = currentAppView === 'inference' ? '' : 'none';
     if (settingsView) settingsView.style.display = currentAppView === 'settings' ? '' : 'none';
     if (mainTab) {
         if (currentAppView === 'main') mainTab.classList.add('active');
         else mainTab.classList.remove('active');
     }
+    if (inferenceTab) {
+        if (currentAppView === 'inference') inferenceTab.classList.add('active');
+        else inferenceTab.classList.remove('active');
+        inferenceTab.style.display = configured ? '' : 'none';
+    }
     if (settingsTab) {
         if (currentAppView === 'settings') settingsTab.classList.add('active');
         else settingsTab.classList.remove('active');
+        settingsTab.style.display = settingsAvailable ? '' : 'none';
     }
-    if (appNav) appNav.style.display = settingsAvailable ? '' : 'none';
+    if (appNav) appNav.style.display = configured ? '' : 'none';
     if (sidebar) {
         if (isMaster && currentAppView === 'main') sidebar.classList.add('visible');
         else sidebar.classList.remove('visible');
@@ -96,11 +114,18 @@ async function showAppView(view) {
     if (view === 'settings' && nodeRole === 'worker') {
         view = 'main';
     }
-    currentAppView = view === 'settings' ? 'settings' : 'main';
+    if (view === 'inference' && (!nodeRole || nodeRole === 'unconfigured')) {
+        view = 'main';
+    }
+    currentAppView = view === 'settings' || view === 'inference' ? view : 'main';
     syncAppViewChrome();
     if (currentAppView === 'settings') {
+        stopInferencePolling();
         await loadSettingsView();
+    } else if (currentAppView === 'inference') {
+        await loadInferenceView();
     } else if (selectedNodeId) {
+        stopInferencePolling();
         await refreshAll();
     }
 }
@@ -182,7 +207,14 @@ async function api(method, path, body, extraHeaders) {
     }
     if (!resp.ok) {
         const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-        throw new Error(err.detail || 'Request failed');
+        const detail = err.detail || 'Request failed';
+        const message = typeof detail === 'string'
+            ? detail
+            : (detail.message || JSON.stringify(detail));
+        const error = new Error(message);
+        error.detail = detail;
+        error.status = resp.status;
+        throw error;
     }
     return resp.json();
 }
@@ -194,8 +226,9 @@ function nodePathFor(nodeId, path) {
         // Rewrite /api/services -> /api/nodes/{id}/services
         // Rewrite /api/services/foo/start -> /api/nodes/{id}/services/foo/start
         // Rewrite /api/tunnel -> /api/nodes/{id}/tunnel
+        // Rewrite /api/models -> /api/nodes/{id}/models
         // Rewrite /api/ports/next -> /api/ports/next (local only, don't proxy)
-        if (path.startsWith('/api/system') || path.startsWith('/api/services') || path.startsWith('/api/tunnel')) {
+        if (path.startsWith('/api/system') || path.startsWith('/api/services') || path.startsWith('/api/tunnel') || path.startsWith('/api/models')) {
             // Strip /api prefix: /api/system -> /system, then build /api/nodes/{id}/system
             const subpath = path.slice(4); // remove '/api'
             return `/api/nodes/${nodeId}${subpath}`;
@@ -230,6 +263,10 @@ document.addEventListener('click', (e) => {
         const panel = document.getElementById('tunnel-tab-' + e.target.dataset.tunnelTab);
         panel.classList.add('active');
         panel.style.display = '';
+    }
+    if (e.target.classList.contains('inference-tab')) {
+        setInferenceTab(e.target.dataset.inferenceTab || 'models');
+        if (currentAppView === 'inference') refreshInferenceModels();
     }
 });
 
@@ -937,6 +974,7 @@ async function refreshSidebar() {
     try {
         nodes = await api('GET', '/api/nodes');
         renderSidebar(nodes);
+        if (currentAppView === 'inference') renderInferenceNodePicker();
     } catch (e) {
         console.error('Failed to fetch nodes:', e);
     }
@@ -975,8 +1013,13 @@ function selectNode(nodeId) {
     }
 
     cfSectionLoaded = false;
-    showNodeSwitchPendingState();
-    refreshAll({ forceCf: true, priority: true });
+    if (currentAppView === 'inference') {
+        showInferencePendingState();
+        loadInferenceView();
+    } else {
+        showNodeSwitchPendingState();
+        refreshAll({ forceCf: true, priority: true });
+    }
 }
 
 function showNodeSwitchPendingState() {
@@ -1369,6 +1412,445 @@ async function submitNewService() {
         await refreshServices();
     } catch (e) {
         errEl.textContent = e.message;
+    }
+}
+
+// ---- Inference models ----
+
+function modelNodePath(path) {
+    return nodePathFor(selectedNodeId, path);
+}
+
+function setInferenceTab(tab) {
+    activeInferenceTab = ['models', 'jobs', 'storage'].includes(tab) ? tab : 'models';
+    document.querySelectorAll('.inference-tab').forEach(t => {
+        if (t.dataset.inferenceTab === activeInferenceTab) t.classList.add('active');
+        else t.classList.remove('active');
+    });
+    document.querySelectorAll('.inference-tab-content').forEach(t => t.classList.remove('active'));
+    const panel = document.getElementById('inference-tab-' + activeInferenceTab);
+    if (panel) panel.classList.add('active');
+}
+
+function setInferenceError(message) {
+    setElementText('inference-error', message || '');
+}
+
+function setInferenceStatus(message) {
+    setElementText('inference-status', message || '');
+}
+
+function selectedNodeLabel() {
+    const node = nodes.find(n => n.node_id === selectedNodeId || n.config_node_id === selectedNodeId);
+    if (node) return node.node_name || selectedNodeId;
+    return selectedNodeId || 'local node';
+}
+
+function renderInferenceNodePicker() {
+    const picker = document.getElementById('inference-node-picker');
+    const select = document.getElementById('inference-node-select');
+    if (!picker || !select) return;
+    if (!isMaster) {
+        picker.style.display = 'none';
+        return;
+    }
+    picker.style.display = '';
+    setHtmlIfChanged(select, (nodes || []).map(node => {
+        const status = node.status ? ` (${node.status})` : '';
+        return `<option value="${esc(node.node_id)}">${esc(node.node_name || node.node_id)}${esc(status)}</option>`;
+    }).join(''));
+    select.value = selectedNodeId || '';
+}
+
+function showInferencePendingState() {
+    setElementHtml('model-storage-summary', `
+        <div class="metric-card">
+            <div class="metric-label">Models</div>
+            <div class="metric-value">--</div>
+            <div class="metric-sub">Loading inventory</div>
+        </div>
+    `);
+    setElementHtml('models-list', '<div class="empty-state">Loading models...</div>');
+    setElementHtml('model-jobs-list', '<div class="empty-state">Loading jobs...</div>');
+}
+
+async function loadInferenceView() {
+    if (isMaster && (!nodes || nodes.length === 0)) {
+        await refreshSidebar();
+    }
+    renderInferenceNodePicker();
+    const subtitle = document.getElementById('inference-page-subtitle');
+    if (subtitle) subtitle.textContent = `${selectedNodeLabel()} · node-local inference storage`;
+    showInferencePendingState();
+    await refreshInferenceModels();
+}
+
+function stopInferencePolling() {
+    if (inferenceJobsTimer) {
+        clearInterval(inferenceJobsTimer);
+        inferenceJobsTimer = null;
+    }
+}
+
+function updateInferencePolling() {
+    const hasActive = inferenceModelData
+        && Array.isArray(inferenceModelData.jobs)
+        && inferenceModelData.jobs.some(job => ACTIVE_MODEL_JOB_STATES.has(job.state));
+    if (currentAppView === 'inference' && hasActive && !inferenceJobsTimer) {
+        inferenceJobsTimer = setInterval(refreshInferenceModels, 2500);
+    } else if ((!hasActive || currentAppView !== 'inference') && inferenceJobsTimer) {
+        stopInferencePolling();
+    }
+}
+
+async function refreshInferenceModels() {
+    const nodeId = selectedNodeId;
+    if (!nodeId) return;
+    setInferenceError('');
+    try {
+        const [models, storage] = await Promise.all([
+            api('GET', modelNodePath('/api/models')),
+            api('GET', modelNodePath('/api/models/storage')),
+        ]);
+        if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        inferenceModelData = models;
+        inferenceStorageData = storage;
+        renderInferenceSummary(models, storage);
+        renderModelInventory(models.artifacts || []);
+        renderModelJobs(models.jobs || []);
+        renderModelStorageInfo(storage);
+        updateInferencePolling();
+    } catch (e) {
+        setInferenceError(e.message);
+        stopInferencePolling();
+    }
+}
+
+function renderInferenceSummary(models, storage) {
+    const artifacts = models.artifacts || [];
+    const jobs = models.jobs || [];
+    const activeJobs = jobs.filter(job => ACTIVE_MODEL_JOB_STATES.has(job.state));
+    const disk = storage && storage.disk;
+    const root = (storage && storage.root) || models.store_root || '--';
+    setElementHtml('model-storage-summary', `
+        <div class="metric-card">
+            <div class="metric-label">Models</div>
+            <div class="metric-value">${artifacts.length}</div>
+            <div class="metric-sub">${activeJobs.length} active job${activeJobs.length === 1 ? '' : 's'}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Store Free</div>
+            <div class="metric-value" style="font-size:22px">${disk ? formatBytes(disk.free) : '--'}</div>
+            <div class="metric-sub">${disk ? `${formatBytes(disk.used)} used / ${formatBytes(disk.total)}` : 'Disk usage unavailable'}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Store Root</div>
+            <div class="metric-value mono-sm" style="font-size:13px;overflow-wrap:anywhere">${esc(root)}</div>
+            <div class="metric-sub">Node-local path</div>
+        </div>
+    `);
+}
+
+function modelStateBadge(state) {
+    const value = state || 'unknown';
+    const color = value === 'ready' ? 'green' : ACTIVE_MODEL_JOB_STATES.has(value) ? 'yellow' : value === 'degraded' ? 'yellow' : value === 'unknown' ? '' : 'red';
+    return `<span class="model-badge ${color}">${esc(value)}</span>`;
+}
+
+function modelSourceLabel(source) {
+    if (!source || !source.type) return '--';
+    if (source.type === 'huggingface') return `HF ${source.repo || '--'}${source.revision ? ` @ ${source.revision}` : ''}`;
+    if (source.type === 'url') {
+        const host = String(source.url || '').replace(/^https?:\/\//, '').split('/')[0] || source.filename || '--';
+        return `URL ${host}`;
+    }
+    if (source.type === 'local') return `Local ${source.path || '--'}`;
+    return source.type;
+}
+
+function renderModelInventory(artifacts) {
+    const el = document.getElementById('models-list');
+    if (!artifacts.length) {
+        setHtmlIfChanged(el, '<div class="empty-state">No managed models yet.</div>');
+        return;
+    }
+
+    const rows = artifacts.map(artifact => {
+        const snapshot = artifact.active_snapshot || '--';
+        const snap = (artifact.snapshots || {})[artifact.active_snapshot] || {};
+        const state = artifact.active_snapshot_state || snap.state || 'unknown';
+        const display = artifact.manifest_display_name || artifact.display_name || artifact.id;
+        const locationBadge = artifact.current_root === false
+            ? '<span class="model-badge yellow">Previous root</span>'
+            : artifact.path_exists === false
+                ? '<span class="model-badge red">Missing path</span>'
+                : '<span class="model-badge green">Current root</span>';
+        const format = artifact.format || '--';
+        const source = modelSourceLabel(artifact.source);
+        const size = typeof artifact.size_bytes === 'number' ? formatBytes(artifact.size_bytes) : '--';
+        return `
+            <div class="model-table-row">
+                <div>
+                    <div class="model-name">${esc(display)}</div>
+                    <div class="model-meta">${esc(artifact.id)} · ${artifact.files_count || 0} files</div>
+                </div>
+                <div><span class="model-badge">${esc(format)}</span></div>
+                <div>
+                    <div class="model-meta">${esc(snapshot)}</div>
+                    <div class="model-meta">${size}</div>
+                </div>
+                <div>${modelStateBadge(state)}<div style="margin-top:4px">${locationBadge}</div></div>
+                <div class="model-source">${esc(source)}</div>
+                <div class="model-actions">
+                    <button class="btn" onclick="verifyModelArtifact('${esc(artifact.id)}','${esc(snapshot)}')">Verify</button>
+                    <button class="btn danger" onclick="deleteModelArtifact('${esc(artifact.id)}','${esc(display)}')">Delete</button>
+                </div>
+            </div>`;
+    }).join('');
+
+    setHtmlIfChanged(el, `
+        <div class="model-table">
+            <div class="model-table-row model-table-header">
+                <div>Model</div>
+                <div>Format</div>
+                <div>Snapshot</div>
+                <div>State</div>
+                <div>Source</div>
+                <div style="text-align:right">Actions</div>
+            </div>
+            ${rows}
+        </div>
+    `);
+}
+
+function modelJobStateBadge(state) {
+    if (state === 'ready') return '<span class="model-badge green">Ready</span>';
+    if (ACTIVE_MODEL_JOB_STATES.has(state)) return `<span class="model-badge yellow">${esc(state)}</span>`;
+    if (state === 'canceled') return '<span class="model-badge">Canceled</span>';
+    return `<span class="model-badge red">${esc(state || 'failed')}</span>`;
+}
+
+function modelJobProgressClass(job, progress) {
+    if (job.state === 'ready') return 'green';
+    if (['failed', 'failed_interrupted'].includes(job.state)) return 'red';
+    if (ACTIVE_MODEL_JOB_STATES.has(job.state)) return 'yellow';
+    return progressColor(progress);
+}
+
+function renderModelJobs(jobs) {
+    const el = document.getElementById('model-jobs-list');
+    if (!jobs.length) {
+        setHtmlIfChanged(el, '<div class="empty-state">No model jobs yet.</div>');
+        return;
+    }
+    setHtmlIfChanged(el, jobs.map(job => {
+        const progress = Math.max(0, Math.min(100, Number(job.progress || 0)));
+        const isHashing = ['hashing', 'verifying'].includes(job.state);
+        const bytes = Number(isHashing ? (job.hash_total_bytes || job.total_bytes || 0) : (job.total_bytes || job.hash_total_bytes || 0));
+        const done = Number(isHashing ? (job.hashed_bytes || 0) : (job.downloaded_bytes || 0));
+        const barClass = modelJobProgressClass(job, progress);
+        const active = ACTIVE_MODEL_JOB_STATES.has(job.state);
+        const canClean = ['failed', 'failed_interrupted', 'canceled'].includes(job.state) && job.staging_path;
+        const actions = [
+            active ? `<button class="btn" onclick="cancelModelJob('${esc(job.id)}')">Cancel</button>` : '',
+            canClean ? `<button class="btn danger" onclick="cleanModelJobStaging('${esc(job.id)}','${esc(job.staging_path)}')">Clean staging</button>` : '',
+        ].filter(Boolean).join('');
+        return `
+            <div class="model-job-row">
+                <div class="model-job-main">
+                    <div>
+                        <div class="model-job-title">${esc(job.artifact_id || job.id)}</div>
+                        <div class="model-job-sub">${esc(job.kind || 'model')} · ${esc(job.snapshot || '--')} · ${esc(modelSourceLabel(job.source))}</div>
+                    </div>
+                    <div>${modelJobStateBadge(job.state)}</div>
+                    <div class="model-job-sub">${bytes ? `${formatBytes(done)} / ${formatBytes(bytes)}` : `${progress.toFixed(0)}%`}</div>
+                    <div class="model-actions">${actions}</div>
+                </div>
+                <div class="model-job-progress">
+                    <div class="progress-bar"><div class="progress-fill ${barClass}" style="width:${progress}%"></div></div>
+                    <div class="model-job-sub">${job.current_file ? esc(job.current_file) : esc(job.state || '')}</div>
+                </div>
+                ${job.error ? `<div class="model-job-error">${esc(job.error)}</div>` : ''}
+            </div>`;
+    }).join(''));
+}
+
+function renderModelStorageInfo(storage) {
+    if (!storage) return;
+    const input = document.getElementById('model-store-root-input');
+    if (input && document.activeElement !== input) input.value = storage.root || '';
+    const disk = storage.disk;
+    const active = storage.active_jobs || [];
+    setElementHtml('model-storage-info', `
+        <div><span class="settings-info-label">Root:</span> ${esc(storage.root || '--')}</div>
+        <div><span class="settings-info-label">Registry:</span> ${esc(storage.registry_path || '--')}</div>
+        <div><span class="settings-info-label">Active Jobs:</span> ${active.length}</div>
+        <div><span class="settings-info-label">Max Download:</span> ${formatBytes(storage.max_download_bytes || 0)}</div>
+        <div><span class="settings-info-label">Disk:</span> ${disk ? `${formatBytes(disk.free)} free` : '--'}</div>
+        <div><span class="settings-info-label">Import Roots:</span> ${esc((storage.allowlist_roots || []).join(', ') || '--')}</div>
+    `);
+}
+
+function modelOptionalValue(id) {
+    const el = document.getElementById(id);
+    const value = el ? el.value.trim() : '';
+    return value || null;
+}
+
+async function submitModelImport() {
+    const path = modelOptionalValue('model-import-path');
+    if (!path) {
+        setInferenceError('Local import path is required.');
+        return;
+    }
+    setInferenceError('');
+    setInferenceStatus('Starting import...');
+    try {
+        await api('POST', modelNodePath('/api/models/import'), {
+            path,
+            artifact_id: modelOptionalValue('model-import-artifact'),
+            display_name: modelOptionalValue('model-import-name'),
+            snapshot: modelOptionalValue('model-import-snapshot'),
+        });
+        setInferenceStatus('Import job started.');
+        setInferenceTab('jobs');
+        await refreshInferenceModels();
+    } catch (e) {
+        setInferenceError(e.message);
+        setInferenceStatus('');
+    }
+}
+
+async function submitModelUrlDownload() {
+    const url = modelOptionalValue('model-url-url');
+    if (!url) {
+        setInferenceError('URL is required.');
+        return;
+    }
+    const source = {
+        type: 'url',
+        url,
+        sha256: modelOptionalValue('model-url-sha256'),
+        extract: !!document.getElementById('model-url-extract').checked,
+    };
+    setInferenceError('');
+    setInferenceStatus('Starting download...');
+    try {
+        await api('POST', modelNodePath('/api/models/download'), {
+            source,
+            artifact_id: modelOptionalValue('model-url-artifact'),
+            snapshot: modelOptionalValue('model-url-snapshot'),
+        });
+        setInferenceStatus('Download job started.');
+        setInferenceTab('jobs');
+        await refreshInferenceModels();
+    } catch (e) {
+        setInferenceError(e.message);
+        setInferenceStatus('');
+    }
+}
+
+async function submitModelHfDownload() {
+    const repo = modelOptionalValue('model-hf-repo');
+    if (!repo) {
+        setInferenceError('Hugging Face repo is required.');
+        return;
+    }
+    const tokenEl = document.getElementById('model-hf-token');
+    const source = {
+        type: 'huggingface',
+        repo,
+        revision: modelOptionalValue('model-hf-revision') || 'main',
+        preset: document.getElementById('model-hf-preset').value || 'full',
+        token: tokenEl ? tokenEl.value.trim() || null : null,
+    };
+    setInferenceError('');
+    setInferenceStatus('Starting Hugging Face download...');
+    try {
+        await api('POST', modelNodePath('/api/models/download'), {
+            source,
+            artifact_id: modelOptionalValue('model-hf-artifact'),
+        });
+        if (tokenEl) tokenEl.value = '';
+        setInferenceStatus('Download job started.');
+        setInferenceTab('jobs');
+        await refreshInferenceModels();
+    } catch (e) {
+        setInferenceError(e.message);
+        setInferenceStatus('');
+    }
+}
+
+async function verifyModelArtifact(artifactId, snapshot) {
+    setInferenceError('');
+    setInferenceStatus(`Verifying ${artifactId}...`);
+    try {
+        const query = snapshot && snapshot !== '--' ? `?snapshot=${encodeURIComponent(snapshot)}` : '';
+        const result = await api('POST', modelNodePath(`/api/models/${artifactId}/verify${query}`));
+        setInferenceStatus(result.valid ? `${artifactId} verified.` : `${artifactId} has verification issues.`);
+        await refreshInferenceModels();
+    } catch (e) {
+        setInferenceError(e.message);
+        setInferenceStatus('');
+    }
+}
+
+async function deleteModelArtifact(artifactId, displayName) {
+    if (!confirm(`Delete model "${displayName}" from this node?`)) return;
+    setInferenceError('');
+    setInferenceStatus('');
+    try {
+        await api('DELETE', modelNodePath(`/api/models/${artifactId}`));
+        setInferenceStatus(`${artifactId} deleted.`);
+        await refreshInferenceModels();
+    } catch (e) {
+        const detail = e.detail;
+        if (detail && detail.requires_force) {
+            const refs = (detail.references || []).map(ref => ref.name || ref.profile_id).join(', ');
+            if (confirm(`Stopped profiles reference this model: ${refs}. Delete anyway?`)) {
+                await api('DELETE', modelNodePath(`/api/models/${artifactId}?force_stopped_references=true`));
+                setInferenceStatus(`${artifactId} deleted.`);
+                await refreshInferenceModels();
+                return;
+            }
+        }
+        setInferenceError(e.message);
+    }
+}
+
+async function cancelModelJob(jobId) {
+    try {
+        await api('POST', modelNodePath(`/api/models/jobs/${jobId}/cancel`));
+        await refreshInferenceModels();
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+async function cleanModelJobStaging(jobId, stagingPath) {
+    if (!confirm(`Delete staging files for ${jobId}?\n\n${stagingPath}`)) return;
+    try {
+        await api('DELETE', modelNodePath(`/api/models/jobs/${jobId}/staging`));
+        setInferenceStatus(`Cleaned staging for ${jobId}.`);
+        await refreshInferenceModels();
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+async function updateModelStoreRoot() {
+    const root = modelOptionalValue('model-store-root-input');
+    if (!root) {
+        setInferenceError('Model store root is required.');
+        return;
+    }
+    if (!confirm('Update the model store root for this node? Existing artifacts will not be moved.')) return;
+    try {
+        await api('PUT', modelNodePath('/api/models/storage'), { root });
+        setInferenceStatus('Model store root updated.');
+        await refreshInferenceModels();
+    } catch (e) {
+        setInferenceError(e.message);
     }
 }
 

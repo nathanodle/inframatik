@@ -338,6 +338,19 @@ def _artifact_list(registry: Optional[dict] = None) -> list[dict]:
     result = []
     for artifact in registry.get("artifacts", {}).values():
         item = dict(artifact)
+        active_snapshot = item.get("active_snapshot")
+        active_meta = (item.get("snapshots") or {}).get(active_snapshot) if active_snapshot else None
+        if active_meta:
+            item["active_snapshot_state"] = active_meta.get("state")
+            item["snapshot_path"] = active_meta.get("snapshot_path")
+            try:
+                manifest = json.loads(Path(active_meta.get("manifest_path", "")).read_text())
+                item["source"] = manifest.get("source") or {}
+                item["files_count"] = len(manifest.get("files") or [])
+                item["manifest_display_name"] = manifest.get("display_name")
+            except (json.JSONDecodeError, OSError, TypeError):
+                item["source"] = {}
+                item["files_count"] = None
         artifact_path = item.get("artifact_path")
         if artifact_path:
             path = Path(artifact_path).expanduser()

@@ -265,7 +265,7 @@ body {
     gap: 4px;
 }
 
-.tab, .tunnel-tab {
+.tab, .tunnel-tab, .inference-tab {
     padding: 6px 14px;
     border-radius: var(--radius-sm);
     border: 1px solid transparent;
@@ -278,12 +278,12 @@ body {
     font-family: inherit;
 }
 
-.tab:hover, .tunnel-tab:hover {
+.tab:hover, .tunnel-tab:hover, .inference-tab:hover {
     color: var(--text-secondary);
     background: var(--bg-card);
 }
 
-.tab.active, .tunnel-tab.active {
+.tab.active, .tunnel-tab.active, .inference-tab.active {
     color: var(--text-primary);
     background: var(--bg-card);
     border-color: var(--border);
@@ -650,6 +650,12 @@ body {
     margin-top: 8px;
 }
 
+.form-success {
+    color: var(--green);
+    font-size: 13px;
+    margin-top: 8px;
+}
+
 .modal-header {
     display: flex;
     align-items: center;
@@ -735,6 +741,239 @@ body {
     white-space: pre-wrap;
     word-break: break-all;
     margin-top: 12px;
+}
+
+/* ---- Inference page ---- */
+.inference-page {
+    min-height: calc(100vh - 57px);
+    padding: 28px 32px 48px;
+}
+
+.inference-page-inner {
+    max-width: 1280px;
+    margin: 0 auto;
+}
+
+.inference-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 22px;
+}
+
+.inference-page-header h2 {
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.inference-page-header p {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.inference-node-picker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.inference-node-picker label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.inference-node-picker select {
+    min-width: 220px;
+    padding: 8px 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+}
+
+.inference-section-header {
+    margin-top: 0;
+}
+
+.inference-tab-content {
+    display: none;
+}
+
+.inference-tab-content.active {
+    display: block;
+}
+
+.inference-summary-grid {
+    margin-bottom: 16px;
+}
+
+.model-add-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.model-add-panel {
+    min-width: 0;
+}
+
+.model-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.model-checkbox {
+    margin: 4px 0 0;
+}
+
+.model-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+}
+
+.model-table {
+    min-width: 920px;
+}
+
+.model-table-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.4fr) 110px 120px 120px minmax(180px, 1fr) 170px;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+.model-table-row:last-child {
+    border-bottom: 0;
+}
+
+.model-table-header {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--bg-secondary);
+}
+
+.model-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+}
+
+.model-meta {
+    margin-top: 2px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    overflow-wrap: anywhere;
+}
+
+.model-source {
+    color: var(--text-secondary);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.model-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.model-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 2px 7px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.model-badge.green {
+    color: var(--green);
+    background: var(--green-glow);
+    border-color: rgba(16, 185, 129, 0.24);
+}
+
+.model-badge.yellow {
+    color: var(--yellow);
+    background: var(--yellow-glow);
+    border-color: rgba(245, 158, 11, 0.24);
+}
+
+.model-badge.red {
+    color: var(--red);
+    background: var(--red-glow);
+    border-color: rgba(239, 68, 68, 0.24);
+}
+
+.model-jobs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.model-job-row {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+}
+
+.model-job-main {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) 120px 120px minmax(160px, 0.8fr);
+    gap: 12px;
+    align-items: center;
+}
+
+.model-job-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+}
+
+.model-job-sub {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: 2px;
+    overflow-wrap: anywhere;
+}
+
+.model-job-progress {
+    margin-top: 10px;
+}
+
+.model-job-error {
+    color: var(--red);
+    font-size: 12px;
+    margin-top: 8px;
+    overflow-wrap: anywhere;
+}
+
+.model-storage-panel {
+    max-width: 860px;
 }
 
 /* ---- Settings page ---- */
@@ -1578,4 +1817,41 @@ body {
     color: var(--text-primary);
     text-align: center;
     margin-bottom: 24px;
+}
+
+@media (max-width: 960px) {
+    .model-add-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .model-job-main {
+        grid-template-columns: 1fr;
+    }
+
+    .inference-page-header {
+        flex-direction: column;
+    }
+
+    .inference-node-picker {
+        width: 100%;
+    }
+
+    .inference-node-picker select {
+        flex: 1;
+        min-width: 0;
+    }
+}
+
+@media (max-width: 640px) {
+    .inference-page {
+        padding: 20px 16px 36px;
+    }
+
+    .model-form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .model-table {
+        min-width: 760px;
+    }
 }
