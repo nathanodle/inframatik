@@ -1333,6 +1333,103 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'thin accepted profile action responses should be normalized before rendering'
                 );
 
+                const acceptedReconcileResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        const timers = [];
+                        const originalSetTimeout = setTimeout;
+                        const originalUpdateCard = updateInferenceProfileCard;
+                        const originalRenderOperations = renderInferenceOperations;
+                        setTimeout = function(fn, ms) {
+                            calls.push(['setTimeout', ms]);
+                            timers.push(fn);
+                            return 501;
+                        };
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'profiles';
+                        wsConnected = true;
+                        inferenceProfilesData = [{
+                            id: 'qwen-fast',
+                            display_name: 'Qwen Fast',
+                            state: 'stopped',
+                            instances: [{ index: 0, state: 'stopped' }],
+                        }];
+                        inferenceOperationsData = [];
+                        pendingInferenceProfileActions.clear();
+                        profileDetailModes.clear();
+                        updateInferenceProfileCard = function(profileId) {
+                            const profile = profileById(profileId);
+                            calls.push(['updateCard', profileId, profile && profile.state]);
+                        };
+                        renderInferenceOperations = function(operations) {
+                            calls.push(['renderOperations', operations[0] && operations[0].state]);
+                        };
+                        setInferenceStatus = function(message) { calls.push(['status', message]); };
+                        setInferenceError = function(message) { if (message) calls.push(['error', message]); };
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'POST' && path === '/api/inference/profiles/qwen-fast/start') {
+                                return { id: 'op-fast' };
+                            }
+                            if (method === 'GET' && path === '/api/inference/operations/op-fast') {
+                                return {
+                                    id: 'op-fast',
+                                    kind: 'profile_start',
+                                    state: 'failed',
+                                    profile_id: 'qwen-fast',
+                                    current_step: 'failed',
+                                    progress: 100,
+                                    result: {
+                                        message: 'Launcher runtime validation failed',
+                                        launcher_id: 'vllm-main',
+                                        validation: {
+                                            runtime: {
+                                                output: 'ImportError: libcudart.so.12: cannot open shared object file',
+                                                suggested_env: { LD_LIBRARY_PATH: '/venv/cuda/lib' },
+                                            },
+                                        },
+                                    },
+                                };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        try {
+                            await runProfileAction('qwen-fast', 'start');
+                            const getBeforeTimer = calls.some(call => call[0] === 'GET');
+                            const pendingBeforeTimer = pendingInferenceProfileActions.get('qwen-fast');
+                            await timers[0]();
+                            return {
+                                calls,
+                                getBeforeTimer,
+                                pendingBeforeTimer,
+                                operation: inferenceOperationsData.find(item => item.id === 'op-fast'),
+                                profile: inferenceProfilesData[0],
+                                pendingAfterTimer: pendingInferenceProfileActions.get('qwen-fast') || null,
+                            };
+                        } finally {
+                            setTimeout = originalSetTimeout;
+                            updateInferenceProfileCard = originalUpdateCard;
+                            renderInferenceOperations = originalRenderOperations;
+                        }
+                    })()
+                `, context);
+                assert(
+                    acceptedReconcileResult.calls.some(call => call[0] === 'setTimeout' && call[1] === 1200) &&
+                    acceptedReconcileResult.getBeforeTimer === false &&
+                    acceptedReconcileResult.pendingBeforeTimer === 'start' &&
+                    acceptedReconcileResult.calls.some(call => call[0] === 'GET' && call[1] === '/api/inference/operations/op-fast') &&
+                    acceptedReconcileResult.operation &&
+                    acceptedReconcileResult.operation.state === 'failed' &&
+                    acceptedReconcileResult.profile.state === 'failed' &&
+                    acceptedReconcileResult.profile.instances[0].state === 'failed' &&
+                    acceptedReconcileResult.pendingAfterTimer === null &&
+                    acceptedReconcileResult.calls.some(call => call[0] === 'updateCard' && call[1] === 'qwen-fast' && call[2] === 'failed') &&
+                    acceptedReconcileResult.calls.some(call => call[0] === 'error' && String(call[1]).includes('Launcher runtime validation failed')),
+                    'accepted profile actions should run one targeted reconcile so fast validation failures cannot stay queued if a websocket event is missed'
+                );
+
                 const richPreviewHtml = vm.runInContext(`
                     renderProfilePreview({
                         valid_for_save: true,

@@ -105,6 +105,7 @@ let lastInferenceEventAt = null;
 let lastInferenceFallbackSyncAt = null;
 const ACTIVE_MODEL_JOB_STATES = new Set(['queued', 'running', 'hashing', 'verifying']);
 const ACTIVE_INFERENCE_OPERATION_STATES = new Set(['queued', 'running']);
+const ACCEPTED_OPERATION_RECONCILE_DELAY_MS = 1200;
 
 // ---- Helpers ----
 
@@ -3833,6 +3834,15 @@ function mergeInferenceOperation(operation, options = {}) {
     updateInferencePolling();
 }
 
+function applyTerminalInferenceOperation(operation) {
+    if (!isTerminalInferenceOperation(operation) || currentAppView !== 'inference') return;
+    const patched = patchProfileFromOperation(operation);
+    if (!patched && activeInferenceTab === 'profiles' && operation.profile_id) updateInferenceProfileCard(operation.profile_id);
+    if (operation.profile_id && profileDetailModes.get(operation.profile_id) === 'details') {
+        loadProfileDetails(operation.profile_id);
+    }
+}
+
 function operationProfileState(operation) {
     const result = operation && operation.result && typeof operation.result === 'object' ? operation.result : {};
     if (result.state) return result.state;
@@ -3899,13 +3909,7 @@ function handleInferenceOperationEvent(operation, event = {}) {
     markInferenceLiveEvent();
     const terminal = isTerminalInferenceOperation(operation);
     mergeInferenceOperation(operation, { suppressProfileRender: terminal });
-    if (terminal && currentAppView === 'inference') {
-        const patched = patchProfileFromOperation(operation);
-        if (!patched && activeInferenceTab === 'profiles' && operation.profile_id) updateInferenceProfileCard(operation.profile_id);
-        if (operation.profile_id && profileDetailModes.get(operation.profile_id) === 'details') {
-            loadProfileDetails(operation.profile_id);
-        }
-    }
+    if (terminal) applyTerminalInferenceOperation(operation);
 }
 
 function mergeInferenceOperationSnapshot(operations, nodeId = selectedNodeId) {
@@ -4091,6 +4095,30 @@ function normalizeInferenceOperationResponse(response, context = {}) {
     return next;
 }
 
+async function reconcileAcceptedInferenceOperation(operationId, nodeId) {
+    if (!operationId || currentAppView !== 'inference') return;
+    if (nodeId && nodeId !== selectedNodeId) return;
+    const local = (inferenceOperationsData || []).find(item => item.id === operationId);
+    if (!local || isTerminalInferenceOperation(local)) return;
+    try {
+        const operation = await api('GET', nodePathFor(nodeId, `/api/inference/operations/${encodeURIComponent(operationId)}`));
+        if (nodeId && nodeId !== selectedNodeId) return;
+        const terminal = isTerminalInferenceOperation(operation);
+        mergeInferenceOperation(operation, { suppressProfileRender: terminal });
+        if (terminal) applyTerminalInferenceOperation(operation);
+    } catch (e) {
+        // WebSocket and fallback activity sync remain authoritative; this is only a targeted safety reconcile.
+    }
+}
+
+function scheduleAcceptedInferenceOperationReconcile(operation, nodeId) {
+    if (!operation || !operation.id || isTerminalInferenceOperation(operation)) return;
+    const timer = setTimeout(() => {
+        reconcileAcceptedInferenceOperation(operation.id, nodeId);
+    }, ACCEPTED_OPERATION_RECONCILE_DELAY_MS);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+}
+
 async function runProfileAction(profileId, action, button) {
     if (!profileId || !['start', 'stop', 'restart'].includes(action)) return;
     const nodeId = selectedNodeId;
@@ -4106,6 +4134,7 @@ async function runProfileAction(profileId, action, button) {
         );
         if (!operation) throw new Error(`${profileActionLabel(action)} request did not return an operation id.`);
         mergeInferenceOperation(operation);
+        scheduleAcceptedInferenceOperationReconcile(operation, nodeId);
         setInferenceStatus(`${profileActionLabel(action)} operation queued for ${profileId}.`);
     } catch (e) {
         pendingInferenceProfileActions.delete(profileId);
@@ -4135,6 +4164,7 @@ async function runInstanceAction(profileId, instanceIndex, action, button) {
         );
         if (!operation) throw new Error(`${profileActionLabel(action)} request did not return an operation id.`);
         mergeInferenceOperation(operation);
+        scheduleAcceptedInferenceOperationReconcile(operation, nodeId);
         setInferenceStatus(`${profileActionLabel(action)} operation queued for ${profileId}[${instanceIndex}].`);
     } catch (e) {
         pendingInferenceInstanceActions.delete(key);
