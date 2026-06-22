@@ -2660,6 +2660,7 @@ function renderProfileOperationPanel(operation, pendingAction = '') {
     const message = failed ? operationFailureMessage(operation) : '';
     const logs = failed ? operationFailureLogs(operation) : '';
     const panelClass = failed ? 'failed' : ACTIVE_INFERENCE_OPERATION_STATES.has(operation.state) ? 'active' : 'complete';
+    const operationIdArg = jsArg(operation.id);
     return `
         <div class="profile-operation-panel ${panelClass}">
             <div class="profile-operation-head">
@@ -2667,7 +2668,10 @@ function renderProfileOperationPanel(operation, pendingAction = '') {
                     <div class="profile-operation-title">${esc(operationStepLabel(operation.kind || 'operation'))}</div>
                     <div class="profile-operation-sub">${esc(operationStepLabel(operation.current_step || operation.state || '--'))}</div>
                 </div>
-                <span class="model-badge ${color}">${esc(operation.state || 'unknown')}</span>
+                <div class="profile-operation-actions">
+                    <span class="model-badge ${color}">${esc(operation.state || 'unknown')}</span>
+                    ${operation.state === 'queued' ? `<button class="btn danger" type="button" onclick="cancelInferenceOperation(${operationIdArg})">Cancel</button>` : ''}
+                </div>
             </div>
             <div class="progress-bar"><div class="progress-fill ${color}" style="width:${progress}%"></div></div>
             ${renderOperationSteps(operation)}
@@ -3220,6 +3224,23 @@ function profileActionLabel(action) {
     return action || 'Action';
 }
 
+async function surfaceActiveInferenceOperation(error, nodeId = selectedNodeId) {
+    const detail = error && error.detail;
+    const activeId = detail && detail.active_operation_id;
+    if (!activeId) return false;
+    try {
+        const operation = await api('GET', nodePathFor(nodeId, `/api/inference/operations/${encodeURIComponent(activeId)}`));
+        mergeInferenceOperation(operation);
+        setInferenceError(`${detail.message || 'An inference operation is already active.'} ${operation.kind || detail.kind || ''} ${operation.current_step || operation.state || ''}`.trim());
+        if (!shouldUseInferenceOperationWs(nodeId)) {
+            watchInferenceOperation(operation.id, nodeId);
+        }
+        return true;
+    } catch (_ignored) {
+        return false;
+    }
+}
+
 async function runProfileAction(profileId, action, button) {
     if (!profileId || !['start', 'stop', 'restart'].includes(action)) return;
     const nodeId = selectedNodeId;
@@ -3238,7 +3259,8 @@ async function runProfileAction(profileId, action, button) {
     } catch (e) {
         pendingInferenceProfileActions.delete(profileId);
         if (button) button.disabled = false;
-        setInferenceError(e.message);
+        const surfaced = await surfaceActiveInferenceOperation(e, nodeId);
+        if (!surfaced) setInferenceError(e.message);
         renderInferenceProfiles(inferenceProfilesData);
     }
 }
@@ -3265,8 +3287,25 @@ async function runInstanceAction(profileId, instanceIndex, action, button) {
     } catch (e) {
         pendingInferenceInstanceActions.delete(key);
         if (button) button.disabled = false;
-        setInferenceError(e.message);
+        const surfaced = await surfaceActiveInferenceOperation(e, nodeId);
+        if (!surfaced) setInferenceError(e.message);
         renderInferenceProfiles(inferenceProfilesData);
+    }
+}
+
+async function cancelInferenceOperation(operationId) {
+    if (!operationId) return;
+    if (!confirm('Cancel this queued inference operation?')) return;
+    setInferenceError('');
+    try {
+        const operation = await api('POST', modelNodePath(`/api/inference/operations/${encodeURIComponent(operationId)}/cancel`));
+        mergeInferenceOperation(operation);
+        setInferenceStatus(`Canceled operation ${operationId}.`);
+        if (currentAppView === 'inference') {
+            await refreshInferenceProfiles();
+        }
+    } catch (e) {
+        setInferenceError(e.message);
     }
 }
 
@@ -3820,6 +3859,7 @@ function renderInferenceOperations(operations) {
         const detail = failed ? operationResultDetail(op) : operationRuntimeStatus(op);
         const failureMessage = failed ? operationFailureMessage(op) : '';
         const failureLogs = failed ? operationFailureLogs(op) : '';
+        const operationIdArg = jsArg(op.id);
         return `
             <div class="model-job-row">
                 <div class="model-job-main">
@@ -3829,7 +3869,9 @@ function renderInferenceOperations(operations) {
                     </div>
                     <div><span class="model-badge ${color}">${esc(op.state || 'unknown')}</span></div>
                     <div class="model-job-sub">${progress.toFixed(0)}%</div>
-                    <div class="model-actions"></div>
+                    <div class="model-actions">
+                        ${op.state === 'queued' ? `<button class="btn danger" type="button" onclick="cancelInferenceOperation(${operationIdArg})">Cancel</button>` : ''}
+                    </div>
                 </div>
                 <div class="model-job-progress">
                     <div class="progress-bar"><div class="progress-fill ${color}" style="width:${progress}%"></div></div>

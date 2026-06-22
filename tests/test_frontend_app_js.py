@@ -101,6 +101,7 @@ def test_app_js_cloudflare_section_gating_by_role():
                 clearTimeout,
                 setInterval: () => 1,
                 clearInterval: () => {},
+                confirm: () => true,
                 scenario: null,
                 calls: null,
             };
@@ -355,6 +356,106 @@ def test_app_js_cloudflare_section_gating_by_role():
                     startupPanelHtml.includes('Restarts') &&
                     startupPanelHtml.includes('42s / 10m'),
                     'active inference operation panel should show live startup readiness facts'
+                );
+
+                const queuedOperationHtml = vm.runInContext(`
+                    renderProfileOperationPanel({
+                        id: 'op-cancel',
+                        kind: 'profile_start',
+                        state: 'queued',
+                        profile_id: 'qwen',
+                        current_step: 'queued',
+                        progress: 0,
+                        steps: [{ name: 'validate', state: 'pending' }],
+                    });
+                `, context);
+                assert(
+                    queuedOperationHtml.includes('cancelInferenceOperation') &&
+                    queuedOperationHtml.includes('Cancel'),
+                    'queued profile operations should render a cancel action'
+                );
+
+                const queuedOperationsListHtml = vm.runInContext(`
+                    renderInferenceOperations([{
+                        id: 'op-cancel',
+                        kind: 'profile_start',
+                        state: 'queued',
+                        profile_id: 'qwen',
+                        current_step: 'queued',
+                        progress: 0,
+                    }]);
+                    document.getElementById('inference-operations-list').innerHTML;
+                `, context);
+                assert(
+                    queuedOperationsListHtml.includes('cancelInferenceOperation') &&
+                    queuedOperationsListHtml.includes('Cancel'),
+                    'queued operations in the Jobs tab should render a cancel action'
+                );
+
+                const cancelCalls = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        currentAppView = 'inference';
+                        inferenceProfilesData = [];
+                        refreshInferenceProfiles = async function() { calls.push(['refreshProfiles']); };
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'POST' && path === '/api/inference/operations/op-cancel/cancel') {
+                                return { id: 'op-cancel', kind: 'profile_start', state: 'canceled', profile_id: 'qwen', progress: 100 };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        await cancelInferenceOperation('op-cancel');
+                        return { calls, state: inferenceOperationsData[0] && inferenceOperationsData[0].state };
+                    })()
+                `, context);
+                assert(
+                    cancelCalls.calls.some(call => call[0] === 'POST' && call[1] === '/api/inference/operations/op-cancel/cancel') &&
+                    cancelCalls.calls.some(call => call[0] === 'refreshProfiles') &&
+                    cancelCalls.state === 'canceled',
+                    'cancel operation should call the cancel endpoint, merge the canceled operation, and refresh profiles'
+                );
+
+                const conflictResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        wsConnected = true;
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'profiles';
+                        inferenceProfilesData = [{ id: 'qwen', display_name: 'Qwen', state: 'running', instances: [] }];
+                        renderInferenceProfiles = function() { calls.push(['renderProfiles']); };
+                        renderInferenceOperations = function(operations) { calls.push(['renderOperations', operations[0] && operations[0].id]); };
+                        setInferenceError = function(message) { calls.push(['error', message]); };
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'POST' && path === '/api/inference/profiles/qwen/start') {
+                                const err = new Error('active operation');
+                                err.status = 409;
+                                err.detail = {
+                                    message: 'An inference operation is already active for this profile',
+                                    active_operation_id: 'op-live',
+                                    kind: 'profile_restart',
+                                };
+                                throw err;
+                            }
+                            if (method === 'GET' && path === '/api/inference/operations/op-live') {
+                                return { id: 'op-live', kind: 'profile_restart', state: 'running', profile_id: 'qwen', current_step: 'waiting_ready', progress: 70 };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        await runProfileAction('qwen', 'start');
+                        return { calls, operation: inferenceOperationsData.find(item => item.id === 'op-live') };
+                    })()
+                `, context);
+                assert(
+                    conflictResult.calls.some(call => call[0] === 'GET' && call[1] === '/api/inference/operations/op-live') &&
+                    conflictResult.calls.some(call => call[0] === 'error' && String(call[1]).includes('already active')) &&
+                    conflictResult.operation && conflictResult.operation.current_step === 'waiting_ready',
+                    'profile action conflicts should fetch and render the active operation'
                 );
 
                 const richPreviewHtml = vm.runInContext(`
@@ -1388,6 +1489,8 @@ def test_static_inference_model_ui_assets_present():
     assert "renderSystemdPreview" in app_js
     assert "renderCloudflarePreview" in app_js
     assert "renderCommandEnv" in app_js
+    assert "cancelInferenceOperation" in app_js
+    assert "surfaceActiveInferenceOperation" in app_js
     assert "runtime_status" in app_js
     assert "model_job" in app_js
     assert "handleModelJobEvent" in app_js
@@ -1443,6 +1546,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-editor-section.active" in style_css
     assert ".profile-detail-panel" in style_css
     assert ".profile-operation-panel" in style_css
+    assert ".profile-operation-actions" in style_css
     assert ".profile-operation-steps" in style_css
     assert ".profile-operation-facts" in style_css
     assert ".profile-instance-row" in style_css

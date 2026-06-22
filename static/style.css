@@ -1670,6 +1670,14 @@ body {
     margin-bottom: 8px;
 }
 
+.profile-operation-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
 .profile-operation-title {
     color: var(--text-primary);
     font-size: 13px;
