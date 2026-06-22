@@ -2137,6 +2137,65 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile editor should show Save & Restart while editing a running profile'
                 );
 
+                const editProfileFocusResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'jobs';
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        inferenceProfilesData = [];
+                        inferenceNodeSnapshots.clear();
+                        document.getElementById('profile-editor-panel').scrollIntoView = function(options) {
+                            calls.push(['scroll', options && options.block]);
+                        };
+                        document.getElementById('profile-display-name').focus = function(options) {
+                            calls.push(['focus', options && options.preventScroll]);
+                        };
+                        setInferenceStatus = function(message) { calls.push(['status', message]); };
+                        setInferenceError = function(message) { if (message) calls.push(['error', message]); };
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'GET' && path === '/api/inference/profiles/qwen-edit') {
+                                return {
+                                    id: 'qwen-edit',
+                                    display_name: 'Qwen Edit',
+                                    engine: 'vllm',
+                                    engine_launcher_id: 'vllm-main',
+                                    model: { artifact_id: 'qwen', snapshot: 'v1' },
+                                    common: {},
+                                    deployment: {},
+                                    advanced: {},
+                                    engine_config: {},
+                                    exposure: {},
+                                    instances: [{ port: 10000 }],
+                                    state: 'stopped',
+                                };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        await editInferenceProfile('qwen-edit');
+                        return {
+                            calls,
+                            activeInferenceTab,
+                            editId: document.getElementById('profile-edit-id').value,
+                            displayName: document.getElementById('profile-display-name').value,
+                            profiles: inferenceProfilesData.map(item => item.id),
+                        };
+                    })()
+                `, context);
+                assert(
+                    editProfileFocusResult.calls.some(call => call[0] === 'GET' && call[1] === '/api/inference/profiles/qwen-edit') &&
+                    editProfileFocusResult.calls.some(call => call[0] === 'scroll' && call[1] === 'start') &&
+                    editProfileFocusResult.calls.some(call => call[0] === 'focus' && call[1] === true) &&
+                    editProfileFocusResult.calls.some(call => call[0] === 'status' && call[1] === 'Editing qwen-edit.') &&
+                    editProfileFocusResult.activeInferenceTab === 'profiles' &&
+                    editProfileFocusResult.editId === 'qwen-edit' &&
+                    editProfileFocusResult.displayName === 'Qwen Edit' &&
+                    editProfileFocusResult.profiles.includes('qwen-edit'),
+                    'profile edit should fetch on cache miss, open the Profiles tab, and focus the editor'
+                );
+
                 const portPolicyRoundTrip = vm.runInContext(`
                     fillProfileForm({
                         id: 'qwen-replicas',
@@ -4123,6 +4182,7 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-common-json"' in index_html
     assert 'id="profile-engine-json"' in index_html
     assert 'id="profile-save-restart-btn"' in index_html
+    assert 'id="profile-editor-panel"' in index_html
     assert 'id="profile-editor-status"' in index_html
     assert "profile-editor-footer" in index_html
     assert "Save & Restart" in index_html
@@ -4152,6 +4212,7 @@ def test_static_inference_model_ui_assets_present():
     assert "markProfilePreviewStale" in app_js
     assert "markProfileEditorChanged" in app_js
     assert "renderProfileEditorStatus" in app_js
+    assert "focusProfileEditor" in app_js
     assert "resetProfilePreviewPanel" in app_js
     assert ".profile-editor-footer" in style_css
     assert ".profile-editor-status" in style_css

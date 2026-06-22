@@ -4228,11 +4228,36 @@ async function exportInferenceProfile(profileId) {
     }
 }
 
-function editInferenceProfile(profileId) {
-    const profile = inferenceProfilesData.find(item => item.id === profileId);
-    if (!profile) return;
-    fillProfileForm(profile);
-    setInferenceStatus(`Editing ${profile.id}.`);
+function focusProfileEditor() {
+    const panel = document.getElementById('profile-editor-panel') || document.querySelector('.profile-form-panel');
+    if (panel && typeof panel.scrollIntoView === 'function') {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    const input = document.getElementById('profile-display-name') || document.getElementById('profile-id');
+    if (!input || typeof input.focus !== 'function') return;
+    try {
+        input.focus({ preventScroll: true });
+    } catch (e) {
+        input.focus();
+    }
+}
+
+async function editInferenceProfile(profileId) {
+    setInferenceError('');
+    if (activeInferenceTab !== 'profiles') setInferenceTab('profiles');
+    try {
+        let profile = profileById(profileId);
+        if (!profile) {
+            profile = await api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}`));
+            patchInferenceProfile(profile);
+        }
+        if (!profile || !profile.id) throw new Error(`Profile ${profileId} was not found.`);
+        fillProfileForm(profile);
+        focusProfileEditor();
+        setInferenceStatus(`Editing ${profile.id}.`);
+    } catch (e) {
+        setInferenceError(`Unable to edit profile ${profileId}: ${e.message}`);
+    }
 }
 
 async function deleteInferenceProfile(profileId, label) {
