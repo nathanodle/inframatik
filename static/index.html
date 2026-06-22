@@ -534,16 +534,24 @@
                     </div>
                     <div class="model-form-grid">
                         <div class="form-group">
-                            <label>Port</label>
-                            <input type="number" id="profile-port" placeholder="auto" min="1" max="65535" step="1" autocomplete="off">
+                            <label>Port Policy</label>
+                            <select id="profile-port-policy">
+                                <option value="auto">Auto</option>
+                                <option value="contiguous">Contiguous</option>
+                                <option value="explicit">Manual</option>
+                            </select>
                         </div>
+                        <div class="form-group">
+                            <label>Manual Ports</label>
+                            <input type="text" id="profile-ports" placeholder="allocated by inframatik" autocomplete="off" disabled>
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
                         <div class="form-group">
                             <label>GPU IDs</label>
                             <input type="text" id="profile-gpus" placeholder="0,1" autocomplete="off">
                             <div class="profile-gpu-hints" id="profile-gpu-hints"></div>
                         </div>
-                    </div>
-                    <div class="model-form-grid">
                         <div class="form-group">
                             <label>GPU Policy</label>
                             <select id="profile-gpu-policy">
@@ -553,6 +561,8 @@
                                 <option value="explicit">Explicit</option>
                             </select>
                         </div>
+                    </div>
+                    <div class="model-form-grid">
                         <div class="form-group">
                             <label>Claim</label>
                             <select id="profile-gpu-claim">

@@ -361,6 +361,12 @@ document.addEventListener('change', (e) => {
         renderProfileSelects();
         renderProfileEngineFields();
     }
+    if (e.target && e.target.id === 'profile-port-policy') {
+        syncProfilePortPolicyFields();
+    }
+    if (e.target && e.target.id === 'profile-deployment-mode') {
+        syncProfileDeploymentPortDefaults();
+    }
     if (isProfileEditorEvent(e)) {
         markProfilePreviewStale();
     }
@@ -2109,6 +2115,51 @@ function parseProfileGpuIds() {
     return raw.split(',').map(part => part.trim()).filter(Boolean).map(part => Number(part)).filter(Number.isInteger);
 }
 
+function parseProfilePorts() {
+    const raw = modelOptionalValue('profile-ports') || modelOptionalValue('profile-port');
+    if (!raw) return [];
+    return raw.split(/[,\s]+/).map(part => part.trim()).filter(Boolean).map(part => {
+        const value = Number(part);
+        if (!Number.isInteger(value) || value < 1 || value > 65535) {
+            throw new Error('Manual ports must be integers between 1 and 65535.');
+        }
+        return value;
+    });
+}
+
+function buildProfilePortPolicy(deploymentMode, selectedMode, ports) {
+    const mode = selectedMode || (deploymentMode === 'replicated' ? 'contiguous' : 'auto');
+    if (mode === 'explicit' || ports.length) {
+        if (!ports.length) throw new Error('Manual port policy requires at least one port.');
+        return { mode: 'explicit', ports };
+    }
+    if (mode === 'contiguous') return { mode: 'contiguous' };
+    return { mode: 'auto' };
+}
+
+function syncProfilePortPolicyFields() {
+    const policyEl = document.getElementById('profile-port-policy');
+    const portsEl = document.getElementById('profile-ports');
+    if (!policyEl || !portsEl) return;
+    const manual = policyEl.value === 'explicit';
+    portsEl.disabled = !manual;
+    portsEl.placeholder = manual ? '10000,10001' : 'allocated by inframatik';
+    if (!manual) portsEl.value = '';
+}
+
+function syncProfileDeploymentPortDefaults() {
+    const deploymentEl = document.getElementById('profile-deployment-mode');
+    const policyEl = document.getElementById('profile-port-policy');
+    const portsEl = document.getElementById('profile-ports');
+    if (!deploymentEl || !policyEl || !portsEl) return;
+    if (deploymentEl.value === 'replicated' && policyEl.value === 'auto' && !portsEl.value.trim()) {
+        policyEl.value = 'contiguous';
+    } else if (deploymentEl.value === 'single' && policyEl.value === 'contiguous' && !portsEl.value.trim()) {
+        policyEl.value = 'auto';
+    }
+    syncProfilePortPolicyFields();
+}
+
 function profileTextAreaLines(id) {
     const el = document.getElementById(id);
     if (!el) return [];
@@ -2361,7 +2412,8 @@ function buildProfileDraft() {
     const model = parseProfileModelValue(document.getElementById('profile-model').value);
     const deploymentMode = document.getElementById('profile-deployment-mode').value || 'single';
     const replicas = Number(document.getElementById('profile-replicas').value || 1);
-    const port = Number(document.getElementById('profile-port').value || 0);
+    const portPolicyMode = document.getElementById('profile-port-policy').value || '';
+    const ports = parseProfilePorts();
     const gpuIds = parseProfileGpuIds();
     const common = {
         ...profileJsonValue('profile-common-json', 'Common JSON'),
@@ -2382,9 +2434,7 @@ function buildProfileDraft() {
             claim_mode: document.getElementById('profile-gpu-claim').value || 'exclusive',
             gpu_ids: gpuIds,
         },
-        port_policy: port
-            ? { mode: 'explicit', ports: [port] }
-            : { mode: deploymentMode === 'replicated' ? 'contiguous' : 'auto' },
+        port_policy: buildProfilePortPolicy(deploymentMode, portPolicyMode, ports),
     };
     const exposure = {
         mode: document.getElementById('profile-exposure-mode').value || 'local',
@@ -2417,7 +2467,7 @@ function resetProfileForm() {
         'profile-max-batch-tokens', 'profile-max-prefill-tokens', 'profile-max-queued-requests', 'profile-startup-grace',
         'profile-reasoning-parser', 'profile-tool-call-parser', 'profile-chat-template',
         'profile-speculative-model', 'profile-speculative-tokens', 'profile-log-level',
-        'profile-port', 'profile-gpus', 'profile-hostname',
+        'profile-port', 'profile-ports', 'profile-gpus', 'profile-hostname',
         'profile-vllm-load-format', 'profile-vllm-all2all-backend', 'profile-vllm-expert-placement',
         'profile-vllm-api-server-count', 'profile-vllm-dp-local-size', 'profile-vllm-dp-start-rank',
         'profile-vllm-dp-address', 'profile-vllm-dp-rpc-port', 'profile-vllm-dp-backend',
@@ -2458,6 +2508,8 @@ function resetProfileForm() {
     if (replicasEl) replicasEl.value = '1';
     const deploymentEl = document.getElementById('profile-deployment-mode');
     if (deploymentEl) deploymentEl.value = 'single';
+    const portPolicyEl = document.getElementById('profile-port-policy');
+    if (portPolicyEl) portPolicyEl.value = 'auto';
     const gpuPolicyEl = document.getElementById('profile-gpu-policy');
     if (gpuPolicyEl) gpuPolicyEl.value = 'profile';
     const claimEl = document.getElementById('profile-gpu-claim');
@@ -2469,6 +2521,7 @@ function resetProfileForm() {
     setProfileEditorSection('basics');
     clearProfileEditorIssueBadges();
     syncProfileSaveRestartButton(null);
+    syncProfilePortPolicyFields();
     resetProfilePreviewPanel();
 }
 
@@ -2526,8 +2579,16 @@ function fillProfileForm(profile) {
     setProfileChecked('profile-trust-remote-code', common.trust_remote_code);
     setProfileChecked('profile-prefix-caching', common.enable_prefix_caching);
     setProfileChecked('profile-auto-tool-choice', common.enable_auto_tool_choice);
-    document.getElementById('profile-port').value = profile.instances && profile.instances[0] ? profile.instances[0].port || '' : '';
     const deployment = profile.deployment || {};
+    const portPolicy = deployment.port_policy || {};
+    const commonPorts = Array.isArray(common.ports) ? common.ports : common.port ? [common.port] : [];
+    const explicitPorts = Array.isArray(portPolicy.ports) ? portPolicy.ports : commonPorts;
+    const portPolicyMode = portPolicy.mode === 'auto' && portPolicy.prefer_contiguous
+        ? 'contiguous'
+        : portPolicy.mode || (deployment.mode === 'replicated' ? 'contiguous' : 'auto');
+    setProfileValue('profile-port-policy', explicitPorts.length ? 'explicit' : portPolicyMode);
+    setProfileValue('profile-ports', explicitPorts.join(','));
+    syncProfilePortPolicyFields();
     const gpuPolicy = deployment.gpu_policy || {};
     document.getElementById('profile-gpus').value = (gpuPolicy.gpu_ids || common.gpu_ids || []).join(',');
     document.getElementById('profile-deployment-mode').value = deployment.mode || 'single';

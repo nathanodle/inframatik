@@ -1638,6 +1638,64 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile editor should show Save & Restart while editing a running profile'
                 );
 
+                const portPolicyRoundTrip = vm.runInContext(`
+                    fillProfileForm({
+                        id: 'qwen-replicas',
+                        display_name: 'Qwen Replicas',
+                        engine: 'vllm',
+                        engine_launcher_id: 'vllm-main',
+                        model: { artifact_id: 'qwen', snapshot: 'v1' },
+                        common: {},
+                        deployment: {
+                            mode: 'replicated',
+                            replicas: 2,
+                            port_policy: { mode: 'contiguous' },
+                            gpu_policy: { mode: 'one_per_instance', gpu_ids: [0, 1] },
+                        },
+                        advanced: {},
+                        engine_config: {},
+                        exposure: {},
+                        instances: [{ port: 10000 }, { port: 10001 }],
+                        state: 'stopped',
+                    });
+                    const draft = buildProfileDraft();
+                    ({
+                        policyValue: document.getElementById('profile-port-policy').value,
+                        portsValue: document.getElementById('profile-ports').value,
+                        portsDisabled: document.getElementById('profile-ports').disabled,
+                        portPolicy: draft.deployment.port_policy,
+                    });
+                `, context);
+                assert(
+                    portPolicyRoundTrip.policyValue === 'contiguous' &&
+                    portPolicyRoundTrip.portsValue === '' &&
+                    portPolicyRoundTrip.portsDisabled === true &&
+                    portPolicyRoundTrip.portPolicy.mode === 'contiguous' &&
+                    !('ports' in portPolicyRoundTrip.portPolicy),
+                    'editing a replicated contiguous profile should not rewrite allocated ports as a one-port explicit policy'
+                );
+
+                const manualPortDraft = vm.runInContext(`
+                    resetProfileForm();
+                    document.getElementById('profile-id').value = 'qwen-manual';
+                    document.getElementById('profile-engine').value = 'vllm';
+                    document.getElementById('profile-launcher').value = 'vllm-main';
+                    document.getElementById('profile-model').value = 'qwen@v1';
+                    document.getElementById('profile-deployment-mode').value = 'replicated';
+                    document.getElementById('profile-replicas').value = '2';
+                    document.getElementById('profile-port-policy').value = 'explicit';
+                    syncProfilePortPolicyFields();
+                    document.getElementById('profile-ports').value = '10020, 10021';
+                    buildProfileDraft().deployment.port_policy;
+                `, context);
+                assert(
+                    manualPortDraft.mode === 'explicit' &&
+                    manualPortDraft.ports.length === 2 &&
+                    manualPortDraft.ports[0] === 10020 &&
+                    manualPortDraft.ports[1] === 10021,
+                    'manual port policy should preserve explicit multi-instance ports'
+                );
+
                 const saveRestartCalls = await vm.runInContext(`
                     (async () => {
                         const calls = [];
@@ -2911,6 +2969,8 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-id"' in index_html
     assert 'id="profile-launcher"' in index_html
     assert 'id="profile-model"' in index_html
+    assert 'id="profile-port-policy"' in index_html
+    assert 'id="profile-ports"' in index_html
     assert 'id="profile-common-json"' in index_html
     assert 'id="profile-engine-json"' in index_html
     assert 'id="profile-save-restart-btn"' in index_html
@@ -3043,6 +3103,9 @@ def test_static_inference_model_ui_assets_present():
     assert "removeModelArtifactLocal" in app_js
     assert "patchModelVerification" in app_js
     assert "profileJsonValue" in app_js
+    assert "parseProfilePorts" in app_js
+    assert "buildProfilePortPolicy" in app_js
+    assert "syncProfilePortPolicyFields" in app_js
     assert "renderInferenceGpuHints" in app_js
     assert "profileConfigChips" in app_js
     assert "structuredCommonConfig" in app_js
