@@ -1555,6 +1555,8 @@ def test_app_js_cloudflare_section_gating_by_role():
                     cleanupHtml.includes('Generate Client') &&
                     cleanupHtml.includes('profile-cf-delete-owned-qwen-cleanup') &&
                     cleanupHtml.includes('Delete inframatik-owned clients if unreferenced') &&
+                    cleanupHtml.includes('Removes the route, DNS record, Access app, and policy from Cloudflare') &&
+                    cleanupHtml.includes('Cleanup failures stay visible here for retry') &&
                     cleanupHtml.includes('dns_record') &&
                     cleanupHtml.includes('qwen.example.com') &&
                     cleanupHtml.includes('retryInferenceCleanup') &&
@@ -1604,6 +1606,9 @@ def test_app_js_cloudflare_section_gating_by_role():
                 `, context);
                 assert(
                     removeCloudflareCalls.calls.filter(call => call[0] === 'confirm').length === 1 &&
+                    removeCloudflareCalls.calls.some(call => call[0] === 'confirm' && String(call[1]).includes('tunnel route, DNS record, Access app, and Access policy')) &&
+                    removeCloudflareCalls.calls.some(call => call[0] === 'confirm' && String(call[1]).includes('service-token clients will also be deleted')) &&
+                    removeCloudflareCalls.calls.some(call => call[0] === 'confirm' && String(call[1]).includes('retry records in the Connect view')) &&
                     removeCloudflareCalls.calls.some(call => call[0] === 'DELETE' && call[1].endsWith('delete_owned_tokens=true')) &&
                     !removeCloudflareCalls.calls.some(call => call[0] === 'refreshProfiles') &&
                     removeCloudflareCalls.calls.some(call => call[0] === 'loadConnect' && call[1] === 'qwen-cleanup') &&
@@ -3283,6 +3288,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-token-row" in style_css
     assert ".profile-token-guidance" in style_css
     assert ".profile-cf-removal-option" in style_css
+    assert ".profile-cf-removal-note" in style_css
 
 
 def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():

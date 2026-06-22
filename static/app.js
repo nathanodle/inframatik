@@ -4593,6 +4593,11 @@ function renderProfileConnect(profileId, data, secrets = {}) {
                     ` : ''}
                     ${cfResourcesConfigured ? `<button class="btn danger" onclick="removeProfileCloudflare(${profileIdArg})">Remove Endpoint</button>` : ''}
                 </div>
+                ${cfResourcesConfigured ? `
+                    <div class="profile-cf-removal-note">
+                        Removes the route, DNS record, Access app, and policy from Cloudflare. Cleanup failures stay visible here for retry.
+                    </div>
+                ` : ''}
                 <div class="model-job-error" id="profile-cf-hostname-error-${esc(profileId)}"></div>
             </section>
             <section>
@@ -4666,9 +4671,17 @@ async function provisionProfileCloudflare(profileId) {
 }
 
 async function removeProfileCloudflare(profileId) {
-    if (!confirm('Remove Cloudflare exposure for this profile?')) return;
     const deleteOwnedEl = document.getElementById(`profile-cf-delete-owned-${profileId}`);
     const deleteOwned = Boolean(deleteOwnedEl && deleteOwnedEl.checked);
+    const confirmLines = [
+        'Remove Cloudflare exposure for this profile?',
+        'This removes the tunnel route, DNS record, Access app, and Access policy from Cloudflare.',
+        deleteOwned
+            ? 'Unreferenced inframatik-owned Cloudflare service-token clients will also be deleted.'
+            : 'Cloudflare service-token clients are detached from this profile but not deleted.',
+        'If Cloudflare cleanup fails, inframatik keeps retry records in the Connect view.',
+    ];
+    if (!confirm(confirmLines.join('\n\n'))) return;
     try {
         const data = await api('DELETE', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/exposure?delete_owned_tokens=${deleteOwned ? 'true' : 'false'}`));
         patchInferenceProfile(data.profile);
