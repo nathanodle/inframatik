@@ -1128,6 +1128,88 @@ body {
     overflow-wrap: anywhere;
 }
 
+.launcher-validation-panel {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.launcher-validation-panel.valid {
+    border-color: rgba(16, 185, 129, 0.24);
+    background: var(--green-glow);
+}
+
+.launcher-validation-panel.failed {
+    border-color: rgba(239, 68, 68, 0.34);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.launcher-validation-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.launcher-validation-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 90px;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.launcher-validation-grid div {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.12);
+    padding: 8px 9px;
+}
+
+.launcher-validation-grid span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.launcher-validation-grid code {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.launcher-validation-errors {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 9px;
+    color: #fecaca;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.launcher-validation-output {
+    max-height: 220px;
+    margin-top: 10px;
+    overflow: auto;
+    white-space: pre-wrap;
+    color: #fee2e2;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+}
+
 .profile-layout {
     display: grid;
     grid-template-columns: minmax(380px, 0.92fr) minmax(0, 1.35fr);
@@ -2626,6 +2708,7 @@ body {
 
     .connect-action-grid,
     .connect-facts,
+    .launcher-validation-grid,
     .profile-test-grid {
         grid-template-columns: 1fr;
     }

@@ -3508,19 +3508,51 @@ function resetLauncherFormAndEnableId() {
 
 async function validateLauncher(launcherId) {
     const resultEl = document.getElementById(`launcher-validation-${launcherId}`);
-    if (resultEl) resultEl.textContent = 'Validating...';
+    if (resultEl) resultEl.innerHTML = '<div class="launcher-validation-panel">Checking executable and runtime...</div>';
     try {
-        const result = await api('POST', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}/validate`));
-        if (resultEl) {
-            resultEl.style.color = result.valid ? 'var(--green)' : 'var(--red)';
-            resultEl.textContent = result.valid ? 'Executable is valid.' : result.errors.join('; ');
-        }
+        const result = await api('POST', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}/validate?runtime=true`));
+        if (resultEl) resultEl.innerHTML = renderLauncherValidation(result);
     } catch (e) {
         if (resultEl) {
-            resultEl.style.color = 'var(--red)';
-            resultEl.textContent = e.message;
+            resultEl.innerHTML = `<div class="launcher-validation-panel failed"><div class="model-job-error">${esc(e.message)}</div></div>`;
         }
     }
+}
+
+function launcherValidationBadge(label, ok) {
+    return `<span class="model-badge ${ok ? 'green' : 'red'}">${esc(label)}</span>`;
+}
+
+function renderLauncherValidation(result) {
+    const runtime = result.runtime || {};
+    const executable = result.executable || {};
+    const workingDir = result.working_dir || null;
+    const errors = result.errors || [];
+    const command = (runtime.command_preview || []).join(' ');
+    const runtimeChecked = runtime.checked === true;
+    const runtimeOk = runtime.valid === true;
+    return `
+        <div class="launcher-validation-panel ${result.valid ? 'valid' : 'failed'}">
+            <div class="launcher-validation-head">
+                <div>
+                    <div class="launcher-card-title">Validation</div>
+                    <div class="launcher-card-meta">${runtimeChecked ? `runtime ${runtime.elapsed_ms || 0}ms` : 'path only'}</div>
+                </div>
+                <div class="connect-status-row">
+                    ${launcherValidationBadge('path', Boolean(executable.exists && executable.is_file && executable.executable))}
+                    ${runtimeChecked ? launcherValidationBadge('runtime', runtimeOk) : ''}
+                </div>
+            </div>
+            <div class="launcher-validation-grid">
+                <div><span>Executable</span><code>${esc(executable.path || '--')}</code></div>
+                <div><span>Working Dir</span><code>${esc(workingDir ? workingDir.path : 'default')}</code></div>
+                <div><span>Exit Code</span><code>${esc(runtimeChecked ? (runtime.code ?? 'timeout') : '--')}</code></div>
+            </div>
+            ${command ? `<div class="launcher-command-preview">${esc(command)}</div>` : ''}
+            ${errors.length ? `<div class="launcher-validation-errors">${errors.map(error => `<div>${esc(error)}</div>`).join('')}</div>` : ''}
+            ${runtime.output ? `<pre class="launcher-validation-output">${esc(runtime.output)}</pre>` : ''}
+        </div>
+    `;
 }
 
 async function deleteLauncher(launcherId, displayName) {

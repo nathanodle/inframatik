@@ -439,8 +439,10 @@ async def api_delete_inference_launcher(launcher_id: str, force_stopped_referenc
 
 
 @inference_router.post("/api/inference/launchers/{launcher_id}/validate")
-async def api_validate_inference_launcher(launcher_id: str):
+async def api_validate_inference_launcher(launcher_id: str, runtime: bool = True):
     try:
+        if runtime:
+            return await inference_launchers.validate_launcher_runtime(launcher_id)
         return inference_launchers.validate_launcher_path(launcher_id)
     except inference_launchers.LauncherError as e:
         _raise_http_error(e)

@@ -118,6 +118,30 @@ def test_launcher_validation_reports_missing_nonexec_and_valid(tmp_path: Path):
         assert result["executable"]["executable"] is True
 
 
+def test_launcher_runtime_validation_reports_probe_failure(tmp_path: Path):
+    with _temp_launchers(tmp_path):
+        exe = tmp_path / "vllm"
+        exe.write_text("#!/bin/sh\necho 'HF_TOKEN=secret'\necho 'ImportError: libcudart.so.12' >&2\nexit 7\n")
+        exe.chmod(exe.stat().st_mode | 0o111)
+        inference_launchers.create_launcher(
+            launcher_id="vllm-main",
+            display_name="vllm",
+            engine="vllm",
+            executable=str(exe),
+            base_args=["serve"],
+        )
+
+        result = _run(inference_launchers.validate_launcher_runtime("vllm-main", timeout=2))
+
+        assert result["valid"] is False
+        assert result["runtime"]["checked"] is True
+        assert result["runtime"]["code"] == 7
+        assert result["runtime"]["command_preview"] == [str(exe), "serve", "--help"]
+        assert "Runtime probe exited with code 7" in result["errors"]
+        assert "libcudart.so.12" in result["runtime"]["output"]
+        assert "HF_TOKEN=<redacted>" in result["runtime"]["output"]
+
+
 def test_launcher_update_and_delete_reference_checks(tmp_path: Path):
     with _temp_launchers(tmp_path) as config_dir:
         exe = tmp_path / "llama-server"
@@ -206,6 +230,7 @@ def test_launcher_http_api_create_validate_update_delete(tmp_path: Path):
                     validated = await client.post("/api/inference/launchers/sglang-python/validate")
                     assert validated.status_code == 200
                     assert validated.json()["valid"] is True
+                    assert validated.json()["runtime"]["checked"] is True
 
                     updated = await client.put(
                         "/api/inference/launchers/sglang-python",

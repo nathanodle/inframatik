@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -18,6 +19,10 @@ ENGINE_FAMILIES = {"llama.cpp", "vllm", "sglang"}
 _ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SECRET_KEY_RE = re.compile(r"(secret|token|password|passwd|api[_-]?key|credential|auth|bearer)", re.IGNORECASE)
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:secret|token|password|passwd|api[_-]?key|credential|auth|bearer)[A-Za-z0-9_]*)=([^\s]+)"
+)
+RUNTIME_PROBE_TIMEOUT_SECONDS = 12
 _lock = threading.RLock()
 
 
@@ -320,6 +325,90 @@ def validate_launcher_path(launcher_id: str) -> dict:
         "executable": executable_info,
         "working_dir": working_dir_info,
     }
+
+
+def _runtime_probe_argv(launcher: dict) -> list[str]:
+    argv = [launcher["executable"], *(launcher.get("base_args") or [])]
+    if "--help" not in argv and "-h" not in argv:
+        argv.append("--help")
+    return argv
+
+
+def _redact_argv(argv: list[str]) -> list[str]:
+    redacted = []
+    hide_next = False
+    for token in argv:
+        text = str(token)
+        if hide_next:
+            redacted.append("<redacted>")
+            hide_next = False
+            continue
+        is_secret_assignment = _SECRET_KEY_RE.search(text) and "=" in text
+        redacted.append("<redacted>" if is_secret_assignment else text)
+        if _SECRET_KEY_RE.search(text) and not is_secret_assignment:
+            hide_next = True
+    return redacted
+
+
+def _redact_output(text: str) -> str:
+    return _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", text or "")
+
+
+async def validate_launcher_runtime(launcher_id: str, timeout: float = RUNTIME_PROBE_TIMEOUT_SECONDS) -> dict:
+    launcher = get_launcher(launcher_id, include_secret_env=True)
+    path_result = validate_launcher_path(launcher_id)
+    result = dict(path_result)
+    errors = list(result.get("errors") or [])
+    argv = _runtime_probe_argv(launcher)
+    runtime = {
+        "checked": False,
+        "valid": None,
+        "command_preview": _redact_argv(argv),
+        "code": None,
+        "timed_out": False,
+        "elapsed_ms": None,
+        "output": "",
+    }
+    result["runtime"] = runtime
+    if not path_result.get("valid"):
+        runtime["output"] = "Runtime probe skipped because launcher path validation failed."
+        result["valid"] = False
+        return result
+
+    timeout = max(1.0, float(timeout or RUNTIME_PROBE_TIMEOUT_SECONDS))
+    env = dict(os.environ)
+    env.update(launcher.get("env") or {})
+    cwd = launcher.get("working_dir") or str(Path.home())
+    started = time.monotonic()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd,
+            env=env,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            stdout, _ = await proc.communicate()
+            runtime["timed_out"] = True
+            errors.append(f"Runtime probe timed out after {timeout:g}s")
+        runtime["code"] = proc.returncode
+        output = stdout.decode(errors="replace").strip()
+        runtime["output"] = _redact_output(output[-8000:])
+    except OSError as e:
+        runtime["output"] = str(e)
+        errors.append(f"Runtime probe could not start: {e}")
+    runtime["checked"] = True
+    runtime["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+    if runtime["code"] not in (0, None) and not runtime["timed_out"]:
+        errors.append(f"Runtime probe exited with code {runtime['code']}")
+    runtime["valid"] = not errors
+    result["errors"] = errors
+    result["valid"] = not errors
+    return result
 
 
 def _load_profile_refs(launcher_id: str) -> list[dict]:

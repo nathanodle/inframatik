@@ -387,14 +387,15 @@ Start behavior:
 
 1. Verify model artifact snapshot exists locally.
 2. Verify the configured engine launcher path exists and is executable on the target node.
-3. Verify resolved ports are still free or already owned by this profile's units.
-4. Start each resolved unit.
-5. Wait for each unit to reach systemd active state and TCP readiness within the profile startup grace period.
-6. Treat `/v1/models` and model-name checks as health refinement, not as hard start gates for MVP.
-7. If every instance reaches systemd active plus TCP readiness, return success with per-instance results.
-8. Instances may continue from `starting` to `healthy` as API/model checks become available.
-9. If any instance fails or misses TCP readiness before grace expires, stop every instance that was started by this operation.
-10. Return failure with per-instance results, rollback actions, last failure reason, and log pointers.
+3. When explicitly requested from the launcher UI or validation endpoint, run a bounded runtime smoke probe using the launcher executable, base args, working directory, launcher env, and `--help`. The probe must redact secret-looking argv/output and report exit code, timeout, command preview, and recent output. Profile preview remains path-only to keep form edits fast and side-effect free.
+4. Verify resolved ports are still free or already owned by this profile's units.
+5. Start each resolved unit.
+6. Wait for each unit to reach systemd active state and TCP readiness within the profile startup grace period.
+7. Treat `/v1/models` and model-name checks as health refinement, not as hard start gates for MVP.
+8. If every instance reaches systemd active plus TCP readiness, return success with per-instance results.
+9. Instances may continue from `starting` to `healthy` as API/model checks become available.
+10. If any instance fails or misses TCP readiness before grace expires, stop every instance that was started by this operation.
+11. Return failure with per-instance results, rollback actions, last failure reason, and log pointers.
 
 Restart behavior:
 
@@ -943,6 +944,8 @@ Example rendered commands:
 ```
 
 The launcher UI should be deliberately small: engine type, display name, executable path, optional base args, optional working directory, and optional env vars. This keeps engine ownership with the user while still giving inframatik enough structure to render safe systemd units.
+
+The launcher Validate action should be stronger than file validation. It should show path facts and a runtime smoke probe so a Python virtualenv or engine binary that imports incorrectly, lacks CUDA libraries, or has missing package dependencies fails before a profile start attempt. This is diagnostic only; it must not install packages, mutate the launcher, or scan for alternate engine installs.
 
 Launcher deletion:
 
@@ -1787,7 +1790,7 @@ Local-node endpoints:
 | POST | `/api/inference/launchers` | Create a launcher with user-provided executable path |
 | PUT | `/api/inference/launchers/{id}` | Update launcher path, base args, working directory, or env |
 | DELETE | `/api/inference/launchers/{id}` | Delete launcher metadata when reference checks pass |
-| POST | `/api/inference/launchers/{id}/validate` | Check path existence and executable bit on the target node |
+| POST | `/api/inference/launchers/{id}/validate` | Validate launcher path and, by default, run a bounded runtime smoke probe. Query: `runtime=false` for path-only. |
 | GET | `/api/inference/cleanup` | List pending external cleanup records |
 | POST | `/api/inference/cleanup/{id}/retry` | Retry Cloudflare cleanup record |
 | DELETE | `/api/inference/cleanup/{id}` | Forget cleanup record without calling Cloudflare |

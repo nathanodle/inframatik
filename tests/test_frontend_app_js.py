@@ -666,6 +666,8 @@ def test_static_inference_model_ui_assets_present():
     assert "submitModelHfDownload" in app_js
     assert "submitLauncherForm" in app_js
     assert "validateLauncher" in app_js
+    assert "validate?runtime=true" in app_js
+    assert "renderLauncherValidation" in app_js
     assert "cleanModelJobStaging" in app_js
     assert "force_stopped_references=true" in app_js
     assert "path.startsWith('/api/models')" in app_js
@@ -673,6 +675,8 @@ def test_static_inference_model_ui_assets_present():
     assert ".model-table-row" in style_css
     assert ".model-job-row" in style_css
     assert ".launcher-card" in style_css
+    assert ".launcher-validation-panel" in style_css
+    assert ".launcher-validation-output" in style_css
     assert ".profile-card" in style_css
     assert ".profile-detail-panel" in style_css
     assert ".profile-operation-panel" in style_css
