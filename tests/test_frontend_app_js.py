@@ -1175,13 +1175,19 @@ def test_app_js_cloudflare_section_gating_by_role():
                 const saveRestartCalls = await vm.runInContext(`
                     (async () => {
                         const calls = [];
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'jobs';
+                        inferenceProfilesData = [];
                         document.getElementById('profile-edit-id').value = 'qwen';
                         buildProfileDraft = function() {
                             return { engine_launcher_id: 'vllm-main', model: { artifact_id: 'qwen' } };
                         };
                         api = async function(method, path, body) {
                             calls.push([method, path, body && body.engine_launcher_id]);
-                            return { plan: { valid_for_save: true }, profile: { id: 'qwen' } };
+                            return {
+                                plan: { valid_for_save: true },
+                                profile: { id: 'qwen', display_name: 'Qwen Saved', state: 'running' },
+                            };
                         };
                         resetProfileForm = function() {
                             calls.push(['reset']);
@@ -1197,13 +1203,18 @@ def test_app_js_cloudflare_section_gating_by_role():
                             calls.push(['action', profileId, action]);
                         };
                         await saveInferenceProfile({ restart: true });
-                        return calls;
+                        return {
+                            calls,
+                            profile: inferenceProfilesData.find(item => item.id === 'qwen'),
+                        };
                     })()
                 `, context);
                 assert(
-                    saveRestartCalls.some(call => call[0] === 'PUT' && call[1] === '/api/inference/profiles/qwen') &&
-                    saveRestartCalls.some(call => call[0] === 'action' && call[1] === 'qwen' && call[2] === 'restart'),
-                    'Save & Restart should save the edited profile and then queue a restart operation'
+                    saveRestartCalls.calls.some(call => call[0] === 'PUT' && call[1] === '/api/inference/profiles/qwen') &&
+                    !saveRestartCalls.calls.some(call => call[0] === 'refresh') &&
+                    saveRestartCalls.calls.some(call => call[0] === 'action' && call[1] === 'qwen' && call[2] === 'restart') &&
+                    saveRestartCalls.profile.display_name === 'Qwen Saved',
+                    'Save & Restart should patch the saved profile locally and then queue a restart operation'
                 );
             })().catch((error) => {
                 console.error(error.stack || error.message);

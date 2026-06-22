@@ -2531,12 +2531,14 @@ async function saveInferenceProfile(options = {}) {
         const result = editId
             ? await api('PUT', modelNodePath(`/api/inference/profiles/${encodeURIComponent(editId)}`), draft)
             : await api('POST', modelNodePath('/api/inference/profiles'), draft);
-        setInferenceStatus(restartAfterSave ? `Updated profile ${editId}; queuing restart...` : editId ? `Updated profile ${editId}.` : 'Profile saved.');
+        const savedProfile = result.profile || null;
+        const savedProfileId = (savedProfile && savedProfile.id) || editId || draft.id;
+        setInferenceStatus(restartAfterSave ? `Updated profile ${savedProfileId}; queuing restart...` : editId ? `Updated profile ${savedProfileId}.` : 'Profile saved.');
+        patchInferenceProfile(savedProfile);
         resetProfileForm();
-        await refreshInferenceProfiles();
         renderProfilePreview(result.plan || {});
         if (restartAfterSave) {
-            await runProfileAction(editId, 'restart');
+            await runProfileAction(savedProfileId, 'restart');
         }
     } catch (e) {
         setInferenceError(e.message);
