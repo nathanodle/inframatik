@@ -2602,7 +2602,7 @@ function renderInferenceProfiles(profiles) {
                 <div class="profile-card-line">${esc(instanceText)}</div>
                 ${configChips.length ? `<div class="profile-config-chips">${configChips.map(chip => `<span>${esc(chip)}</span>`).join('')}</div>` : ''}
                 ${profile.restart_required ? '<div class="profile-warning">Restart required for saved changes.</div>' : ''}
-                ${renderProfileOperationPanel(op || failedOp, pendingAction)}
+                ${renderProfileOperationPanel(op || failedOp, pendingAction, { context: `profile-${profile.id}` })}
                 <div class="model-actions profile-actions">
                     <button type="button" class="btn" onclick="editInferenceProfile(${profileIdArg})">Edit</button>
                     <button type="button" class="btn" onclick="loadProfileDetails(${profileIdArg})">Details</button>
@@ -2699,22 +2699,32 @@ function renderOperationFacts(detail) {
     `;
 }
 
-function operationLogButton(operation, detail = {}) {
+function operationLogOutputId(operation, context = 'panel') {
+    if (!operation || !operation.id) return '';
+    const cleanContext = String(context || 'panel').replace(/[^a-zA-Z0-9_-]/g, '-');
+    const cleanId = String(operation.id || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+    return `profile-operation-log-output-${cleanContext}-${cleanId}`;
+}
+
+function operationLogButton(operation, detail = {}, options = {}) {
     if (!operation || !operation.profile_id) return '';
+    const targetId = options.logTargetId || operationLogOutputId(operation, options.context);
+    if (!targetId) return '';
     const profileIdArg = jsArg(operation.profile_id);
+    const targetIdArg = jsArg(targetId);
     const instanceIndex = operation.instance_index !== null && operation.instance_index !== undefined
         ? operation.instance_index
         : detail.instance_index;
     if (instanceIndex !== null && instanceIndex !== undefined) {
         const numericIndex = Number(instanceIndex);
         if (Number.isInteger(numericIndex)) {
-            return `<button class="btn" type="button" onclick="loadProfileLogs(${profileIdArg}, ${numericIndex})">Logs</button>`;
+            return `<button class="btn" type="button" onclick="loadOperationLogs(${profileIdArg}, ${numericIndex}, ${targetIdArg})">Logs</button>`;
         }
     }
-    return `<button class="btn" type="button" onclick="loadProfileLogs(${profileIdArg})">Logs</button>`;
+    return `<button class="btn" type="button" onclick="loadOperationLogs(${profileIdArg}, null, ${targetIdArg})">Logs</button>`;
 }
 
-function renderProfileOperationPanel(operation, pendingAction = '') {
+function renderProfileOperationPanel(operation, pendingAction = '', options = {}) {
     if (!operation) {
         if (!pendingAction) return '';
         return `
@@ -2738,7 +2748,8 @@ function renderProfileOperationPanel(operation, pendingAction = '') {
     const logs = failed ? operationFailureLogs(operation) : '';
     const panelClass = failed ? 'failed' : ACTIVE_INFERENCE_OPERATION_STATES.has(operation.state) ? 'active' : 'complete';
     const operationIdArg = jsArg(operation.id);
-    const logButton = operationLogButton(operation, detail);
+    const logTargetId = operationLogOutputId(operation, options.context);
+    const logButton = operationLogButton(operation, detail, { ...options, logTargetId });
     return `
         <div class="profile-operation-panel ${panelClass}">
             <div class="profile-operation-head">
@@ -2759,6 +2770,7 @@ function renderProfileOperationPanel(operation, pendingAction = '') {
                 <div class="profile-operation-error">${esc(message)}</div>
                 ${logs ? `<pre class="profile-log-view profile-diagnostic-log">${esc(logs)}</pre>` : ''}
             ` : ''}
+            ${logTargetId ? `<div class="profile-operation-log-output" id="${esc(logTargetId)}"></div>` : ''}
         </div>
     `;
 }
@@ -3379,24 +3391,51 @@ async function cancelInferenceOperation(operationId) {
     }
 }
 
+function profileLogRequest(profileId, instanceIndex = null) {
+    const label = instanceIndex === null ? 'profile' : `instance ${instanceIndex}`;
+    const path = instanceIndex === null
+        ? `/api/inference/profiles/${encodeURIComponent(profileId)}/logs?lines=120`
+        : `/api/inference/profiles/${encodeURIComponent(profileId)}/instances/${encodeURIComponent(instanceIndex)}/logs?lines=180`;
+    return { label, path };
+}
+
+function renderProfileLogOutput(label, logs) {
+    return `
+        <div class="connect-section-header compact">
+            <div class="launcher-card-title">${esc(label)} logs</div>
+        </div>
+        <pre class="profile-log-view">${esc(logs || 'No logs.')}</pre>
+    `;
+}
+
 async function loadProfileLogs(profileId, instanceIndex = null) {
     const detail = document.getElementById(`profile-detail-${profileId}`);
-    const label = instanceIndex === null ? 'profile' : `instance ${instanceIndex}`;
-    if (detail) setProfileOutput(profileId, `<div class="empty-state compact">Loading ${esc(label)} logs...</div>`);
+    const request = profileLogRequest(profileId, instanceIndex);
+    if (detail) setProfileOutput(profileId, `<div class="empty-state compact">Loading ${esc(request.label)} logs...</div>`);
     try {
-        const path = instanceIndex === null
-            ? `/api/inference/profiles/${encodeURIComponent(profileId)}/logs?lines=120`
-            : `/api/inference/profiles/${encodeURIComponent(profileId)}/instances/${encodeURIComponent(instanceIndex)}/logs?lines=180`;
-        const data = await api('GET', modelNodePath(path));
-        const html = `
-            <div class="connect-section-header compact">
-                <div class="launcher-card-title">${esc(label)} logs</div>
-            </div>
-            <pre class="profile-log-view">${esc(data.logs || 'No logs.')}</pre>
-        `;
+        const data = await api('GET', modelNodePath(request.path));
+        const html = renderProfileLogOutput(request.label, data.logs || '');
         if (detail) setProfileOutput(profileId, html);
     } catch (e) {
         if (detail) setProfileOutput(profileId, `<div class="model-job-error">${esc(e.message)}</div>`);
+    }
+}
+
+async function loadOperationLogs(profileId, instanceIndex = null, targetId = '') {
+    const target = targetId ? document.getElementById(targetId) : null;
+    const request = profileLogRequest(profileId, instanceIndex);
+    if (target) setHtmlIfChanged(target, `<div class="empty-state compact">Loading ${esc(request.label)} logs...</div>`);
+    try {
+        const data = await api('GET', modelNodePath(request.path));
+        const html = renderProfileLogOutput(request.label, data.logs || '');
+        if (target) {
+            setHtmlIfChanged(target, html);
+        } else {
+            await loadProfileLogs(profileId, instanceIndex);
+        }
+    } catch (e) {
+        if (target) setHtmlIfChanged(target, `<div class="model-job-error">${esc(e.message)}</div>`);
+        else setInferenceError(e.message);
     }
 }
 
@@ -3906,7 +3945,7 @@ function renderInferenceOperations(operations) {
                     </div>
                     <div class="model-job-sub">${progress}%</div>
                 </div>
-                ${renderProfileOperationPanel(op)}
+                ${renderProfileOperationPanel(op, '', { context: 'operations' })}
             </div>
         `;
     }).join(''));

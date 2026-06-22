@@ -1788,6 +1788,10 @@ body {
     overflow-wrap: anywhere;
 }
 
+.profile-operation-log-output:not(:empty) {
+    margin-top: 10px;
+}
+
 .profile-operation-facts {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

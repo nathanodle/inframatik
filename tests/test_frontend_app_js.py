@@ -355,8 +355,9 @@ def test_app_js_cloudflare_section_gating_by_role():
                     startupPanelHtml.includes('waiting') &&
                     startupPanelHtml.includes('Restarts') &&
                     startupPanelHtml.includes('42s / 10m') &&
-                    startupPanelHtml.includes('loadProfileLogs(&quot;qwen&quot;, 0)'),
-                    'active inference operation panel should show live startup readiness facts and targeted logs'
+                    startupPanelHtml.includes('loadOperationLogs(&quot;qwen&quot;, 0,') &&
+                    startupPanelHtml.includes('profile-operation-log-output-panel-op-start'),
+                    'active inference operation panel should show live startup readiness facts and inline targeted logs'
                 );
 
                 const startupOperationListHtml = vm.runInContext(`
@@ -408,8 +409,9 @@ def test_app_js_cloudflare_section_gating_by_role():
                 assert(
                     queuedOperationHtml.includes('cancelInferenceOperation') &&
                     queuedOperationHtml.includes('Cancel') &&
-                    queuedOperationHtml.includes('loadProfileLogs(&quot;qwen&quot;)'),
-                    'queued profile operations should render cancel and profile log actions'
+                    queuedOperationHtml.includes('loadOperationLogs(&quot;qwen&quot;, null,') &&
+                    queuedOperationHtml.includes('profile-operation-log-output-panel-op-cancel'),
+                    'queued profile operations should render cancel and inline profile log actions'
                 );
 
                 const queuedOperationsListHtml = vm.runInContext(`
@@ -427,6 +429,30 @@ def test_app_js_cloudflare_section_gating_by_role():
                     queuedOperationsListHtml.includes('cancelInferenceOperation') &&
                     queuedOperationsListHtml.includes('Cancel'),
                     'queued operations in the Jobs tab should render a cancel action'
+                );
+
+                const operationLogResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        const target = document.getElementById('operation-log-target');
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'GET' && path === '/api/inference/profiles/qwen/instances/0/logs?lines=180') {
+                                return { logs: 'server ready on :10000' };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        await loadOperationLogs('qwen', 0, 'operation-log-target');
+                        return { calls, html: target.innerHTML };
+                    })()
+                `, context);
+                assert(
+                    operationLogResult.calls.some(call => call[0] === 'GET' && call[1] === '/api/inference/profiles/qwen/instances/0/logs?lines=180') &&
+                    operationLogResult.html.includes('instance 0 logs') &&
+                    operationLogResult.html.includes('server ready on :10000'),
+                    'operation log action should load instance logs into the clicked operation panel'
                 );
 
                 const cancelCalls = await vm.runInContext(`
@@ -1562,6 +1588,8 @@ def test_static_inference_model_ui_assets_present():
     assert "selectedInferenceNodeIds" in app_js
     assert "renderProfileOperationPanel" in app_js
     assert "operationLogButton" in app_js
+    assert "loadOperationLogs" in app_js
+    assert "profileLogRequest" in app_js
     assert "hydrateInferenceFailureDiagnostics" in app_js
     assert "hydrateVisibleInferenceFailures" in app_js
     assert "operationWithHydratedLogs" in app_js
@@ -1633,8 +1661,9 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-operation-actions" in style_css
     assert ".profile-operation-steps" in style_css
     assert ".profile-operation-facts" in style_css
+    assert ".profile-operation-log-output" in style_css
     assert ".inference-operation-context" in style_css
-    assert "renderProfileOperationPanel(op)" in app_js
+    assert "renderProfileOperationPanel(op, '', { context: 'operations' })" in app_js
     assert ".profile-instance-row" in style_css
     assert ".profile-test-panel" in style_css
     assert ".profile-config-chips" in style_css
