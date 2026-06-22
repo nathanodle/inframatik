@@ -1725,6 +1725,28 @@ body {
     gap: 6px;
 }
 
+.profile-preview-stale {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 12px;
+    padding: 9px 10px;
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    border-radius: var(--radius-sm);
+    background: rgba(245, 158, 11, 0.09);
+}
+
+.profile-preview-stale strong {
+    color: #fde68a;
+    font-size: 13px;
+}
+
+.profile-preview-stale span {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
 .profile-preview-facts,
 .profile-preview-resource-grid {
     display: grid;

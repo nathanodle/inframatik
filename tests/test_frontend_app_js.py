@@ -1216,6 +1216,47 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile preview should group blockers and warnings by editor section with jump actions'
                 );
 
+                const stalePreviewResult = vm.runInContext(`
+                    renderProfilePreview({
+                        valid_for_save: true,
+                        blockers: [],
+                        warnings: [],
+                        resolved_instances: [],
+                        port_plan: {},
+                        gpu_plan: {},
+                        command_preview: [],
+                        systemd_preview: { units: [] },
+                        cloudflare_plan: {},
+                    });
+                    const fresh = document.getElementById('profile-preview-panel').innerHTML;
+                    markProfilePreviewStale();
+                    const stale = document.getElementById('profile-preview-panel').innerHTML;
+                    renderProfilePreview({
+                        valid_for_save: true,
+                        blockers: [],
+                        warnings: [],
+                        resolved_instances: [],
+                        port_plan: { allocated: [10001], mode: 'auto' },
+                        gpu_plan: {},
+                        command_preview: [],
+                        systemd_preview: { units: [] },
+                        cloudflare_plan: {},
+                    });
+                    const freshAgain = document.getElementById('profile-preview-panel').innerHTML;
+                    resetProfilePreviewPanel();
+                    const reset = document.getElementById('profile-preview-panel').innerHTML;
+                    ({ fresh, stale, freshAgain, reset });
+                `, context);
+                assert(
+                    !stalePreviewResult.fresh.includes('Preview is stale') &&
+                    stalePreviewResult.stale.includes('Preview is stale') &&
+                    stalePreviewResult.stale.includes('Run Preview again') &&
+                    !stalePreviewResult.freshAgain.includes('Preview is stale') &&
+                    stalePreviewResult.freshAgain.includes('10001') &&
+                    stalePreviewResult.reset.includes('No preview yet.'),
+                    'profile preview should warn when stale and clear the warning on preview or reset'
+                );
+
                 const bundleHtml = vm.runInContext(`
                     renderClientBundle({
                         id: 'default',
@@ -2623,6 +2664,8 @@ def test_static_inference_model_ui_assets_present():
     assert "renderProfilePreviewIssues" in app_js
     assert "groupProfileIssues" in app_js
     assert "PROFILE_EDITOR_SECTION_LABELS" in app_js
+    assert "markProfilePreviewStale" in app_js
+    assert "resetProfilePreviewPanel" in app_js
     assert 'id="profile-gpu-hints"' in index_html
     assert 'id="profile-kv-cache-dtype"' in index_html
     assert 'id="profile-gpu-memory-utilization"' in index_html
@@ -2819,6 +2862,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-engine-details" in style_css
     assert ".form-check-grid" in style_css
     assert ".profile-preview-panel" in style_css
+    assert ".profile-preview-stale" in style_css
     assert ".profile-preview-issues" in style_css
     assert ".profile-preview-issue-group" in style_css
     assert ".profile-preview-issue-head" in style_css

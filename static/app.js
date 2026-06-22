@@ -95,6 +95,9 @@ let profileDetailCache = new Map();
 let profileDetailModes = new Map();
 let profileOutputCache = new Map();
 let operationLogOutputCache = new Map();
+let profilePreviewBodyHtml = '<div class="empty-state">No preview yet.</div>';
+let profilePreviewHasResult = false;
+let profilePreviewStale = false;
 let inferenceJobsTimer = null;
 let activeInferenceTab = 'profiles';
 let lastInferenceEventAt = null;
@@ -357,11 +360,17 @@ document.addEventListener('change', (e) => {
         renderProfileSelects();
         renderProfileEngineFields();
     }
+    if (isProfileEditorEvent(e)) {
+        markProfilePreviewStale();
+    }
 });
 
 document.addEventListener('input', (e) => {
     if (e.target && e.target.id === 'profile-gpus') {
         renderInferenceGpuHints();
+    }
+    if (isProfileEditorEvent(e)) {
+        markProfilePreviewStale();
     }
 });
 
@@ -1539,6 +1548,7 @@ const PROFILE_EDITOR_SECTION_LABELS = {
     engine: 'Engine',
     advanced: 'Advanced',
 };
+const PROFILE_PREVIEW_EMPTY_HTML = '<div class="empty-state">No preview yet.</div>';
 
 function modelNodePath(path) {
     return nodePathFor(selectedNodeId, path);
@@ -1582,6 +1592,35 @@ function profileIssueSection(field) {
         return 'runtime';
     }
     return 'basics';
+}
+
+function isProfileEditorEvent(e) {
+    const target = e && e.target;
+    return Boolean(target && typeof target.closest === 'function' && target.closest('.profile-form-panel'));
+}
+
+function renderProfilePreviewPanel() {
+    const staleBanner = profilePreviewHasResult && profilePreviewStale
+        ? `<div class="profile-preview-stale"><strong>Preview is stale</strong><span>Run Preview again before trusting ports, GPU placement, commands, or Cloudflare changes.</span></div>`
+        : '';
+    setElementHtml('profile-preview-panel', `${staleBanner}${profilePreviewBodyHtml}`);
+}
+
+function setProfilePreviewBody(html, options = {}) {
+    profilePreviewBodyHtml = html || PROFILE_PREVIEW_EMPTY_HTML;
+    profilePreviewHasResult = Boolean(options.hasResult);
+    profilePreviewStale = Boolean(options.stale);
+    renderProfilePreviewPanel();
+}
+
+function resetProfilePreviewPanel() {
+    setProfilePreviewBody(PROFILE_PREVIEW_EMPTY_HTML, { hasResult: false, stale: false });
+}
+
+function markProfilePreviewStale() {
+    if (!profilePreviewHasResult || profilePreviewStale) return;
+    profilePreviewStale = true;
+    renderProfilePreviewPanel();
 }
 
 function clearProfileEditorIssueBadges() {
@@ -2428,7 +2467,7 @@ function resetProfileForm() {
     setProfileEditorSection('basics');
     clearProfileEditorIssueBadges();
     syncProfileSaveRestartButton(null);
-    setElementHtml('profile-preview-panel', '<div class="empty-state">No preview yet.</div>');
+    resetProfilePreviewPanel();
 }
 
 function profileCanSaveRestart(profile) {
@@ -2741,7 +2780,7 @@ function renderProfilePreview(plan) {
         .map(resource => resource.kind + (resource.hostname ? ` ${resource.hostname}` : ''))
         .join(' / ') || 'none';
     const restartFields = (restart.fields || []).join(', ') || '--';
-    setElementHtml('profile-preview-panel', `
+    setProfilePreviewBody(`
         <div class="profile-preview-title">
             Preview
             <span>
@@ -2772,7 +2811,7 @@ function renderProfilePreview(plan) {
         </div>
         ${renderSystemdPreview(plan)}
         ${renderCloudflarePreview(plan)}
-    `);
+    `, { hasResult: true, stale: false });
 }
 
 function renderProfileCard(profile) {
