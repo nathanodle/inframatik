@@ -77,6 +77,12 @@ def test_client_bundles_require_explicit_instance_for_replicas(tmp_path: Path):
         assert saved["bundle"]["id"] == "ci"
         listed = inference_connect.list_client_bundles("qwen")
         assert listed["bundles"][0]["id"] == "ci"
+        assert listed["default"]["requires_instance"] is True
+        assert [item["base_url"] for item in listed["instance_bundles"]] == [
+            "http://127.0.0.1:10000/v1",
+            "http://127.0.0.1:10001/v1",
+        ]
+        assert listed["instance_bundles"][1]["target"] == {"type": "instance", "instance_index": 1}
 
 
 def test_cloudflare_exposure_and_service_token_lifecycle(tmp_path: Path):

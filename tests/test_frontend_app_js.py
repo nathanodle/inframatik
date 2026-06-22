@@ -392,6 +392,44 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'client bundles should provide copy controls for endpoints, headers, one-time secrets, and examples'
                 );
 
+                const replicatedConnectHtml = vm.runInContext(`
+                    inferenceProfilesData = [{
+                        id: 'qwen-repl',
+                        display_name: 'Qwen Replicas',
+                        exposure: { mode: 'local' },
+                        cloudflare: {},
+                    }];
+                    renderProfileConnect('qwen-repl', {
+                        default: {
+                            id: 'default',
+                            requires_instance: true,
+                            message: 'Replicated profile requires explicit instance target',
+                        },
+                        instance_bundles: [{
+                            id: 'default',
+                            target: { type: 'instance', instance_index: 0 },
+                            exposure_mode: 'local',
+                            base_url: 'http://127.0.0.1:10000/v1',
+                            instance: { index: 0, gpu_ids: [0], unit: 'infra-llm-qwen@0.service', state: 'running' },
+                        }, {
+                            id: 'default',
+                            target: { type: 'instance', instance_index: 1 },
+                            exposure_mode: 'local',
+                            base_url: 'http://127.0.0.1:10001/v1',
+                            instance: { index: 1, gpu_ids: [1], unit: 'infra-llm-qwen@1.service', state: 'running' },
+                        }],
+                    });
+                    document.getElementById('profile-detail-qwen-repl').innerHTML;
+                `, context);
+                assert(
+                    replicatedConnectHtml.includes('Instance Endpoints') &&
+                    replicatedConnectHtml.includes('Instance 0') &&
+                    replicatedConnectHtml.includes('Instance 1') &&
+                    replicatedConnectHtml.includes('data-copy="http://127.0.0.1:10000/v1"') &&
+                    replicatedConnectHtml.includes('data-copy="http://127.0.0.1:10001/v1"'),
+                    'replicated Connect view should render copyable per-instance endpoint options'
+                );
+
                 const restartButtonDisplay = vm.runInContext(`
                     fillProfileForm({
                         id: 'qwen',
@@ -795,6 +833,7 @@ def test_static_inference_model_ui_assets_present():
     assert "loadProfileConnect" in app_js
     assert "copyButton" in app_js
     assert "data-copy" in app_js
+    assert "renderInstanceBundleOptions" in app_js
     assert "profile-cf-hostname-" in app_js
     assert "prompt('Cloudflare hostname')" not in app_js
     assert "setProfileDetail(profileId, html, 'connect')" in app_js
@@ -873,6 +912,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".connect-copy-row" in style_css
     assert ".copy-btn" in style_css
     assert ".client-example-card" in style_css
+    assert ".instance-bundle-row" in style_css
     assert ".profile-one-time-secret" in style_css
     assert ".profile-token-row" in style_css
 

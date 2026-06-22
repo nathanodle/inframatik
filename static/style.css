@@ -1902,6 +1902,32 @@ body {
     margin-bottom: 4px;
 }
 
+.instance-bundle-panel {
+    margin-top: 12px;
+}
+
+.instance-bundle-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.instance-bundle-row {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    padding: 10px;
+}
+
+.instance-bundle-main {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 7px;
+}
+
 .profile-token-list {
     display: flex;
     flex-direction: column;

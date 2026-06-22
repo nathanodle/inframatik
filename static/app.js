@@ -3295,11 +3295,51 @@ function renderClientBundle(bundle, secrets = {}) {
     `;
 }
 
+function renderInstanceBundleOptions(bundles) {
+    const items = Array.isArray(bundles) ? bundles : [];
+    if (!items.length) return '';
+    return `
+        <div class="profile-connect-panel instance-bundle-panel">
+            <div class="connect-section-header compact">
+                <div>
+                    <div class="launcher-card-title">Instance Endpoints</div>
+                    <div class="launcher-card-meta">Replicated profiles expose one local endpoint per resolved instance.</div>
+                </div>
+            </div>
+            <div class="instance-bundle-list">
+                ${items.map(bundle => {
+                    const instance = bundle.instance || {};
+                    const target = bundle.target || {};
+                    const index = instance.index ?? target.instance_index ?? '--';
+                    const gpuText = (instance.gpu_ids || []).length ? `GPU ${(instance.gpu_ids || []).join(',')}` : 'GPU none';
+                    const state = instance.state || 'planned';
+                    return `
+                        <div class="instance-bundle-row">
+                            <div class="instance-bundle-main">
+                                <div>
+                                    <div class="launcher-card-title">Instance ${esc(index)}</div>
+                                    <div class="launcher-card-meta">${esc(gpuText)} · ${esc(state)} · ${esc(instance.unit || '--')}</div>
+                                </div>
+                                ${connectBadge(bundle.exposure_mode || 'local')}
+                            </div>
+                            <div class="connect-copy-row">
+                                <code>${esc(bundle.base_url || '--')}</code>
+                                ${copyButton(bundle.base_url)}
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+}
+
 function renderProfileConnect(profileId, data, secrets = {}) {
     const profile = inferenceProfilesData.find(item => item.id === profileId) || {};
     const exposure = profile.exposure || {};
     const cloudflare = profile.cloudflare || {};
     const bundle = data.default || data.client_bundle || data || {};
+    const instanceBundles = Array.isArray(data.instance_bundles) ? data.instance_bundles : [];
     const tokens = (cloudflare.service_tokens || []);
     const activeTokens = tokens.filter(token => (token.state || 'active') === 'active');
     const hasEngineKey = Boolean((bundle.secret_state || {}).engine_api_key_configured);
@@ -3386,6 +3426,7 @@ function renderProfileConnect(profileId, data, secrets = {}) {
             </section>
         </div>
         ${renderClientBundle(bundle, secrets)}
+        ${renderInstanceBundleOptions(instanceBundles)}
         <div class="connect-section-header compact">
             <div class="launcher-card-title">Cloudflare Service Tokens</div>
         </div>

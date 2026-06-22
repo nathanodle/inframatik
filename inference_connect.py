@@ -445,6 +445,7 @@ def list_client_bundles(profile_id: str) -> dict:
     profile = _profile(profile_id)
     bundles = list(_bundle_registry(profile).values())
     bundles.sort(key=lambda item: item.get("name") or item.get("id") or "")
+    instance_bundles = _instance_bundle_options(profile_id, profile)
     try:
         default = render_client_bundle(profile_id, {})
     except InferenceConnectConflict as e:
@@ -458,7 +459,42 @@ def list_client_bundles(profile_id: str) -> dict:
         "profile_id": profile_id,
         "bundles": bundles,
         "default": default,
+        "instance_bundles": instance_bundles,
     }
+
+
+def _instance_bundle_options(profile_id: str, profile: dict) -> list[dict]:
+    instances = [item for item in profile.get("instances") or [] if isinstance(item, dict)]
+    if len(instances) <= 1:
+        return []
+    exposure = profile.get("exposure") if isinstance(profile.get("exposure"), dict) else {}
+    mode = exposure.get("mode") or "local"
+    if mode not in {"local", "lan"}:
+        mode = "local"
+    options = []
+    for instance in sorted(instances, key=lambda item: item.get("index", 0)):
+        try:
+            index = int(instance.get("index"))
+        except (TypeError, ValueError):
+            continue
+        bundle = render_client_bundle(
+            profile_id,
+            {
+                "target_type": "instance",
+                "instance_index": index,
+                "exposure_mode": mode,
+            },
+        )
+        bundle["instance"] = {
+            "index": index,
+            "host": instance.get("host"),
+            "port": instance.get("port"),
+            "gpu_ids": copy.deepcopy(instance.get("gpu_ids") or []),
+            "unit": instance.get("unit"),
+            "state": instance.get("state"),
+        }
+        options.append(bundle)
+    return options
 
 
 def _selected_instance(profile: dict, target_type: str, instance_index) -> dict:
