@@ -4779,15 +4779,18 @@ function addLauncherArgRow(value = '') {
     el.appendChild(row);
 }
 
-function addLauncherEnvRow(key = '', value = '') {
+function addLauncherEnvRow(key = '', value = '', existing = false) {
     const el = document.getElementById('launcher-env-rows');
     if (!el) return;
     const row = document.createElement('div');
     row.className = 'launcher-env-row';
+    row.dataset.existingEnv = existing ? 'true' : 'false';
+    const keyDisabled = existing ? ' disabled' : '';
+    const valuePlaceholder = existing ? 'unchanged' : 'value';
     row.innerHTML = `
-        <input type="text" class="launcher-env-key" value="${esc(key)}" placeholder="KEY" autocomplete="off">
-        <input type="text" class="launcher-env-value" value="${esc(value)}" placeholder="value" autocomplete="off">
-        <button class="btn danger" type="button" onclick="this.parentElement.remove()">Remove</button>
+        <input type="text" class="launcher-env-key" value="${esc(key)}" placeholder="KEY" autocomplete="off"${keyDisabled}>
+        <input type="text" class="launcher-env-value" value="${esc(value)}" placeholder="${esc(valuePlaceholder)}" autocomplete="off">
+        ${existing ? '' : '<button class="btn danger" type="button" onclick="this.parentElement.remove()">Remove</button>'}
     `;
     el.appendChild(row);
 }
@@ -4804,14 +4807,14 @@ function collectLauncherEnv(editing) {
         key: (row.querySelector('.launcher-env-key') || {}).value?.trim() || '',
         value: (row.querySelector('.launcher-env-value') || {}).value || '',
     })).filter(pair => pair.key);
-    if (editing && pairs.length && pairs.every(pair => !pair.value)) {
-        return null;
-    }
     const env = {};
     pairs.forEach(pair => {
         if (pair.value) env[pair.key] = pair.value;
     });
-    return pairs.length ? env : (editing ? null : {});
+    if (editing) {
+        return Object.keys(env).length ? { mode: 'merge', env } : { mode: 'none', env: null };
+    }
+    return { mode: 'replace', env };
 }
 
 async function submitLauncherForm() {
@@ -4824,8 +4827,8 @@ async function submitLauncherForm() {
         base_args: collectLauncherBaseArgs(),
         working_dir: modelOptionalValue('launcher-working-dir'),
     };
-    const env = collectLauncherEnv(!!editId);
-    if (env !== null) body.env = env;
+    const envUpdate = collectLauncherEnv(!!editId);
+    if (!editId && envUpdate.env !== null) body.env = envUpdate.env;
     if (!body.executable || !body.engine) {
         setInferenceError('Engine and executable are required.');
         return;
@@ -4837,6 +4840,10 @@ async function submitLauncherForm() {
             Object.keys(body).forEach(key => body[key] === null && delete body[key]);
             const launcher = await api('PUT', modelNodePath(`/api/inference/launchers/${encodeURIComponent(editId)}`), body);
             patchInferenceLauncher(launcher);
+            if (envUpdate.mode === 'merge') {
+                const envLauncher = await api('POST', modelNodePath(`/api/inference/launchers/${encodeURIComponent(editId)}/env`), { env: envUpdate.env });
+                patchInferenceLauncher(envLauncher);
+            }
             setInferenceStatus(`Updated launcher ${editId}.`);
         } else {
             const launcher = await api('POST', modelNodePath('/api/inference/launchers'), body);
@@ -4900,7 +4907,7 @@ function editLauncher(launcherId) {
     setElementHtml('launcher-arg-rows', '');
     (launcher.base_args || []).forEach(arg => addLauncherArgRow(arg));
     setElementHtml('launcher-env-rows', '');
-    (launcher.redacted_env_keys || []).forEach(key => addLauncherEnvRow(key, ''));
+    (launcher.redacted_env_keys || []).forEach(key => addLauncherEnvRow(key, '', true));
     setInferenceStatus(`Editing ${launcher.id}.`);
 }
 

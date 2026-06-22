@@ -1752,6 +1752,69 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'launcher save/update/delete should patch local launcher state without reloading the launcher registry'
                 );
 
+                const launcherEnvMergeResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        const originalQuerySelectorAll = document.querySelectorAll;
+                        function envRow(key, value) {
+                            return {
+                                querySelector(selector) {
+                                    if (selector === '.launcher-env-key') return { value: key };
+                                    if (selector === '.launcher-env-value') return { value };
+                                    return null;
+                                },
+                            };
+                        }
+                        document.querySelectorAll = function(selector) {
+                            if (selector === '.launcher-env-row') {
+                                return [
+                                    envRow('TOKEN', ''),
+                                    envRow('VLLM_USE_V1', ''),
+                                    envRow('LD_LIBRARY_PATH', '/opt/cuda/lib'),
+                                ];
+                            }
+                            return originalQuerySelectorAll.call(document, selector);
+                        };
+                        const collected = collectLauncherEnv(true);
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'launchers';
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        inferenceLaunchersData = [{ id: 'vllm-main', display_name: 'vLLM Main', engine: 'vllm', executable: '/opt/vllm/bin/python', redacted_env_keys: ['TOKEN', 'VLLM_USE_V1'] }];
+                        document.getElementById('launcher-edit-id').value = 'vllm-main';
+                        document.getElementById('launcher-id').value = 'vllm-main';
+                        document.getElementById('launcher-display-name').value = 'vLLM Main';
+                        document.getElementById('launcher-engine').value = 'vllm';
+                        document.getElementById('launcher-executable').value = '/opt/vllm/bin/python';
+                        document.getElementById('launcher-working-dir').value = '';
+                        api = async function(method, path, body) {
+                            calls.push([method, path, body]);
+                            if (method === 'PUT' && path === '/api/inference/launchers/vllm-main') {
+                                return { id: 'vllm-main', display_name: 'vLLM Main', engine: 'vllm', executable: '/opt/vllm/bin/python', redacted_env_keys: ['TOKEN', 'VLLM_USE_V1'] };
+                            }
+                            if (method === 'POST' && path === '/api/inference/launchers/vllm-main/env') {
+                                return { id: 'vllm-main', display_name: 'vLLM Main', engine: 'vllm', executable: '/opt/vllm/bin/python', redacted_env_keys: ['TOKEN', 'VLLM_USE_V1', 'LD_LIBRARY_PATH'] };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        try {
+                            await submitLauncherForm();
+                            return { calls, collected, launchers: inferenceLaunchersData };
+                        } finally {
+                            document.querySelectorAll = originalQuerySelectorAll;
+                        }
+                    })()
+                `, context);
+                assert(
+                    launcherEnvMergeResult.collected.mode === 'merge' &&
+                    launcherEnvMergeResult.collected.env.LD_LIBRARY_PATH === '/opt/cuda/lib' &&
+                    !('TOKEN' in launcherEnvMergeResult.collected.env) &&
+                    launcherEnvMergeResult.calls.some(call => call[0] === 'PUT' && call[1] === '/api/inference/launchers/vllm-main' && !('env' in call[2])) &&
+                    launcherEnvMergeResult.calls.some(call => call[0] === 'POST' && call[1] === '/api/inference/launchers/vllm-main/env' && call[2].env.LD_LIBRARY_PATH === '/opt/cuda/lib') &&
+                    launcherEnvMergeResult.launchers[0].redacted_env_keys.includes('LD_LIBRARY_PATH'),
+                    'editing a launcher should merge entered env values without replacing hidden redacted env'
+                );
+
                 const launcherValidationSuggestionHtml = vm.runInContext(`
                     renderLauncherValidation({
                         launcher_id: 'vllm-main',
