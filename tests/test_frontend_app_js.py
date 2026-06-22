@@ -749,7 +749,12 @@ def test_app_js_cloudflare_section_gating_by_role():
                         profile_id: 'qwen',
                         current_step: 'waiting_ready',
                         progress: 72,
-                        steps: [{ name: 'waiting_ready', state: 'running' }],
+                        steps: [
+                            { name: 'validate', state: 'succeeded' },
+                            { name: 'start_units', state: 'succeeded' },
+                            { name: 'waiting_ready', state: 'running' },
+                            { name: 'complete', state: 'pending' },
+                        ],
                         runtime_status: {
                             phase: 'waiting_ready',
                             instance_index: 0,
@@ -779,6 +784,12 @@ def test_app_js_cloudflare_section_gating_by_role():
                     startupPanelHtml.includes('profile-operation-readiness') &&
                     startupPanelHtml.includes('Readiness wait') &&
                     startupPanelHtml.includes('Waiting for TCP') &&
+                    startupPanelHtml.includes('Operation timeline') &&
+                    startupPanelHtml.includes('validate') &&
+                    startupPanelHtml.includes('succeeded') &&
+                    startupPanelHtml.includes('waiting ready') &&
+                    startupPanelHtml.includes('running · current') &&
+                    startupPanelHtml.includes('profile-operation-step-dot') &&
                     startupPanelHtml.includes('42s elapsed') &&
                     startupPanelHtml.includes('9m 18s remaining') &&
                     startupPanelHtml.includes('Startup log tail') &&
@@ -3887,6 +3898,9 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-operation-panel" in style_css
     assert ".profile-operation-actions" in style_css
     assert ".profile-operation-steps" in style_css
+    assert ".profile-operation-steps-title" in style_css
+    assert ".profile-operation-step-dot" in style_css
+    assert ".profile-operation-step.current" in style_css
     assert ".profile-operation-facts" in style_css
     assert ".profile-operation-narrative" in style_css
     assert ".profile-operation-diagnosis" in style_css

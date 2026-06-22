@@ -3319,10 +3319,18 @@ async function openLauncherValidation(launcherId, profileId = '') {
 function renderOperationSteps(operation) {
     const steps = (operation && operation.steps) || [];
     if (!steps.length) return '';
+    const current = operation.current_step || '';
     return `
         <div class="profile-operation-steps">
+            <div class="profile-operation-steps-title">Operation timeline</div>
             ${steps.map(step => `
-                <span class="profile-operation-step ${esc(step.state || 'pending')}">${esc(operationStepLabel(step.name))}</span>
+                <div class="profile-operation-step ${esc(step.state || 'pending')} ${step.name === current ? 'current' : ''}">
+                    <span class="profile-operation-step-dot"></span>
+                    <div>
+                        <strong>${esc(operationStepLabel(step.name))}</strong>
+                        <small>${esc(operationStepLabel(step.state || 'pending'))}${step.name === current ? ' · current' : ''}</small>
+                    </div>
+                </div>
             `).join('')}
         </div>
     `;
