@@ -1752,9 +1752,13 @@ async def proxy_cancel_inference_operation(node_id: str, operation_id: str):
 
 
 @cluster_router.post("/api/nodes/{node_id}/inference/launchers/{launcher_id}/validate")
-async def proxy_validate_inference_launcher(node_id: str, launcher_id: str):
+async def proxy_validate_inference_launcher(node_id: str, launcher_id: str, runtime: bool = True):
     try:
-        return await proxy_to_node(node_id, "POST", f"/api/inference/launchers/{launcher_id}/validate")
+        return await proxy_to_node(
+            node_id,
+            "POST",
+            f"/api/inference/launchers/{launcher_id}/validate?{urlencode({'runtime': str(runtime).lower()})}",
+        )
     except (ValueError, RuntimeError) as e:
         raise HTTPException(502, str(e))
 

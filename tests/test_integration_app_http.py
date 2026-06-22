@@ -268,6 +268,32 @@ def test_worker_event_path_bypasses_session_and_validates_worker_key():
     )]
 
 
+def test_worker_launcher_validation_proxy_preserves_runtime_query():
+    calls = []
+
+    async def fake_proxy_to_node(node_id, method, path, body=None):
+        calls.append((node_id, method, path, body))
+        return {"path": path}
+
+    resp = _request(
+        "POST",
+        "/api/nodes/worker-a/inference/launchers/vllm-main/validate?runtime=false",
+        patches=(
+            (auth, "check_auth", _auth_true),
+            (cluster_routes, "proxy_to_node", fake_proxy_to_node),
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["path"] == "/api/inference/launchers/vllm-main/validate?runtime=false"
+    assert calls == [(
+        "worker-a",
+        "POST",
+        "/api/inference/launchers/vllm-main/validate?runtime=false",
+        None,
+    )]
+
+
 def test_mcp_requires_service_token_even_when_auth_true():
     resp = _request(
         "POST",

@@ -481,6 +481,8 @@ async def _handle_local_inference(method: str, route_path: str, query: dict[str,
             force_stopped_references=_query_bool(query, "force_stopped_references"),
         )
     if method == "POST" and suffix == "/validate":
+        if _query_bool(query, "runtime", True):
+            return await inference_launchers.validate_launcher_runtime(launcher_id)
         return inference_launchers.validate_launcher_path(launcher_id)
     return _NO_MATCH
 
