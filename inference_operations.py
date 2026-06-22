@@ -25,8 +25,10 @@ STARTUP_STATUS_INTERVAL_SECONDS = 2.0
 MAX_OPERATION_RECORDS = 100
 STARTUP_RESTART_FAILURE_THRESHOLD = 3
 STARTUP_LOG_LINES = 80
+STARTUP_STATUS_LOG_LINES = 20
+STARTUP_STATUS_LOG_MAX_CHARS = 6000
 _SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:secret|token|password|passwd|api[_-]?key|credential|auth|bearer)[A-Za-z0-9_]*)=([^\s]+)"
+    r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:secret|token|password|passwd|api[_-]?key|credential|auth|bearer)[A-Za-z0-9_]*|(?:secret|token|password|passwd|api[_-]?key|credential|auth|bearer))=([^\s]+)"
 )
 
 _lock = threading.RLock()
@@ -441,6 +443,7 @@ async def wait_instance_ready(
         if reachable:
             state = await unit_active_state(unit) if unit else "unknown"
             restart_count = await unit_restart_count(unit) if unit else None
+            log_tail = await startup_log_tail(unit)
             _publish_startup_status(
                 operation_id,
                 instance=instance,
@@ -453,12 +456,14 @@ async def wait_instance_ready(
                 timeout_seconds=timeout,
                 wait_position=wait_position,
                 wait_total=wait_total,
+                log_tail=log_tail,
             )
             return True
 
         state = await unit_active_state(unit) if unit else "unknown"
         if state in {"failed", "inactive"}:
             restart_count = await unit_restart_count(unit) if unit else None
+            log_tail = await startup_log_tail(unit)
             _publish_startup_status(
                 operation_id,
                 instance=instance,
@@ -471,6 +476,7 @@ async def wait_instance_ready(
                 timeout_seconds=timeout,
                 wait_position=wait_position,
                 wait_total=wait_total,
+                log_tail=log_tail,
             )
             raise await unit_startup_error(unit, f"Unit {unit} is {state}", host=host, port=port)
 
@@ -479,6 +485,7 @@ async def wait_instance_ready(
         if operation_id and now >= next_status_at:
             elapsed = now - started_at
             progress = 65 + min(24, int(24 * min(elapsed, timeout) / max(timeout, 0.1)))
+            log_tail = await startup_log_tail(unit)
             _publish_startup_status(
                 operation_id,
                 instance=instance,
@@ -492,6 +499,7 @@ async def wait_instance_ready(
                 wait_position=wait_position,
                 wait_total=wait_total,
                 progress=progress,
+                log_tail=log_tail,
             )
             next_status_at = now + STARTUP_STATUS_INTERVAL_SECONDS
         if restart_count is not None and initial_restarts is not None:
@@ -529,6 +537,7 @@ def _publish_startup_status(
     wait_position: int,
     wait_total: int,
     progress: Optional[int] = None,
+    log_tail: str = "",
 ):
     if not operation_id:
         return
@@ -546,6 +555,9 @@ def _publish_startup_status(
         "wait_position": wait_position,
         "wait_total": wait_total,
     }
+    if log_tail:
+        status["log_tail"] = log_tail
+        status["log_tail_lines"] = len(log_tail.splitlines())
     updates = {
         "current_step": "waiting_ready",
         "runtime_status": status,
@@ -556,6 +568,15 @@ def _publish_startup_status(
         _patch_operation(operation_id, **updates)
     except Exception:
         pass
+
+
+async def startup_log_tail(unit: Optional[str], lines: int = STARTUP_STATUS_LOG_LINES) -> str:
+    if not unit:
+        return ""
+    logs = _redact_logs(await read_journal(unit, lines=lines))
+    if len(logs) <= STARTUP_STATUS_LOG_MAX_CHARS:
+        return logs
+    return logs[-STARTUP_STATUS_LOG_MAX_CHARS:]
 
 
 async def systemctl_user(action: str, unit: str) -> dict:

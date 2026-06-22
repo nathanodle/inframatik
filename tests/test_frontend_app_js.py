@@ -709,6 +709,8 @@ def test_app_js_cloudflare_section_gating_by_role():
                             timeout_seconds: 600,
                             wait_position: 1,
                             wait_total: 1,
+                            log_tail: 'Loading model shard 1/8\\nCUDA graph capture starting',
+                            log_tail_lines: 2,
                         },
                     });
                 `, context);
@@ -720,9 +722,13 @@ def test_app_js_cloudflare_section_gating_by_role():
                     startupPanelHtml.includes('is active; waiting for the inference API port') &&
                     startupPanelHtml.includes('Restarts') &&
                     startupPanelHtml.includes('42s / 10m') &&
+                    startupPanelHtml.includes('Startup log tail') &&
+                    startupPanelHtml.includes('2 lines') &&
+                    startupPanelHtml.includes('Loading model shard 1/8') &&
+                    startupPanelHtml.includes('CUDA graph capture starting') &&
                     startupPanelHtml.includes('loadOperationLogs(&quot;qwen&quot;, 0,') &&
                     startupPanelHtml.includes('profile-operation-log-output-panel-op-start'),
-                    'active inference operation panel should show live startup readiness facts and inline targeted logs'
+                    'active inference operation panel should show live startup readiness facts, log tail, and inline targeted logs'
                 );
 
                 const failedStartupHtml = vm.runInContext(`
@@ -781,6 +787,8 @@ def test_app_js_cloudflare_section_gating_by_role():
                             timeout_seconds: 600,
                             wait_position: 1,
                             wait_total: 1,
+                            log_tail: 'Loading model shard 1/8\\nCUDA graph capture starting',
+                            log_tail_lines: 2,
                         },
                     }]);
                     document.getElementById('inference-operations-list').innerHTML;
@@ -790,8 +798,10 @@ def test_app_js_cloudflare_section_gating_by_role():
                     startupOperationListHtml.includes('infra-llm-qwen.service') &&
                     startupOperationListHtml.includes('TCP') &&
                     startupOperationListHtml.includes('waiting') &&
-                    startupOperationListHtml.includes('42s / 10m'),
-                    'operations tab should reuse the rich operation panel with live readiness facts'
+                    startupOperationListHtml.includes('42s / 10m') &&
+                    startupOperationListHtml.includes('Startup log tail') &&
+                    startupOperationListHtml.includes('CUDA graph capture starting'),
+                    'operations tab should reuse the rich operation panel with live readiness facts and log tail'
                 );
 
                 const queuedOperationHtml = vm.runInContext(`
@@ -2607,6 +2617,7 @@ def test_static_inference_model_ui_assets_present():
     assert "operationLogButton" in app_js
     assert "operationLogOutputCache" in app_js
     assert "loadOperationLogs" in app_js
+    assert "renderOperationLiveLog" in app_js
     assert "profileLogRequest" in app_js
     assert "hydrateInferenceFailureDiagnostics" in app_js
     assert "hydrateVisibleInferenceFailures" in app_js
@@ -2707,6 +2718,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-operation-facts" in style_css
     assert ".profile-operation-narrative" in style_css
     assert ".profile-operation-diagnosis" in style_css
+    assert ".profile-live-log" in style_css
     assert ".profile-operation-log-output" in style_css
     assert ".inference-operation-context" in style_css
     assert "renderProfileOperationPanel(op, '', { context: 'operations' })" in app_js

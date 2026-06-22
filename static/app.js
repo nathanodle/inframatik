@@ -2896,6 +2896,20 @@ function renderOperationFacts(detail) {
     `;
 }
 
+function renderOperationLiveLog(detail) {
+    detail = detail || {};
+    const logTail = detail.log_tail || '';
+    if (!logTail) return '';
+    const lineCount = Number(detail.log_tail_lines || 0);
+    const label = lineCount ? `Startup log tail · ${lineCount} line${lineCount === 1 ? '' : 's'}` : 'Startup log tail';
+    return `
+        <details class="profile-live-log" open>
+            <summary>${esc(label)}</summary>
+            <pre class="profile-log-view">${esc(logTail)}</pre>
+        </details>
+    `;
+}
+
 function operationLogOutputId(operation, context = 'panel') {
     if (!operation || !operation.id) return '';
     const cleanContext = String(context || 'panel').replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -2966,6 +2980,7 @@ function renderProfileOperationPanel(operation, pendingAction = '', options = {}
             ${narrative ? `<div class="profile-operation-narrative">${esc(narrative)}</div>` : ''}
             ${renderOperationSteps(operation)}
             ${renderOperationFacts(detail)}
+            ${!failed ? renderOperationLiveLog(detail) : ''}
             ${failed ? `
                 <div class="profile-operation-error">${esc(message)}</div>
                 ${operationFailureDiagnosis(operation, detail)}

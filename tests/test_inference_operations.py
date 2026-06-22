@@ -264,6 +264,8 @@ def test_profile_start_publishes_live_readiness_status(tmp_path: Path):
         assert status["wait_position"] == 1
         assert status["wait_total"] == 1
         assert status["elapsed_seconds"] >= 0
+        assert status["log_tail"] == "TOKEN=<redacted>\nready"
+        assert status["log_tail_lines"] == 2
 
 
 def test_profile_start_rolls_back_when_tcp_never_ready(tmp_path: Path):
