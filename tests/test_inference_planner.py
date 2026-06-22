@@ -194,6 +194,8 @@ def test_vllm_preview_renders_argv_env_redaction_and_raw_args(tmp_path: Path):
                         "data_parallel_backend": "ray",
                         "data_parallel_rank": 1,
                         "data_parallel_lb_mode": "external",
+                        "decode_context_parallel_size": 2,
+                        "prefill_context_parallel_size": 4,
                         "max_num_partial_prefills": 4,
                         "long_prefill_token_threshold": 32768,
                         "moe_backend": "auto",
@@ -233,6 +235,8 @@ def test_vllm_preview_renders_argv_env_redaction_and_raw_args(tmp_path: Path):
         assert "--data-parallel-backend" in command["argv"]
         assert "--data-parallel-rank" in command["argv"]
         assert "--data-parallel-external-lb" in command["argv"]
+        assert command["argv"][command["argv"].index("--decode-context-parallel-size") + 1] == "2"
+        assert command["argv"][command["argv"].index("--prefill-context-parallel-size") + 1] == "4"
         assert "--max-num-partial-prefills" in command["argv"]
         assert "--long-prefill-token-threshold" in command["argv"]
         assert "--moe-backend" in command["argv"]

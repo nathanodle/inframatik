@@ -1098,8 +1098,7 @@ Structured engine config:
       "linear_backend": null,
       "chat_template_content_format": null,
       "reasoning_parser_plugin": null,
-      "tool_parser_plugin": null,
-      "lora": {}
+      "tool_parser_plugin": null
     },
     "sglang": {
       "load_format": null,
@@ -1117,14 +1116,13 @@ Structured engine config:
       "sampling_defaults": null,
       "cuda_graph_config": {},
       "hicache": {},
-      "grammar_backend": null,
-      "lora": {}
+      "grammar_backend": null
     }
   }
 }
 ```
 
-Only the selected engine block is active. Other blocks may be absent.
+Only the selected engine block is active. Other blocks may be absent. `common.context_parallel.decode_size` and `common.context_parallel.prefill_size` are the portable editor fields for vLLM decode/prefill context parallelism; `engine_config.vllm.decode_context_parallel_size` and `engine_config.vllm.prefill_context_parallel_size` are explicit vLLM aliases and take precedence when present. LoRA is stored in `common.lora` and rendered to the selected engine's adapter flags.
 
 Normalized mapping:
 

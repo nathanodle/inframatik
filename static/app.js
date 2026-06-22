@@ -2127,6 +2127,8 @@ const STRUCTURED_ENGINE_KEYS = {
         'data_parallel_rank',
         'data_parallel_lb_mode',
         'context_parallel_backend',
+        'decode_context_parallel_size',
+        'prefill_context_parallel_size',
         'max_num_partial_prefills',
         'max_long_partial_prefills',
         'long_prefill_token_threshold',
@@ -2389,7 +2391,7 @@ function profileBooleanValue(id) {
 
 function setProfileValue(id, value) {
     const el = document.getElementById(id);
-    if (el) el.value = value === undefined || value === null ? '' : value;
+    if (el) el.value = value === undefined || value === null ? '' : String(value);
 }
 
 function setProfileChecked(id, value) {
@@ -2499,6 +2501,8 @@ function structuredEngineConfig(engine) {
             data_parallel_rank: profileNumberValue('profile-vllm-dp-rank'),
             data_parallel_lb_mode: modelOptionalValue('profile-vllm-dp-lb-mode'),
             context_parallel_backend: modelOptionalValue('profile-vllm-context-backend'),
+            decode_context_parallel_size: profileNumberValue('profile-vllm-decode-cp-size'),
+            prefill_context_parallel_size: profileNumberValue('profile-vllm-prefill-cp-size'),
             max_num_partial_prefills: profileNumberValue('profile-vllm-partial-prefills'),
             max_long_partial_prefills: profileNumberValue('profile-vllm-long-partial-prefills'),
             long_prefill_token_threshold: profileNumberValue('profile-vllm-long-prefill-threshold'),
@@ -2649,6 +2653,7 @@ function resetProfileForm() {
         'profile-vllm-long-partial-prefills', 'profile-vllm-long-prefill-threshold',
         'profile-vllm-scheduling-policy', 'profile-vllm-moe-backend', 'profile-vllm-linear-backend',
         'profile-vllm-distributed-executor', 'profile-vllm-context-backend',
+        'profile-vllm-decode-cp-size', 'profile-vllm-prefill-cp-size',
         'profile-vllm-kv-offloading-size', 'profile-vllm-kv-offloading-backend',
         'profile-vllm-offload-backend', 'profile-vllm-chat-template-format',
         'profile-vllm-reasoning-plugin', 'profile-vllm-tool-plugin',
@@ -2796,6 +2801,8 @@ function fillProfileForm(profile) {
     setProfileValue('profile-vllm-dp-rank', engineSpecific.data_parallel_rank);
     setProfileValue('profile-vllm-dp-lb-mode', engineSpecific.data_parallel_lb_mode);
     setProfileValue('profile-vllm-context-backend', engineSpecific.context_parallel_backend);
+    setProfileValue('profile-vllm-decode-cp-size', engineSpecific.decode_context_parallel_size);
+    setProfileValue('profile-vllm-prefill-cp-size', engineSpecific.prefill_context_parallel_size);
     setProfileValue('profile-vllm-partial-prefills', engineSpecific.max_num_partial_prefills);
     setProfileValue('profile-vllm-long-partial-prefills', engineSpecific.max_long_partial_prefills);
     setProfileValue('profile-vllm-long-prefill-threshold', engineSpecific.long_prefill_token_threshold);
@@ -2858,6 +2865,7 @@ function fillProfileForm(profile) {
             'profile-vllm-long-partial-prefills', 'profile-vllm-long-prefill-threshold',
             'profile-vllm-scheduling-policy', 'profile-vllm-moe-backend', 'profile-vllm-linear-backend',
             'profile-vllm-distributed-executor', 'profile-vllm-context-backend',
+            'profile-vllm-decode-cp-size', 'profile-vllm-prefill-cp-size',
             'profile-vllm-kv-offloading-size', 'profile-vllm-kv-offloading-backend',
             'profile-vllm-offload-backend', 'profile-vllm-chat-template-format',
             'profile-vllm-reasoning-plugin', 'profile-vllm-tool-plugin',

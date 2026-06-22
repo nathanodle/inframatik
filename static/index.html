@@ -710,6 +710,16 @@
                             </div>
                             <div class="model-form-grid">
                                 <div class="form-group">
+                                    <label>Decode Context Parallel</label>
+                                    <input type="number" id="profile-vllm-decode-cp-size" placeholder="decode size" min="1" step="1" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <label>Prefill Context Parallel</label>
+                                    <input type="number" id="profile-vllm-prefill-cp-size" placeholder="prefill size" min="1" step="1" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="model-form-grid">
+                                <div class="form-group">
                                     <label>KV Offload Size</label>
                                     <input type="text" id="profile-vllm-kv-offloading-size" placeholder="10G, 10737418240" autocomplete="off">
                                 </div>

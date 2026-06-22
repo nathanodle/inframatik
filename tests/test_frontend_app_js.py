@@ -2071,6 +2071,59 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile editor should round-trip LoRA fields without duplicating them into raw common JSON'
                 );
 
+                const vllmContextParallelDraftResult = vm.runInContext(`
+                    resetProfileForm();
+                    document.getElementById('profile-id').value = 'qwen-vllm-cp';
+                    document.getElementById('profile-engine').value = 'vllm';
+                    document.getElementById('profile-launcher').value = 'vllm-main';
+                    document.getElementById('profile-model').value = 'qwen@v1';
+                    document.getElementById('profile-vllm-context-backend').value = 'nccl';
+                    document.getElementById('profile-vllm-decode-cp-size').value = '2';
+                    document.getElementById('profile-vllm-prefill-cp-size').value = '4';
+                    buildProfileDraft().engine_config.vllm;
+                `, context);
+                assert(
+                    vllmContextParallelDraftResult.context_parallel_backend === 'nccl' &&
+                    vllmContextParallelDraftResult.decode_context_parallel_size === 2 &&
+                    vllmContextParallelDraftResult.prefill_context_parallel_size === 4,
+                    'profile editor should include explicit vLLM context-parallel engine fields'
+                );
+
+                const vllmContextParallelRoundTripResult = vm.runInContext(`
+                    fillProfileForm({
+                        id: 'qwen-vllm-cp-edit',
+                        display_name: 'Qwen vLLM CP Edit',
+                        engine: 'vllm',
+                        engine_launcher_id: 'vllm-main',
+                        model: { artifact_id: 'qwen', snapshot: 'v1' },
+                        common: {},
+                        deployment: {},
+                        advanced: {},
+                        engine_config: { vllm: {
+                            context_parallel_backend: 'nccl',
+                            decode_context_parallel_size: 2,
+                            prefill_context_parallel_size: 4,
+                        } },
+                        exposure: {},
+                        instances: [],
+                        state: 'stopped',
+                    });
+                    ({
+                        backend: document.getElementById('profile-vllm-context-backend').value,
+                        decode: document.getElementById('profile-vllm-decode-cp-size').value,
+                        prefill: document.getElementById('profile-vllm-prefill-cp-size').value,
+                        engineJson: document.getElementById('profile-engine-json').value,
+                    });
+                `, context);
+                assert(
+                    vllmContextParallelRoundTripResult.backend === 'nccl' &&
+                    vllmContextParallelRoundTripResult.decode === '2' &&
+                    vllmContextParallelRoundTripResult.prefill === '4' &&
+                    !vllmContextParallelRoundTripResult.engineJson.includes('decode_context_parallel_size') &&
+                    !vllmContextParallelRoundTripResult.engineJson.includes('prefill_context_parallel_size'),
+                    'profile editor should round-trip vLLM context-parallel fields without duplicating them into raw engine JSON'
+                );
+
                 const saveRestartCalls = await vm.runInContext(`
                     (async () => {
                         const calls = [];
@@ -3719,6 +3772,8 @@ def test_static_inference_model_ui_assets_present():
     assert "profile-vllm-dp-rank" in index_html
     assert "profile-vllm-dp-lb-mode" in index_html
     assert "profile-vllm-headless" in index_html
+    assert "profile-vllm-decode-cp-size" in index_html
+    assert "profile-vllm-prefill-cp-size" in index_html
     assert "profile-vllm-kv-offloading-size" in index_html
     assert "profile-vllm-compilation-config" in index_html
     assert "profile-vllm-ep-weight-filter" in index_html
@@ -3733,6 +3788,8 @@ def test_static_inference_model_ui_assets_present():
     assert "data_parallel_backend" in app_js
     assert "data_parallel_rank" in app_js
     assert "data_parallel_lb_mode" in app_js
+    assert "decode_context_parallel_size" in app_js
+    assert "prefill_context_parallel_size" in app_js
     assert "max_queued_requests" in app_js
     assert "hf_chat_template_name" in app_js
     assert "dist_init_addr" in app_js
