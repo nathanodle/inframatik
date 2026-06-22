@@ -787,6 +787,7 @@ def _render_command(
     elif engine == "llama.cpp":
         argv = _render_llama_cpp(argv, model_path, common, block, instance, blockers, warnings)
     argv.extend(advanced_args)
+    raw_argv = _raw_argv_with_secrets(argv, common) if include_raw else None
 
     env = {}
     env.update(launcher.get("env") or {})
@@ -809,6 +810,8 @@ def _render_command(
     }
     if include_raw:
         command["_env_raw"] = dict(env)
+        if raw_argv:
+            command["_argv_raw"] = raw_argv
     return command
 
 
@@ -839,6 +842,24 @@ def _append_bool(argv: list[str], flag: str, value):
 def _append_json(argv: list[str], flag: str, value):
     if value:
         argv.extend([flag, json.dumps(value, sort_keys=True)])
+
+
+def _raw_argv_with_secrets(argv: list[str], common: dict) -> Optional[list[str]]:
+    api_key = common.get("api_key") or common.get("engine_api_key")
+    if not api_key:
+        return None
+    raw = []
+    replace_api_key = False
+    changed = False
+    for token in argv:
+        if replace_api_key and token == "<redacted>":
+            raw.append(str(api_key))
+            replace_api_key = False
+            changed = True
+            continue
+        raw.append(token)
+        replace_api_key = token == "--api-key"
+    return raw if changed else None
 
 
 def _common_value(common: dict, *names):
@@ -1035,7 +1056,7 @@ def _unit_name(profile_id: str, index: int, count: int) -> str:
 
 
 def _render_unit(profile_id: str, instance: dict, command: dict) -> str:
-    argv = command.get("argv") or []
+    argv = command.get("_argv_raw") or command.get("argv") or []
     working_dir = command.get("working_dir") or str(Path.home())
     env_lines = []
     unit_env = command.get("_env_raw") or command.get("env") or {}

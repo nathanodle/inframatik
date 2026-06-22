@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cloudflared
+import inference_connect
 import inference_launchers
 import inference_planner
 import inference_profiles
@@ -334,7 +335,7 @@ def test_handle_local_inference_profiles_dispatch():
     original_create = inference_profiles.create_profile
     original_get = inference_profiles.get_profile
     original_update = inference_profiles.update_profile
-    original_delete = inference_profiles.delete_profile
+    original_delete = inference_connect.delete_profile_with_cleanup
     original_render = inference_profiles.render_profile
     calls = []
 
@@ -342,7 +343,11 @@ def test_handle_local_inference_profiles_dispatch():
     inference_profiles.create_profile = lambda body: calls.append(("create", body)) or {"profile": {"id": body["id"]}}
     inference_profiles.get_profile = lambda profile_id: calls.append(("get", profile_id)) or {"id": profile_id}
     inference_profiles.update_profile = lambda profile_id, body: calls.append(("update", profile_id, body)) or {"id": profile_id}
-    inference_profiles.delete_profile = lambda profile_id, force=False: calls.append(("delete", profile_id, force)) or {"deleted": profile_id}
+    async def fake_delete(profile_id, force=False, delete_owned_tokens=False):
+        calls.append(("delete", profile_id, force, delete_owned_tokens))
+        return {"deleted": profile_id}
+
+    inference_connect.delete_profile_with_cleanup = fake_delete
     inference_profiles.render_profile = lambda profile_id: calls.append(("render", profile_id)) or {"valid_for_save": True}
     try:
         listed = _run(proxy._handle_local_inference("GET", "/api/inference/profiles", {}))
@@ -356,7 +361,7 @@ def test_handle_local_inference_profiles_dispatch():
         inference_profiles.create_profile = original_create
         inference_profiles.get_profile = original_get
         inference_profiles.update_profile = original_update
-        inference_profiles.delete_profile = original_delete
+        inference_connect.delete_profile_with_cleanup = original_delete
         inference_profiles.render_profile = original_render
 
     assert listed == {"profiles": []}
@@ -371,7 +376,7 @@ def test_handle_local_inference_profiles_dispatch():
         ("get", "qwen"),
         ("update", "qwen", {"display_name": "Qwen"}),
         ("render", "qwen"),
-        ("delete", "qwen", True),
+        ("delete", "qwen", True, False),
     ]
 
 

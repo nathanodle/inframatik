@@ -1216,6 +1216,68 @@ body {
     margin-bottom: 8px;
 }
 
+.profile-connect-panel {
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    padding: 12px;
+}
+
+.profile-secret-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.profile-secret-strip div,
+.profile-token-row {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    padding: 9px 10px;
+    min-width: 0;
+}
+
+.profile-secret-strip span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.profile-secret-strip code {
+    display: block;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+    margin-top: 2px;
+}
+
+.client-example-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.profile-token-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.profile-token-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
 .inference-operations-list {
     margin-bottom: 16px;
 }

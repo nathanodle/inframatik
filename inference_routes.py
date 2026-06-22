@@ -8,6 +8,7 @@ import inference_launchers
 import inference_planner
 import inference_profiles
 import inference_operations
+import inference_connect
 
 
 inference_router = APIRouter()
@@ -41,6 +42,10 @@ def _raise_profile_error(exc: inference_profiles.ProfileError):
 
 
 def _raise_operation_error(exc: inference_operations.OperationError):
+    raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+def _raise_connect_error(exc: inference_connect.InferenceConnectError):
     raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
@@ -82,11 +87,15 @@ async def api_update_inference_profile(profile_id: str, body: dict):
 
 
 @inference_router.delete("/api/inference/profiles/{profile_id}")
-async def api_delete_inference_profile(profile_id: str, force: bool = False):
+async def api_delete_inference_profile(profile_id: str, force: bool = False, delete_owned_tokens: bool = False):
     try:
-        return inference_profiles.delete_profile(profile_id, force=force)
-    except inference_profiles.ProfileError as e:
-        _raise_profile_error(e)
+        return await inference_connect.delete_profile_with_cleanup(
+            profile_id,
+            force=force,
+            delete_owned_tokens=delete_owned_tokens,
+        )
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
 
 
 @inference_router.post("/api/inference/profiles/{profile_id}/render")
@@ -95,6 +104,104 @@ async def api_render_inference_profile(profile_id: str):
         return inference_profiles.render_profile(profile_id)
     except inference_profiles.ProfileError as e:
         _raise_profile_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/api-key")
+async def api_rotate_inference_api_key(profile_id: str, body: dict = None):
+    try:
+        return inference_connect.rotate_engine_api_key(profile_id, body or {})
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+    except inference_profiles.ProfileError as e:
+        _raise_profile_error(e)
+
+
+@inference_router.delete("/api/inference/profiles/{profile_id}/api-key")
+async def api_disable_inference_api_key(profile_id: str):
+    try:
+        return inference_connect.disable_engine_api_key(profile_id)
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/cloudflare/exposure")
+async def api_provision_inference_cloudflare(profile_id: str, body: dict = None):
+    try:
+        return await inference_connect.provision_cloudflare_exposure(profile_id, body or {})
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.delete("/api/inference/profiles/{profile_id}/cloudflare/exposure")
+async def api_remove_inference_cloudflare(profile_id: str, delete_owned_tokens: bool = False):
+    try:
+        return await inference_connect.remove_cloudflare_exposure(profile_id, delete_owned_tokens=delete_owned_tokens)
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/cloudflare/service-tokens")
+async def api_generate_inference_cloudflare_token(profile_id: str, body: dict = None):
+    try:
+        return await inference_connect.generate_cloudflare_service_token(profile_id, body or {})
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/cloudflare/service-tokens/{token_id}/rotate")
+async def api_rotate_inference_cloudflare_token(profile_id: str, token_id: str, body: dict = None):
+    try:
+        return await inference_connect.rotate_cloudflare_service_token(profile_id, token_id, body or {})
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.delete("/api/inference/profiles/{profile_id}/cloudflare/service-tokens/{token_id}")
+async def api_retire_inference_cloudflare_token(profile_id: str, token_id: str, delete_if_owned: bool = False):
+    try:
+        return await inference_connect.retire_cloudflare_service_token(profile_id, token_id, delete_if_owned=delete_if_owned)
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.get("/api/inference/profiles/{profile_id}/client-bundles")
+async def api_list_inference_client_bundles(profile_id: str):
+    try:
+        return inference_connect.list_client_bundles(profile_id)
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/client-bundles/render")
+async def api_render_inference_client_bundle(profile_id: str, body: dict = None):
+    try:
+        return inference_connect.render_client_bundle(profile_id, body or {})
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/client-bundles")
+async def api_save_inference_client_bundle(profile_id: str, body: dict):
+    try:
+        return inference_connect.save_client_bundle(profile_id, body or {})
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.put("/api/inference/profiles/{profile_id}/client-bundles/{bundle_id}")
+async def api_update_inference_client_bundle(profile_id: str, bundle_id: str, body: dict):
+    try:
+        return inference_connect.save_client_bundle(profile_id, {**(body or {}), "id": bundle_id})
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.delete("/api/inference/profiles/{profile_id}/client-bundles/{bundle_id}")
+async def api_delete_inference_client_bundle(profile_id: str, bundle_id: str):
+    try:
+        return inference_connect.delete_client_bundle(profile_id, bundle_id)
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
 
 
 @inference_router.post("/api/inference/profiles/{profile_id}/start", status_code=202)
@@ -229,6 +336,27 @@ async def api_test_inference_instance(profile_id: str, instance_index: int, body
         if isinstance(e, inference_profiles.ProfileError):
             _raise_profile_error(e)
         raise HTTPException(502, str(e))
+
+
+@inference_router.get("/api/inference/cleanup")
+async def api_list_inference_cleanup():
+    return inference_connect.list_cleanup_records()
+
+
+@inference_router.post("/api/inference/cleanup/{record_id}/retry")
+async def api_retry_inference_cleanup(record_id: str):
+    try:
+        return await inference_connect.retry_cleanup_record(record_id)
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
+
+
+@inference_router.delete("/api/inference/cleanup/{record_id}")
+async def api_forget_inference_cleanup(record_id: str):
+    try:
+        return inference_connect.forget_cleanup_record(record_id)
+    except inference_connect.InferenceConnectError as e:
+        _raise_connect_error(e)
 
 
 @inference_router.get("/api/inference/operations")

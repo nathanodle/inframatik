@@ -99,6 +99,20 @@ def _load_profiles_registry() -> dict:
     return data
 
 
+def _load_secrets_registry() -> dict:
+    data = _load_json(INFERENCE_SECRETS_FILE, _empty_secrets(), "secret")
+    data.setdefault("schema_version", SCHEMA_VERSION)
+    data.setdefault("secrets", {})
+    return data
+
+
+def _load_cleanup_registry() -> dict:
+    data = _load_json(INFERENCE_CLEANUP_FILE, _empty_cleanup(), "cleanup")
+    data.setdefault("schema_version", SCHEMA_VERSION)
+    data.setdefault("cleanup", {})
+    return data
+
+
 def _save_profiles_registry(data: dict):
     data.setdefault("schema_version", SCHEMA_VERSION)
     data.setdefault("profiles", {})
@@ -171,6 +185,117 @@ def get_profile_raw(profile_id: str) -> dict:
         return copy.deepcopy(profile)
 
 
+def mutate_profile(profile_id: str, mutator):
+    """Apply a small metadata mutation to one profile under the registry lock."""
+    profile_id = _validate_profile_id(profile_id)
+    initialize_profile_registries()
+    with _lock:
+        registry = _load_profiles_registry()
+        profile = registry.get("profiles", {}).get(profile_id)
+        if not profile:
+            raise ProfileNotFoundError(f"Inference profile not found: {profile_id}")
+        result = mutator(profile)
+        profile["updated_at"] = _now()
+        registry["profiles"][profile_id] = profile
+        _save_profiles_registry(registry)
+        return result if result is not None else _public_profile(profile)
+
+
+def get_engine_api_key_value(profile_id: str) -> Optional[str]:
+    profile = get_profile_raw(profile_id)
+    secret_id = (profile.get("secrets") or {}).get("engine_api_key_id")
+    if not secret_id:
+        return None
+    with _lock:
+        secret = _load_secrets_registry().get("secrets", {}).get(secret_id)
+    if not isinstance(secret, dict):
+        return None
+    return secret.get("value")
+
+
+def set_engine_api_key(profile_id: str, raw_key: str) -> dict:
+    profile_id = _validate_profile_id(profile_id)
+    key = str(raw_key or "").strip()
+    if not key:
+        raise ProfileError("Engine API key cannot be empty")
+    initialize_profile_registries()
+    with _lock:
+        profiles = _load_profiles_registry()
+        profile = profiles.get("profiles", {}).get(profile_id)
+        if not profile:
+            raise ProfileNotFoundError(f"Inference profile not found: {profile_id}")
+        secrets = _load_secrets_registry()
+        secret_id = f"engine-api-key-{profile_id}"
+        existing_secret = secrets.get("secrets", {}).get(secret_id) or {}
+        now = _now()
+        secrets["secrets"][secret_id] = {
+            "id": secret_id,
+            "kind": "engine_api_key",
+            "profile_id": profile_id,
+            "value": key,
+            "created_at": existing_secret.get("created_at") or now,
+            "rotated_at": now,
+        }
+        profile.setdefault("secrets", {})["engine_api_key_id"] = secret_id
+        profile["restart_required"] = _profile_is_running(profile)
+        if profile["restart_required"]:
+            fields = set(profile.get("restart_required_fields") or [])
+            fields.add("secrets.engine_api_key_id")
+            profile["restart_required_fields"] = sorted(fields)
+        profile["updated_at"] = now
+        plan = _plan_or_raise(
+            _profile_with_secret_values(profile, secret_values={secret_id: key}),
+            existing_profile_id=profile_id,
+        )
+        old_registry = copy.deepcopy(profiles)
+        old_secrets = copy.deepcopy(secrets)
+        profiles["profiles"][profile_id] = profile
+        old_units = _unit_names_from_profile(profile)
+        try:
+            _save_secrets_registry(secrets)
+            _save_profiles_registry(profiles)
+            _sync_unit_files(plan, old_unit_names=old_units)
+        except Exception:
+            _save_secrets_registry(old_secrets)
+            _save_profiles_registry(old_registry)
+            raise
+        return {"profile": _public_profile(profile), "secret": _public_secret_metadata(secrets["secrets"][secret_id])}
+
+
+def disable_engine_api_key(profile_id: str) -> dict:
+    profile_id = _validate_profile_id(profile_id)
+    initialize_profile_registries()
+    with _lock:
+        profiles = _load_profiles_registry()
+        profile = profiles.get("profiles", {}).get(profile_id)
+        if not profile:
+            raise ProfileNotFoundError(f"Inference profile not found: {profile_id}")
+        secret_id = (profile.get("secrets") or {}).pop("engine_api_key_id", None)
+        secrets = _load_secrets_registry()
+        old_registry = copy.deepcopy(profiles)
+        old_secrets = copy.deepcopy(secrets)
+        if secret_id:
+            secrets.get("secrets", {}).pop(secret_id, None)
+        profile["restart_required"] = _profile_is_running(profile)
+        if profile["restart_required"]:
+            fields = set(profile.get("restart_required_fields") or [])
+            fields.add("secrets.engine_api_key_id")
+            profile["restart_required_fields"] = sorted(fields)
+        profile["updated_at"] = _now()
+        plan = _plan_with_profile_secrets(profile, existing_profile_id=profile_id)
+        profiles["profiles"][profile_id] = profile
+        old_units = _unit_names_from_profile(profile)
+        try:
+            _save_secrets_registry(secrets)
+            _save_profiles_registry(profiles)
+            _sync_unit_files(plan, old_unit_names=old_units)
+        except Exception:
+            _save_secrets_registry(old_secrets)
+            _save_profiles_registry(old_registry)
+            raise
+        return {"profile": _public_profile(profile), "removed_secret_id": secret_id}
+
+
 def list_profile_instances(profile_id: str) -> list[dict]:
     profile = get_profile_raw(profile_id)
     return copy.deepcopy(profile.get("instances") or [])
@@ -210,7 +335,7 @@ def render_profile(profile_id: str) -> dict:
         profile = _load_profiles_registry().get("profiles", {}).get(profile_id)
         if not profile:
             raise ProfileNotFoundError(f"Inference profile not found: {profile_id}")
-        return inference_planner.preview_profile(copy.deepcopy(profile), existing_profile_id=profile_id)
+        return inference_planner.preview_profile(_profile_with_secret_values(profile), existing_profile_id=profile_id)
 
 
 def create_profile(body: dict) -> dict:
@@ -249,7 +374,7 @@ def update_profile(profile_id: str, body: dict) -> dict:
         draft = _merge_profile_update(existing, updates)
         draft["id"] = profile_id
         _reject_raw_engine_api_key(draft)
-        plan = _plan_or_raise(draft, existing_profile_id=profile_id)
+        plan = _plan_or_raise(_profile_with_secret_values(draft, existing), existing_profile_id=profile_id)
         profile = _profile_from_plan(draft, plan, existing=existing)
         old_registry = copy.deepcopy(registry)
         old_units = _unit_names_from_profile(existing)
@@ -275,13 +400,20 @@ def delete_profile(profile_id: str, force: bool = False) -> dict:
         if state in _RUNNING_STATES and not force:
             raise ProfileConflictError("Stop the inference profile before deleting it")
         old_registry = copy.deepcopy(registry)
+        secrets = _load_secrets_registry()
+        old_secrets = copy.deepcopy(secrets)
         unit_names = _unit_names_from_profile(profile)
         unit_backups = _read_unit_backups(unit_names)
+        for secret_id in (profile.get("secrets") or {}).values():
+            if secret_id:
+                secrets.get("secrets", {}).pop(secret_id, None)
         del registry["profiles"][profile_id]
         try:
+            _save_secrets_registry(secrets)
             _save_profiles_registry(registry)
             _remove_unit_files(unit_names)
         except Exception:
+            _save_secrets_registry(old_secrets)
             _save_profiles_registry(old_registry)
             _restore_unit_backups(unit_backups)
             raise
@@ -339,6 +471,44 @@ def _plan_or_raise(draft: dict, existing_profile_id: Optional[str]) -> dict:
             "warnings": plan.get("warnings") or [],
         })
     return plan
+
+
+def _plan_with_profile_secrets(profile: dict, existing_profile_id: Optional[str]) -> dict:
+    return _plan_or_raise(_profile_with_secret_values(profile), existing_profile_id=existing_profile_id)
+
+
+def _profile_with_secret_values(profile: dict, existing: Optional[dict] = None, secret_values: Optional[dict] = None) -> dict:
+    draft = copy.deepcopy(profile)
+    source = existing if existing is not None else profile
+    secret_id = (source.get("secrets") or {}).get("engine_api_key_id")
+    if not secret_id:
+        return draft
+    secret_values = secret_values or {}
+    value = secret_values.get(secret_id)
+    if value is None:
+        secret = _load_secrets_registry().get("secrets", {}).get(secret_id)
+        value = secret.get("value") if isinstance(secret, dict) else None
+    if not value:
+        return draft
+    common = draft.get("common") if isinstance(draft.get("common"), dict) else {}
+    common = copy.deepcopy(common)
+    common["api_key"] = value
+    draft["common"] = common
+    return draft
+
+
+def _profile_is_running(profile: dict) -> bool:
+    return str(profile.get("state") or profile.get("status") or "").lower() in _RUNNING_STATES
+
+
+def _public_secret_metadata(secret: dict) -> dict:
+    return {
+        "id": secret.get("id"),
+        "kind": secret.get("kind"),
+        "profile_id": secret.get("profile_id"),
+        "created_at": secret.get("created_at"),
+        "rotated_at": secret.get("rotated_at"),
+    }
 
 
 def _profile_from_plan(draft: dict, plan: dict, existing: Optional[dict] = None) -> dict:
@@ -449,6 +619,7 @@ def _public_command_preview(items: list[dict]) -> list[dict]:
     for item in items:
         clean = copy.deepcopy(item)
         clean.pop("_env_raw", None)
+        clean.pop("_argv_raw", None)
         result.append(clean)
     return result
 

@@ -1832,6 +1832,7 @@ function renderInferenceProfiles(profiles) {
                     <button class="btn primary" onclick="runProfileAction(${profileIdArg},'start')">Start</button>
                     <button class="btn" onclick="runProfileAction(${profileIdArg},'stop')">Stop</button>
                     <button class="btn" onclick="runProfileAction(${profileIdArg},'restart')">Restart</button>
+                    <button class="btn" onclick="loadProfileConnect(${profileIdArg})">Connect</button>
                     <button class="btn" onclick="loadProfileHealth(${profileIdArg})">Health</button>
                     <button class="btn" onclick="loadProfileLogs(${profileIdArg})">Logs</button>
                     <button class="btn danger" onclick="deleteInferenceProfile(${profileIdArg},${labelArg})">Delete</button>
@@ -1908,6 +1909,160 @@ async function loadProfileHealth(profileId) {
         }
     } catch (e) {
         if (detail) detail.innerHTML = `<div class="model-job-error">${esc(e.message)}</div>`;
+    }
+}
+
+function renderClientBundle(bundle, secrets = {}) {
+    if (!bundle) {
+        return '<div class="empty-state">No client bundle available.</div>';
+    }
+    if (bundle.requires_instance) {
+        return `<div class="profile-warning">${esc(bundle.message || 'Select an instance to render a bundle.')}</div>`;
+    }
+    const examples = bundle.examples || {};
+    const headers = bundle.headers || {};
+    const missing = (bundle.secret_state && bundle.secret_state.missing_secret_actions) || [];
+    return `
+        <div class="profile-connect-panel">
+            <div class="profile-preview-title">
+                <span>${esc(bundle.name || 'Connection')}</span>
+                <span class="model-badge">${esc(bundle.exposure_mode || 'local')}</span>
+            </div>
+            <div class="profile-card-line"><strong>Base URL:</strong> ${esc(bundle.base_url || '--')}</div>
+            <div class="profile-card-line"><strong>Model:</strong> ${esc(bundle.model || '--')}</div>
+            ${Object.keys(headers).length ? `
+                <div class="profile-secret-strip">
+                    ${Object.entries(headers).map(([key, value]) => `
+                        <div><span>${esc(key)}</span><code>${esc(value)}</code></div>
+                    `).join('')}
+                </div>
+            ` : '<div class="profile-card-line">No auth headers configured.</div>'}
+            ${secrets.engine_api_key ? `<div class="profile-warning">Engine API key shown once: <code>${esc(secrets.engine_api_key)}</code></div>` : ''}
+            ${secrets.client_secret ? `<div class="profile-warning">Cloudflare Client Secret shown once: <code>${esc(secrets.client_secret)}</code></div>` : ''}
+            ${missing.length ? `<div class="profile-card-line">Missing one-time values: ${esc(missing.join(', '))}</div>` : ''}
+            <div class="client-example-grid">
+                <div>
+                    <div class="launcher-card-meta">curl</div>
+                    <pre class="profile-log-view">${esc(examples.curl || '')}</pre>
+                </div>
+                <div>
+                    <div class="launcher-card-meta">Python</div>
+                    <pre class="profile-log-view">${esc(examples.python_openai || '')}</pre>
+                </div>
+                <div>
+                    <div class="launcher-card-meta">LiteLLM</div>
+                    <pre class="profile-log-view">${esc(examples.litellm || '')}</pre>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderProfileConnect(profileId, data, secrets = {}) {
+    const profile = inferenceProfilesData.find(item => item.id === profileId) || {};
+    const tokens = ((profile.cloudflare || {}).service_tokens || []);
+    const tokenRows = tokens.map(token => {
+        const profileIdArg = jsArg(profileId);
+        const tokenIdArg = jsArg(token.id);
+        return `
+            <div class="profile-token-row">
+                <div>
+                    <div class="launcher-card-title">${esc(token.name || token.id)}</div>
+                    <div class="launcher-card-meta">${esc(token.client_id || '--')} · ${esc(token.state || 'active')} · ${token.owned_by_inframatik ? 'owned' : 'external'}</div>
+                </div>
+                <div class="model-actions">
+                    <button class="btn" onclick="rotateProfileCfToken(${profileIdArg},${tokenIdArg})">Rotate</button>
+                    <button class="btn danger" onclick="retireProfileCfToken(${profileIdArg},${tokenIdArg})">Retire</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+    const profileIdArg = jsArg(profileId);
+    const html = `
+        <div class="profile-actions">
+            <button class="btn" onclick="rotateProfileApiKey(${profileIdArg})">Rotate API Key</button>
+            <button class="btn" onclick="provisionProfileCloudflare(${profileIdArg})">Provision Cloudflare</button>
+            <button class="btn" onclick="generateProfileCfToken(${profileIdArg})">Generate CF Client</button>
+        </div>
+        ${renderClientBundle(data.default || data.client_bundle || data, secrets)}
+        ${tokens.length ? `<div class="profile-token-list">${tokenRows}</div>` : '<div class="profile-card-line">No Cloudflare service-token clients attached.</div>'}
+    `;
+    const detail = document.getElementById(`profile-detail-${profileId}`);
+    if (detail) detail.innerHTML = html;
+}
+
+async function loadProfileConnect(profileId) {
+    const detail = document.getElementById(`profile-detail-${profileId}`);
+    if (detail) detail.textContent = 'Loading connection bundle...';
+    try {
+        const data = await api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/client-bundles`));
+        renderProfileConnect(profileId, data);
+    } catch (e) {
+        if (detail) detail.innerHTML = `<div class="model-job-error">${esc(e.message)}</div>`;
+    }
+}
+
+async function rotateProfileApiKey(profileId) {
+    try {
+        const data = await api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/api-key`), { render_bundle: true });
+        await refreshInferenceProfiles();
+        renderProfileConnect(profileId, data, { engine_api_key: data.engine_api_key });
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+async function provisionProfileCloudflare(profileId) {
+    const profile = inferenceProfilesData.find(item => item.id === profileId) || {};
+    const exposure = profile.exposure || {};
+    const cloudflare = profile.cloudflare || {};
+    const hostname = cloudflare.hostname || exposure.hostname || prompt('Cloudflare hostname');
+    if (!hostname) return;
+    try {
+        const data = await api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/exposure`), {
+            hostname,
+            render_bundle: true,
+        });
+        await refreshInferenceProfiles();
+        renderProfileConnect(profileId, data, { client_secret: data.client_secret });
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+async function generateProfileCfToken(profileId) {
+    try {
+        const data = await api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/service-tokens`), {
+            render_bundle: true,
+        });
+        await refreshInferenceProfiles();
+        renderProfileConnect(profileId, data, { client_secret: data.client_secret });
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+async function rotateProfileCfToken(profileId, tokenId) {
+    if (!confirm('Rotate this Cloudflare client secret? Existing clients using the previous secret may fail until updated.')) return;
+    try {
+        const data = await api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/service-tokens/${encodeURIComponent(tokenId)}/rotate`), {
+            render_bundle: true,
+        });
+        await refreshInferenceProfiles();
+        renderProfileConnect(profileId, data, { client_secret: data.client_secret });
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+async function retireProfileCfToken(profileId, tokenId) {
+    if (!confirm('Retire this Cloudflare client from the profile policy?')) return;
+    try {
+        await api('DELETE', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/cloudflare/service-tokens/${encodeURIComponent(tokenId)}`));
+        await refreshInferenceProfiles();
+        await loadProfileConnect(profileId);
+    } catch (e) {
+        setInferenceError(e.message);
     }
 }
 

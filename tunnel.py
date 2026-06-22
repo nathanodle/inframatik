@@ -474,6 +474,18 @@ def _shape_access_policy(policy: dict) -> dict:
     }
 
 
+def _shape_access_service_token(token: dict) -> dict:
+    return {
+        "id": token.get("id"),
+        "name": token.get("name", ""),
+        "client_id": token.get("client_id", ""),
+        "duration": token.get("duration"),
+        "created_at": token.get("created_at"),
+        "updated_at": token.get("updated_at"),
+        "expires_at": token.get("expires_at"),
+    }
+
+
 def _normalize_access_policy_member(value: str) -> tuple[str, str, dict]:
     raw = (value or "").strip().lower()
     if not raw:
@@ -758,6 +770,138 @@ async def remove_access_policy_member(policy_id: str, value: str) -> dict:
     if not removed:
         raise ValueError(f"Policy does not include {canonical_value}")
     return await update_access_policy(policy_id, _policy_update_payload(policy, updated))
+
+
+def _service_token_include_rules(service_token_ids: list[str]) -> list[dict]:
+    ids = []
+    for token_id in service_token_ids or []:
+        value = str(token_id or "").strip()
+        if value and value not in ids:
+            ids.append(value)
+    if not ids:
+        raise ValueError("At least one service token is required")
+    return [{"service_token": {"token_id": token_id}} for token_id in ids]
+
+
+async def list_access_service_tokens() -> list[dict]:
+    """List Cloudflare Access service tokens for the configured account."""
+    cfg = _require_cf_config()
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/service_tokens"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=_cf_headers(cfg["token"]))
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to fetch Access service tokens from Cloudflare: %s", e)
+        raise ValueError("Failed to list Access service tokens from Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected Access service token list request: %s", data.get("errors"))
+        raise ValueError(f"Failed to list Access service tokens: {data.get('errors')}")
+    return [_shape_access_service_token(item) for item in data.get("result", [])]
+
+
+async def create_access_service_token(name: str, duration: str = "8760h") -> dict:
+    """Create a Cloudflare Access service token. The returned client_secret is one-time only."""
+    cfg = _require_cf_config()
+    token_name = (name or "").strip()
+    if not token_name:
+        raise ValueError("Service token name is required")
+    payload = {"name": token_name, "duration": (duration or "8760h").strip() or "8760h"}
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/service_tokens"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, headers=_cf_headers(cfg["token"]), json=payload)
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to create Access service token in Cloudflare: %s", e)
+        raise ValueError("Failed to create Access service token in Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected Access service token create request: %s", data.get("errors"))
+        raise ValueError(f"Failed to create Access service token: {data.get('errors')}")
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Cloudflare returned an invalid Access service token payload")
+    shaped = _shape_access_service_token(result)
+    shaped["client_secret"] = result.get("client_secret")
+    return shaped
+
+
+async def rotate_access_service_token(service_token_id: str) -> dict:
+    """Rotate a Cloudflare Access service token secret. The returned client_secret is one-time only."""
+    cfg = _require_cf_config()
+    token_id = str(service_token_id or "").strip()
+    if not token_id:
+        raise ValueError("Service token ID is required")
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/service_tokens/{token_id}/rotate"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, headers=_cf_headers(cfg["token"]))
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to rotate Access service token %s in Cloudflare: %s", token_id, e)
+        raise ValueError("Failed to rotate Access service token in Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected Access service token rotate request for %s: %s", token_id, data.get("errors"))
+        raise ValueError(f"Failed to rotate Access service token: {data.get('errors')}")
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Cloudflare returned an invalid Access service token rotation payload")
+    shaped = _shape_access_service_token(result)
+    shaped["client_secret"] = result.get("client_secret")
+    return shaped
+
+
+async def delete_access_service_token(service_token_id: str) -> bool:
+    """Delete a Cloudflare Access service token by ID."""
+    cfg = _require_cf_config()
+    token_id = str(service_token_id or "").strip()
+    if not token_id:
+        raise ValueError("Service token ID is required")
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/service_tokens/{token_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.delete(url, headers=_cf_headers(cfg["token"]))
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to delete Access service token %s in Cloudflare: %s", token_id, e)
+        raise ValueError("Failed to delete Access service token in Cloudflare")
+    return bool(data.get("success", False))
+
+
+async def create_service_auth_policy(name: str, service_token_ids: list[str]) -> dict:
+    """Create a reusable Service Auth policy for one or more Access service tokens."""
+    cfg = _require_cf_config()
+    policy_name = (name or "").strip()
+    if not policy_name:
+        raise ValueError("Policy name is required")
+    payload = {
+        "name": policy_name,
+        "decision": "non_identity",
+        "include": _service_token_include_rules(service_token_ids),
+    }
+    url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/access/policies"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, headers=_cf_headers(cfg["token"]), json=payload)
+            data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        logger.warning("Failed to create Service Auth policy in Cloudflare: %s", e)
+        raise ValueError("Failed to create Service Auth policy in Cloudflare")
+    if not data.get("success"):
+        logger.warning("Cloudflare rejected Service Auth policy create request: %s", data.get("errors"))
+        raise ValueError(f"Failed to create Service Auth policy: {data.get('errors')}")
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Cloudflare returned an invalid Service Auth policy payload")
+    return _shape_access_policy(result)
+
+
+async def update_service_auth_policy_tokens(policy_id: str, service_token_ids: list[str]) -> dict:
+    """Replace service-token include rules on a reusable Service Auth policy."""
+    policy = await get_access_policy(policy_id)
+    payload = _policy_update_payload(policy, _service_token_include_rules(service_token_ids))
+    payload["decision"] = "non_identity"
+    return await update_access_policy(policy_id, payload)
 
 
 # ---------------------------------------------------------------------------

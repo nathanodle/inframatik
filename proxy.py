@@ -299,6 +299,7 @@ async def _handle_local_inference(method: str, route_path: str, query: dict[str,
         return _NO_MATCH
 
     if route_path.startswith("/api/inference/profiles/"):
+        import inference_connect
         import inference_profiles
         import inference_operations
 
@@ -311,9 +312,50 @@ async def _handle_local_inference(method: str, route_path: str, query: dict[str,
         if method == "PUT" and suffix == "":
             return inference_profiles.update_profile(profile_id, body or {})
         if method == "DELETE" and suffix == "":
-            return inference_profiles.delete_profile(profile_id, force=_query_bool(query, "force"))
+            return await inference_connect.delete_profile_with_cleanup(
+                profile_id,
+                force=_query_bool(query, "force"),
+                delete_owned_tokens=_query_bool(query, "delete_owned_tokens"),
+            )
         if method == "POST" and suffix == "/render":
             return inference_profiles.render_profile(profile_id)
+        if method == "POST" and suffix == "/api-key":
+            return inference_connect.rotate_engine_api_key(profile_id, body or {})
+        if method == "DELETE" and suffix == "/api-key":
+            return inference_connect.disable_engine_api_key(profile_id)
+        if method == "POST" and suffix == "/cloudflare/exposure":
+            return await inference_connect.provision_cloudflare_exposure(profile_id, body or {})
+        if method == "DELETE" and suffix == "/cloudflare/exposure":
+            return await inference_connect.remove_cloudflare_exposure(
+                profile_id,
+                delete_owned_tokens=_query_bool(query, "delete_owned_tokens"),
+            )
+        if method == "POST" and suffix == "/cloudflare/service-tokens":
+            return await inference_connect.generate_cloudflare_service_token(profile_id, body or {})
+        if len(parts) >= 4 and parts[1] == "cloudflare" and parts[2] == "service-tokens":
+            token_id = parts[3]
+            token_suffix = "/" + "/".join(parts[4:]) if len(parts) > 4 else ""
+            if method == "POST" and token_suffix == "/rotate":
+                return await inference_connect.rotate_cloudflare_service_token(profile_id, token_id, body or {})
+            if method == "DELETE" and token_suffix == "":
+                return await inference_connect.retire_cloudflare_service_token(
+                    profile_id,
+                    token_id,
+                    delete_if_owned=_query_bool(query, "delete_if_owned"),
+                )
+        if method == "GET" and suffix == "/client-bundles":
+            return inference_connect.list_client_bundles(profile_id)
+        if method == "POST" and suffix == "/client-bundles/render":
+            return inference_connect.render_client_bundle(profile_id, body or {})
+        if method == "POST" and suffix == "/client-bundles":
+            return inference_connect.save_client_bundle(profile_id, body or {})
+        if len(parts) >= 3 and parts[1] == "client-bundles":
+            bundle_id = parts[2]
+            bundle_suffix = "/" + "/".join(parts[3:]) if len(parts) > 3 else ""
+            if method == "PUT" and bundle_suffix == "":
+                return inference_connect.save_client_bundle(profile_id, {**(body or {}), "id": bundle_id})
+            if method == "DELETE" and bundle_suffix == "":
+                return inference_connect.delete_client_bundle(profile_id, bundle_id)
         if method == "POST" and suffix == "/start":
             return await inference_operations.start_profile(profile_id)
         if method == "POST" and suffix == "/stop":
@@ -346,6 +388,26 @@ async def _handle_local_inference(method: str, route_path: str, query: dict[str,
                 return await inference_operations.get_instance_health(profile_id, instance_index)
             if method == "POST" and instance_suffix == "/test":
                 return await inference_operations.test_instance(profile_id, instance_index, body or {})
+        return _NO_MATCH
+
+    if route_path == "/api/inference/cleanup":
+        import inference_connect
+
+        if method == "GET":
+            return inference_connect.list_cleanup_records()
+        return _NO_MATCH
+
+    if route_path.startswith("/api/inference/cleanup/"):
+        import inference_connect
+
+        tail = route_path[len("/api/inference/cleanup/"):]
+        parts = tail.split("/")
+        record_id = parts[0]
+        suffix = "/" + "/".join(parts[1:]) if len(parts) > 1 else ""
+        if method == "POST" and suffix == "/retry":
+            return await inference_connect.retry_cleanup_record(record_id)
+        if method == "DELETE" and suffix == "":
+            return inference_connect.forget_cleanup_record(record_id)
         return _NO_MATCH
 
     if route_path == "/api/inference/operations":

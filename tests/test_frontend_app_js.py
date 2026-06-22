@@ -618,6 +618,11 @@ def test_static_inference_model_ui_assets_present():
     assert "/api/inference/profiles" in app_js
     assert "/api/inference/launchers" in app_js
     assert "/api/inference/operations" in app_js
+    assert "client-bundles" in app_js
+    assert "cloudflare/service-tokens" in app_js
+    assert "cloudflare/exposure" in app_js
+    assert "rotateProfileApiKey" in app_js
+    assert "loadProfileConnect" in app_js
     assert "activeInferenceTab = 'profiles'" in app_js
     assert "refreshInferenceProfiles" in app_js
     assert "submitModelImport" in app_js
@@ -634,6 +639,8 @@ def test_static_inference_model_ui_assets_present():
     assert ".launcher-card" in style_css
     assert ".profile-card" in style_css
     assert ".profile-preview-panel" in style_css
+    assert ".profile-connect-panel" in style_css
+    assert ".profile-token-row" in style_css
 
 
 def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():
