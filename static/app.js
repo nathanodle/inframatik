@@ -1864,7 +1864,6 @@ function renderInferenceSnapshotForActiveTab(snapshot) {
 
     if (activeInferenceTab === 'profiles') {
         renderInferenceProfiles(profiles);
-        renderInferenceOperations(operations);
     } else if (activeInferenceTab === 'launchers') {
         renderLaunchers(launchers);
     } else if (activeInferenceTab === 'jobs') {
@@ -1961,7 +1960,7 @@ async function refreshInferenceProfiles() {
         renderProfileSelects();
         renderInferenceGpuHints();
         renderInferenceProfiles(inferenceProfilesData);
-        renderInferenceOperations(inferenceOperationsData);
+        renderInferenceOperationsIfVisible();
         hydrateVisibleInferenceFailures(nodeId);
         updateInferencePolling();
     } catch (e) {
@@ -1990,7 +1989,7 @@ async function refreshInferenceJobs() {
             models: inferenceModelData,
             operations: inferenceOperationsData,
         });
-        renderInferenceOperations(inferenceOperationsData);
+        renderInferenceOperationsIfVisible();
         renderModelJobs(models.jobs || []);
         hydrateVisibleInferenceFailures(nodeId);
         clearTransientInferenceStatus();
@@ -3537,7 +3536,9 @@ async function hydrateInferenceFailureDiagnostics(operation, nodeId = selectedNo
 
 function hydrateVisibleInferenceFailures(nodeId = selectedNodeId) {
     (inferenceOperationsData || []).forEach(operation => {
-        hydrateInferenceFailureDiagnostics(operation, nodeId);
+        if (inferenceFailureDiagnosticsVisible(operation)) {
+            hydrateInferenceFailureDiagnostics(operation, nodeId);
+        }
     });
 }
 
@@ -3996,6 +3997,23 @@ function shouldUseInferenceOperationWs(nodeId) {
     return wsConnected;
 }
 
+function shouldRenderInferenceOperationList() {
+    return currentAppView === 'inference' && activeInferenceTab === 'jobs';
+}
+
+function renderInferenceOperationsIfVisible() {
+    if (shouldRenderInferenceOperationList()) {
+        renderInferenceOperations(inferenceOperationsData || []);
+    }
+}
+
+function inferenceFailureDiagnosticsVisible(operation) {
+    if (currentAppView !== 'inference') return false;
+    if (activeInferenceTab === 'jobs') return true;
+    if (activeInferenceTab !== 'profiles' || !operation || !operation.profile_id) return false;
+    return (inferenceProfilesData || []).some(profile => profile.id === operation.profile_id);
+}
+
 function mergeInferenceOperation(operation, options = {}) {
     if (!operation || !operation.id) return;
     inferenceOperationsData = [
@@ -4019,8 +4037,8 @@ function mergeInferenceOperation(operation, options = {}) {
         if (operation.profile_id) updateInferenceProfileCard(operation.profile_id);
         else renderInferenceProfiles(inferenceProfilesData);
     }
-    renderInferenceOperations(inferenceOperationsData);
-    if (options.hydrateLogs !== false) {
+    renderInferenceOperationsIfVisible();
+    if (options.hydrateLogs !== false && inferenceFailureDiagnosticsVisible(operation)) {
         hydrateInferenceFailureDiagnostics(operation);
     }
     saveInferenceNodeSnapshot(selectedNodeId, { operations: inferenceOperationsData });
@@ -4128,7 +4146,7 @@ function mergeInferenceOperationSnapshot(operations, nodeId = selectedNodeId) {
     if (currentAppView === 'inference' && activeInferenceTab === 'profiles') {
         touchedProfileIds.forEach(profileId => updateInferenceProfileCard(profileId));
     }
-    renderInferenceOperations(inferenceOperationsData);
+    renderInferenceOperationsIfVisible();
     hydrateVisibleInferenceFailures(nodeId);
     saveInferenceNodeSnapshot(nodeId, {
         profiles: inferenceProfilesData,
@@ -5873,7 +5891,7 @@ function showStartedModelJob(job, message) {
     setInferenceStatus(message);
     setInferenceTab('jobs');
     mergeModelJob(job);
-    renderInferenceOperations(inferenceOperationsData);
+    renderInferenceOperationsIfVisible();
 }
 
 async function submitModelImport() {

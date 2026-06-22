@@ -1352,9 +1352,61 @@ def test_app_js_cloudflare_section_gating_by_role():
                     thinActionResult.operation.kind === 'profile_start' &&
                     thinActionResult.operation.state === 'queued' &&
                     thinActionResult.pendingAction === 'start' &&
-                    thinActionResult.calls.some(call => call[0] === 'renderOperations' && call[1] === 'qwen' && call[2] === 'profile_start') &&
+                    thinActionResult.calls.some(call => call[0] === 'updateCard' && call[1] === 'qwen') &&
+                    !thinActionResult.calls.some(call => call[0] === 'renderOperations') &&
                     thinActionResult.calls.some(call => call[0] === 'status' && String(call[1]).includes('operation queued')),
-                    'thin accepted profile action responses should be normalized before rendering'
+                    'thin accepted profile action responses should be normalized and update the visible profile card without rebuilding hidden jobs'
+                );
+
+                const hiddenOperationRenderResult = vm.runInContext(`
+                    (() => {
+                        const calls = [];
+                        const originalRenderOperations = renderInferenceOperations;
+                        const originalHydrateFailure = hydrateInferenceFailureDiagnostics;
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        currentAppView = 'inference';
+                        inferenceProfilesData = [{ id: 'qwen', display_name: 'Qwen', state: 'failed', instances: [] }];
+                        inferenceOperationsData = [];
+                        renderInferenceOperations = function(operations) {
+                            calls.push(['renderOperations', activeInferenceTab, operations[0] && operations[0].id]);
+                        };
+                        hydrateInferenceFailureDiagnostics = function(operation) {
+                            calls.push(['hydrate', activeInferenceTab, operation && operation.id]);
+                        };
+                        setInferenceError = function(message) {
+                            if (message) calls.push(['error', message]);
+                        };
+                        try {
+                            activeInferenceTab = 'models';
+                            mergeInferenceOperation({
+                                id: 'op-hidden',
+                                kind: 'profile_start',
+                                state: 'failed',
+                                profile_id: 'qwen',
+                                result: { message: 'failed before logs' },
+                            });
+                            activeInferenceTab = 'jobs';
+                            mergeInferenceOperation({
+                                id: 'op-visible',
+                                kind: 'profile_start',
+                                state: 'failed',
+                                profile_id: 'qwen',
+                                result: { message: 'failed before logs' },
+                            });
+                            return calls;
+                        } finally {
+                            renderInferenceOperations = originalRenderOperations;
+                            hydrateInferenceFailureDiagnostics = originalHydrateFailure;
+                        }
+                    })()
+                `, context);
+                assert(
+                    !hiddenOperationRenderResult.some(call => call[0] === 'renderOperations' && call[1] === 'models') &&
+                    !hiddenOperationRenderResult.some(call => call[0] === 'hydrate' && call[1] === 'models') &&
+                    hiddenOperationRenderResult.some(call => call[0] === 'renderOperations' && call[1] === 'jobs' && call[2] === 'op-visible') &&
+                    hiddenOperationRenderResult.some(call => call[0] === 'hydrate' && call[1] === 'jobs' && call[2] === 'op-visible'),
+                    'operation events should avoid hidden tab DOM/log work while keeping the visible Jobs tab live'
                 );
 
                 const acceptedReconcileResult = await vm.runInContext(`
