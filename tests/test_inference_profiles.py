@@ -275,14 +275,21 @@ def test_http_profile_api_create_list_render_delete(tmp_path: Path):
                     listed = await client.get("/api/inference/profiles")
                     detail = await client.get("/api/inference/profiles/qwen")
                     rendered = await client.post("/api/inference/profiles/qwen/render")
+                    exported = await client.get("/api/inference/profiles/qwen/export")
                     deleted = await client.delete("/api/inference/profiles/qwen")
-                    return created, listed, detail, rendered, deleted
+                    return created, listed, detail, rendered, exported, deleted
 
-        created, listed, detail, rendered, deleted = _run(scenario())
+        created, listed, detail, rendered, exported, deleted = _run(scenario())
         assert created.status_code == 201
         assert listed.json()["profiles"][0]["id"] == "qwen"
         assert detail.json()["units"][0]["exists"] is True
         assert rendered.json()["valid_for_save"] is True
+        assert exported.status_code == 200
+        assert exported.json()["profile"]["id"] == "qwen"
+        assert exported.json()["validation"]["valid_for_save"] is True
+        assert "node-local" in exported.json()["warning"]
+        assert "profile-secret" not in json.dumps(exported.json())
+        assert "launcher-secret" not in json.dumps(exported.json())
         assert deleted.json()["deleted"] == "qwen"
         assert not (ctx["unit_dir"] / "infra-llm-qwen.service").exists()
 

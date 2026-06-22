@@ -624,6 +624,11 @@ def test_static_inference_model_ui_assets_present():
     assert "client-bundles" in app_js
     assert "cloudflare/service-tokens" in app_js
     assert "cloudflare/exposure" in app_js
+    assert "loadProfileDetails" in app_js
+    assert "runInstanceAction" in app_js
+    assert "runProfileTest" in app_js
+    assert "exportInferenceProfile" in app_js
+    assert "/api/inference/profiles/${encodeURIComponent(profileId)}/export" in app_js
     assert "rotateProfileApiKey" in app_js
     assert "loadProfileConnect" in app_js
     assert "activeInferenceTab = 'profiles'" in app_js
@@ -649,6 +654,9 @@ def test_static_inference_model_ui_assets_present():
     assert ".model-job-row" in style_css
     assert ".launcher-card" in style_css
     assert ".profile-card" in style_css
+    assert ".profile-detail-panel" in style_css
+    assert ".profile-instance-row" in style_css
+    assert ".profile-test-panel" in style_css
     assert ".profile-config-chips" in style_css
     assert ".profile-gpu-chip" in style_css
     assert ".profile-preview-panel" in style_css

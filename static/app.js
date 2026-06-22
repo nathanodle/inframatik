@@ -71,7 +71,11 @@ let inferenceProfilesData = [];
 let inferenceOperationsData = [];
 let inferenceSystemData = null;
 let pendingInferenceProfileActions = new Map();
+let pendingInferenceInstanceActions = new Map();
 let inferenceOperationWatchers = new Set();
+let profileDetailCache = new Map();
+let profileDetailModes = new Map();
+let profileOutputCache = new Map();
 let inferenceJobsTimer = null;
 let activeInferenceTab = 'profiles';
 const ACTIVE_MODEL_JOB_STATES = new Set(['queued', 'running', 'hashing', 'verifying']);
@@ -268,6 +272,17 @@ document.addEventListener('click', (e) => {
             profileActionButton.dataset.profileId || '',
             profileActionButton.dataset.profileAction || '',
             profileActionButton
+        );
+        return;
+    }
+    const instanceActionButton = e.target.closest('[data-instance-action]');
+    if (instanceActionButton) {
+        e.preventDefault();
+        runInstanceAction(
+            instanceActionButton.dataset.profileId || '',
+            Number(instanceActionButton.dataset.instanceIndex),
+            instanceActionButton.dataset.instanceAction || '',
+            instanceActionButton
         );
         return;
     }
@@ -1946,7 +1961,7 @@ function renderInferenceProfiles(profiles) {
         setHtmlIfChanged(el, '<div class="empty-state">No inference profiles yet.</div>');
         return;
     }
-    setHtmlIfChanged(el, profiles.map(profile => {
+    const html = profiles.map(profile => {
         const instances = profile.instances || [];
         const instanceText = instances.map(item => `${item.host}:${item.port}${item.gpu_ids && item.gpu_ids.length ? ` · GPU ${item.gpu_ids.join(',')}` : ''}`).join(' / ') || 'no instances';
         const configChips = profileConfigChips(profile);
@@ -1979,18 +1994,23 @@ function renderInferenceProfiles(profiles) {
                 ${failedOp ? renderProfileFailureDiagnostic(failedOp) : ''}
                 <div class="model-actions profile-actions">
                     <button type="button" class="btn" onclick="editInferenceProfile(${profileIdArg})">Edit</button>
+                    <button type="button" class="btn" onclick="loadProfileDetails(${profileIdArg})">Details</button>
                     <button type="button" class="btn primary" data-profile-id="${profileIdData}" data-profile-action="start"${disabled}>Start</button>
                     <button type="button" class="btn" data-profile-id="${profileIdData}" data-profile-action="stop"${disabled}>Stop</button>
                     <button type="button" class="btn" data-profile-id="${profileIdData}" data-profile-action="restart"${disabled}>Restart</button>
                     <button type="button" class="btn" onclick="loadProfileConnect(${profileIdArg})">Connect</button>
+                    <button type="button" class="btn" onclick="loadProfileTest(${profileIdArg})">Test</button>
                     <button type="button" class="btn" onclick="loadProfileHealth(${profileIdArg})">Health</button>
                     <button type="button" class="btn" onclick="loadProfileLogs(${profileIdArg})">Logs</button>
+                    <button type="button" class="btn" onclick="exportInferenceProfile(${profileIdArg})">Export</button>
                     <button type="button" class="btn danger" onclick="deleteInferenceProfile(${profileIdArg},${labelArg})">Delete</button>
                 </div>
                 <div class="profile-card-detail" id="profile-detail-${esc(profile.id)}"></div>
             </div>
         `;
-    }).join(''));
+    }).join('');
+    setHtmlIfChanged(el, html);
+    restoreProfileDetails();
 }
 
 function operationResultDetail(operation) {
@@ -2021,6 +2041,312 @@ function renderProfileFailureDiagnostic(operation) {
             ${logBlock}
         </details>
     `;
+}
+
+function profileDetailId(profileId) {
+    return `profile-detail-${profileId}`;
+}
+
+function profileDetailOutputId(profileId) {
+    return `profile-detail-output-${profileId}`;
+}
+
+function setProfileDetail(profileId, html, mode = 'custom') {
+    profileDetailCache.set(profileId, html);
+    profileDetailModes.set(profileId, mode);
+    if (mode !== 'details') profileOutputCache.delete(profileId);
+    setElementHtml(profileDetailId(profileId), html);
+    restoreProfileOutput(profileId);
+}
+
+function restoreProfileDetails() {
+    profileDetailCache.forEach((html, profileId) => {
+        const el = document.getElementById(profileDetailId(profileId));
+        if (el) {
+            setHtmlIfChanged(el, html);
+            restoreProfileOutput(profileId);
+        }
+    });
+}
+
+function clearProfileDetail(profileId) {
+    profileDetailCache.delete(profileId);
+    profileDetailModes.delete(profileId);
+    profileOutputCache.delete(profileId);
+    setElementHtml(profileDetailId(profileId), '');
+}
+
+function restoreProfileOutput(profileId) {
+    if (!profileOutputCache.has(profileId)) return;
+    const output = document.getElementById(profileDetailOutputId(profileId));
+    if (output) setHtmlIfChanged(output, profileOutputCache.get(profileId));
+}
+
+function setProfileOutput(profileId, html) {
+    const output = document.getElementById(profileDetailOutputId(profileId));
+    if (output) {
+        profileOutputCache.set(profileId, html);
+        setHtmlIfChanged(output, html);
+        return;
+    }
+    setProfileDetail(profileId, html, 'custom');
+}
+
+function instanceActionKey(profileId, instanceIndex) {
+    return `${profileId}:${instanceIndex}`;
+}
+
+function profileById(profileId) {
+    return inferenceProfilesData.find(item => item.id === profileId) || null;
+}
+
+function profileInstanceGpuText(instance) {
+    const ids = instance.gpu_ids || [];
+    if (!ids.length) return 'none';
+    const gpus = (inferenceSystemData && inferenceSystemData.gpus) || [];
+    return ids.map(id => {
+        const gpu = gpus.find(item => Number(item.index) === Number(id));
+        if (!gpu) return `GPU ${id}`;
+        const total = Number(gpu.mem_total_mb || 0);
+        const used = Number(gpu.mem_used_mb || 0);
+        const free = Math.max(0, total - used);
+        const mem = total ? ` · ${formatBytes(free * 1048576)} free` : '';
+        const util = gpu.util_percent !== undefined ? ` · ${gpu.util_percent}% util` : '';
+        return `GPU ${id} ${gpu.name || ''}${mem}${util}`;
+    }).join(' / ');
+}
+
+function profileSummaryFacts(profile) {
+    const common = profile.common || {};
+    const deployment = profile.deployment || {};
+    const exposure = profile.exposure || {};
+    const gpuPolicy = deployment.gpu_policy || {};
+    const facts = [
+        ['Engine', profile.engine || '--'],
+        ['Launcher', profile.engine_launcher_id || '--'],
+        ['Model', profile.model ? `${profile.model.artifact_id}@${profile.model.snapshot || ''}` : '--'],
+        ['Endpoint', exposure.mode === 'cloudflare' ? (exposure.hostname || (profile.cloudflare || {}).hostname || 'Cloudflare') : (exposure.mode || 'local')],
+        ['Context', common.context_length || '--'],
+        ['DType', common.dtype || '--'],
+        ['Quantization', common.quantization || '--'],
+        ['Parallelism', `TP ${common.tensor_parallel || 1} · PP ${common.pipeline_parallel || 1} · DP ${common.data_parallel || 1}`],
+        ['Deployment', deployment.mode || 'single'],
+        ['GPU claim', gpuPolicy.claim_mode || 'exclusive'],
+    ];
+    return facts.map(([label, value]) => `
+        <div><span>${esc(label)}</span><code>${esc(value)}</code></div>
+    `).join('');
+}
+
+function renderProfileIssues(plan) {
+    const blockers = plan.blockers || [];
+    const warnings = plan.warnings || [];
+    return `
+        ${blockers.length ? `<div class="profile-issue-list">${blockers.map(item => `<div class="model-job-error">${esc(item.message || item)}</div>`).join('')}</div>` : ''}
+        ${warnings.length ? `<div class="profile-issue-list">${warnings.map(item => `<div class="profile-warning">${esc(item.message || item)}</div>`).join('')}</div>` : ''}
+    `;
+}
+
+function renderCommandPreview(plan) {
+    const commands = plan.command_preview || [];
+    if (!commands.length) return '<div class="empty-state compact">No command preview available.</div>';
+    return commands.map(command => `
+        <div class="profile-command-block">
+            <div class="launcher-card-meta">${esc(command.index !== undefined ? `instance ${command.index}` : 'command')}</div>
+            <pre class="profile-log-view">${esc((command.argv || []).join(' ') || 'No command rendered.')}</pre>
+        </div>
+    `).join('');
+}
+
+function renderProfileInstanceRows(profile, healthData) {
+    const profileIdData = esc(profile.id);
+    const activeOp = (inferenceOperationsData || []).find(item => item.profile_id === profile.id && ACTIVE_INFERENCE_OPERATION_STATES.has(item.state));
+    const healthByIndex = new Map((healthData.instances || []).map(item => [Number(item.index), item]));
+    const rows = (profile.instances || []).map(instance => {
+        const index = Number(instance.index || 0);
+        const health = healthByIndex.get(index) || instance;
+        const pending = pendingInferenceInstanceActions.get(instanceActionKey(profile.id, index));
+        const disabled = activeOp || pending ? ' disabled' : '';
+        const profileIdArg = jsArg(profile.id);
+        const indexArg = Number(index);
+        return `
+            <div class="profile-instance-row">
+                <div>
+                    <strong>#${esc(index)}</strong>
+                    <span>${profileStateBadge(health.health || instance.state || 'unknown')}</span>
+                </div>
+                <div><span>Endpoint</span><code>${esc(instance.host || '127.0.0.1')}:${esc(instance.port || '--')}</code></div>
+                <div><span>GPU</span><code>${esc(profileInstanceGpuText(instance))}</code></div>
+                <div><span>Unit</span><code>${esc(instance.unit || '--')}</code></div>
+                <div><span>Systemd</span><code>${esc(health.systemd_state || '--')} · TCP ${health.tcp_reachable ? 'yes' : 'no'}</code></div>
+                <div class="model-actions">
+                    <button type="button" class="btn" data-profile-id="${profileIdData}" data-instance-index="${indexArg}" data-instance-action="start"${disabled}>Start</button>
+                    <button type="button" class="btn" data-profile-id="${profileIdData}" data-instance-index="${indexArg}" data-instance-action="stop"${disabled}>Stop</button>
+                    <button type="button" class="btn" data-profile-id="${profileIdData}" data-instance-index="${indexArg}" data-instance-action="restart"${disabled}>Restart</button>
+                    <button type="button" class="btn" onclick="loadProfileLogs(${profileIdArg}, ${indexArg})">Logs</button>
+                    <button type="button" class="btn" onclick="loadProfileTest(${profileIdArg}, ${indexArg})">Test</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+    return rows || '<div class="empty-state compact">No resolved instances.</div>';
+}
+
+function renderProfileDetail(profile, healthData, plan) {
+    const profileIdArg = jsArg(profile.id);
+    const chips = profileConfigChips(profile);
+    return `
+        <div class="profile-detail-panel">
+            <div class="profile-detail-header">
+                <div>
+                    <div class="launcher-card-title">${esc(profile.display_name || profile.id)}</div>
+                    <div class="launcher-card-meta">${esc(profile.id)} · ${esc(profile.engine || '--')} · ${esc(profile.engine_launcher_id || '--')}</div>
+                </div>
+                <div class="connect-status-row">
+                    ${profileStateBadge(healthData.health || profile.state)}
+                    ${chips.slice(0, 4).map(chip => `<span class="model-badge">${esc(chip)}</span>`).join('')}
+                </div>
+            </div>
+            <div class="profile-detail-actions">
+                <button type="button" class="btn" onclick="loadProfileDetails(${profileIdArg})">Refresh</button>
+                <button type="button" class="btn" onclick="loadProfileTest(${profileIdArg})">Test</button>
+                <button type="button" class="btn" onclick="loadProfileLogs(${profileIdArg})">Logs</button>
+                <button type="button" class="btn" onclick="loadProfileConnect(${profileIdArg})">Connect</button>
+                <button type="button" class="btn" onclick="exportInferenceProfile(${profileIdArg})">Export</button>
+                <button type="button" class="btn" onclick="clearProfileDetail(${profileIdArg})">Close</button>
+            </div>
+            ${profile.restart_required ? `<div class="profile-warning">Restart required: ${esc((profile.restart_required_fields || []).join(', ') || 'saved runtime changes')}</div>` : ''}
+            <div class="connect-facts profile-detail-facts">${profileSummaryFacts(profile)}</div>
+            <div class="connect-section-header compact">
+                <div class="launcher-card-title">Instances</div>
+            </div>
+            <div class="profile-instance-table">${renderProfileInstanceRows(profile, healthData)}</div>
+            ${renderProfileIssues(plan)}
+            <details class="profile-command-preview">
+                <summary>Command Preview</summary>
+                ${renderCommandPreview(plan)}
+            </details>
+            <div class="profile-detail-output" id="${esc(profileDetailOutputId(profile.id))}"></div>
+        </div>
+    `;
+}
+
+async function loadProfileDetails(profileId) {
+    setProfileDetail(profileId, '<div class="empty-state compact">Loading profile details...</div>', 'details');
+    try {
+        const localProfile = profileById(profileId);
+        const [profile, healthData, plan] = await Promise.all([
+            localProfile ? Promise.resolve(localProfile) : api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}`)),
+            api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/instances`)),
+            api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/render`)),
+        ]);
+        setProfileDetail(profileId, renderProfileDetail(profile, healthData, plan), 'details');
+    } catch (e) {
+        setProfileDetail(profileId, `<div class="model-job-error">${esc(e.message)}</div>`, 'details');
+    }
+}
+
+function renderProfileHealthOutput(data) {
+    return `
+        <div class="profile-health-summary">${profileStateBadge(data.health)}</div>
+        ${(data.instances || []).map(item => `
+            <div class="profile-card-line">${esc(item.unit)} · ${esc(item.systemd_state)} · TCP ${item.tcp_reachable ? 'yes' : 'no'} · ${esc(item.health || 'unknown')}</div>
+        `).join('') || '<div class="empty-state compact">No instances.</div>'}
+    `;
+}
+
+function renderProfileTestForm(profileId, selectedInstance = null, result = null, error = '') {
+    const profile = profileById(profileId) || {};
+    const options = (profile.instances || []).map(instance => {
+        const index = Number(instance.index || 0);
+        return `<option value="${index}" ${selectedInstance !== null && Number(selectedInstance) === index ? 'selected' : ''}>Instance ${index} · ${esc(instance.host || '127.0.0.1')}:${esc(instance.port || '--')}</option>`;
+    }).join('');
+    return `
+        <div class="profile-test-panel">
+            <div class="connect-section-header">
+                <div>
+                    <div class="launcher-card-title">Manual Test</div>
+                    <div class="launcher-card-meta">Local instance request from the selected node</div>
+                </div>
+            </div>
+            <div class="profile-test-grid">
+                <select id="profile-test-instance-${esc(profileId)}">
+                    ${options || '<option value="">Default instance</option>'}
+                </select>
+                <select id="profile-test-method-${esc(profileId)}">
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                </select>
+                <input type="text" id="profile-test-path-${esc(profileId)}" value="/v1/models" autocomplete="off">
+            </div>
+            <textarea id="profile-test-body-${esc(profileId)}" rows="5" placeholder='{"model":"...","messages":[{"role":"user","content":"ping"}]}'></textarea>
+            <div class="profile-detail-actions">
+                <button type="button" class="btn primary" onclick="runProfileTest(${jsArg(profileId)})">Run Test</button>
+            </div>
+            ${error ? `<div class="model-job-error">${esc(error)}</div>` : ''}
+            ${result ? `
+                <div class="profile-test-result">
+                    <div class="connect-facts">
+                        <div><span>Status</span><code>${esc(result.status_code || '--')}</code></div>
+                        <div><span>Latency</span><code>${esc(result.latency_ms !== undefined ? `${result.latency_ms}ms` : '--')}</code></div>
+                        <div><span>URL</span><code>${esc(result.url || '--')}</code></div>
+                        <div><span>Target</span><code>${esc(result.target_mode || '--')} · instance ${esc(result.instance_index ?? '--')}</code></div>
+                    </div>
+                    <pre class="profile-log-view">${esc(result.body_preview || '')}</pre>
+                </div>
+            ` : ''}
+        </div>
+    `;
+}
+
+async function loadProfileTest(profileId, instanceIndex = null) {
+    setProfileOutput(profileId, renderProfileTestForm(profileId, instanceIndex));
+}
+
+async function runProfileTest(profileId) {
+    const selected = document.getElementById(`profile-test-instance-${profileId}`);
+    const methodEl = document.getElementById(`profile-test-method-${profileId}`);
+    const pathEl = document.getElementById(`profile-test-path-${profileId}`);
+    const bodyEl = document.getElementById(`profile-test-body-${profileId}`);
+    const instanceValue = selected ? selected.value : '';
+    const payload = {
+        method: methodEl ? methodEl.value : 'GET',
+        path: pathEl ? pathEl.value : '/v1/models',
+        timeout: 60,
+    };
+    if (instanceValue !== '') payload.instance = Number(instanceValue);
+    const bodyText = bodyEl ? bodyEl.value.trim() : '';
+    try {
+        if (bodyText) payload.body = JSON.parse(bodyText);
+    } catch (e) {
+        setProfileOutput(profileId, renderProfileTestForm(profileId, instanceValue === '' ? null : Number(instanceValue), null, `Request body must be valid JSON: ${e.message}`));
+        return;
+    }
+    setProfileOutput(profileId, '<div class="empty-state compact">Running test request...</div>');
+    try {
+        const data = await api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/test`), payload);
+        setProfileOutput(profileId, renderProfileTestForm(profileId, data.instance_index, data));
+    } catch (e) {
+        setProfileOutput(profileId, renderProfileTestForm(profileId, instanceValue === '' ? null : Number(instanceValue), null, e.message));
+    }
+}
+
+async function exportInferenceProfile(profileId) {
+    try {
+        const data = await api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/export`));
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${profileId}-inference-profile.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setInferenceStatus(`Exported profile ${profileId}.`);
+    } catch (e) {
+        setInferenceError(e.message);
+    }
 }
 
 function editInferenceProfile(profileId) {
@@ -2062,6 +2388,9 @@ function mergeInferenceOperation(operation) {
     ];
     if (operation.profile_id && isTerminalInferenceOperation(operation)) {
         pendingInferenceProfileActions.delete(operation.profile_id);
+        if (operation.instance_index !== null && operation.instance_index !== undefined) {
+            pendingInferenceInstanceActions.delete(instanceActionKey(operation.profile_id, operation.instance_index));
+        }
         if (operation.state === 'succeeded') {
             setInferenceStatus(`${operation.kind || 'Operation'} completed for ${operation.profile_id}.`);
         } else if (operation.state === 'failed') {
@@ -2078,7 +2407,11 @@ function mergeInferenceOperation(operation) {
 function handleInferenceOperationEvent(operation) {
     mergeInferenceOperation(operation);
     if (isTerminalInferenceOperation(operation) && currentAppView === 'inference') {
-        refreshInferenceProfiles();
+        refreshInferenceProfiles().then(() => {
+            if (operation.profile_id && profileDetailModes.get(operation.profile_id) === 'details') {
+                loadProfileDetails(operation.profile_id);
+            }
+        });
     }
 }
 
@@ -2141,6 +2474,33 @@ async function runProfileAction(profileId, action, button) {
     }
 }
 
+async function runInstanceAction(profileId, instanceIndex, action, button) {
+    if (!profileId || !Number.isInteger(instanceIndex) || !['start', 'stop', 'restart'].includes(action)) return;
+    const nodeId = selectedNodeId;
+    const key = instanceActionKey(profileId, instanceIndex);
+    setInferenceError('');
+    setInferenceStatus(`${profileActionLabel(action)} queued for ${profileId}[${instanceIndex}]...`);
+    pendingInferenceInstanceActions.set(key, action);
+    if (button) button.disabled = true;
+    renderInferenceProfiles(inferenceProfilesData);
+    try {
+        const operation = await api(
+            'POST',
+            nodePathFor(nodeId, `/api/inference/profiles/${encodeURIComponent(profileId)}/instances/${encodeURIComponent(instanceIndex)}/${action}`)
+        );
+        mergeInferenceOperation(operation);
+        setInferenceStatus(`${profileActionLabel(action)} operation queued for ${profileId}[${instanceIndex}].`);
+        if (!shouldUseInferenceOperationWs(nodeId)) {
+            watchInferenceOperation(operation.id, nodeId);
+        }
+    } catch (e) {
+        pendingInferenceInstanceActions.delete(key);
+        if (button) button.disabled = false;
+        setInferenceError(e.message);
+        renderInferenceProfiles(inferenceProfilesData);
+    }
+}
+
 async function watchInferenceOperation(operationId, nodeId = selectedNodeId) {
     if (!operationId) return null;
     if (inferenceOperationWatchers.has(operationId)) return null;
@@ -2151,7 +2511,12 @@ async function watchInferenceOperation(operationId, nodeId = selectedNodeId) {
             mergeInferenceOperation(op);
             if (!ACTIVE_INFERENCE_OPERATION_STATES.has(op.state)) {
                 inferenceOperationWatchers.delete(operationId);
-                if (currentAppView === 'inference' && nodeId === selectedNodeId) refreshInferenceProfiles();
+                if (currentAppView === 'inference' && nodeId === selectedNodeId) {
+                    await refreshInferenceProfiles();
+                    if (op.profile_id && profileDetailModes.get(op.profile_id) === 'details') {
+                        await loadProfileDetails(op.profile_id);
+                    }
+                }
                 return op;
             }
         } catch (e) {
@@ -2163,32 +2528,35 @@ async function watchInferenceOperation(operationId, nodeId = selectedNodeId) {
     return null;
 }
 
-async function loadProfileLogs(profileId) {
+async function loadProfileLogs(profileId, instanceIndex = null) {
     const detail = document.getElementById(`profile-detail-${profileId}`);
-    if (detail) detail.textContent = 'Loading logs...';
+    const label = instanceIndex === null ? 'profile' : `instance ${instanceIndex}`;
+    if (detail) setProfileOutput(profileId, `<div class="empty-state compact">Loading ${esc(label)} logs...</div>`);
     try {
-        const data = await api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/logs?lines=120`));
-        if (detail) detail.innerHTML = `<pre class="profile-log-view">${esc(data.logs || 'No logs.')}</pre>`;
+        const path = instanceIndex === null
+            ? `/api/inference/profiles/${encodeURIComponent(profileId)}/logs?lines=120`
+            : `/api/inference/profiles/${encodeURIComponent(profileId)}/instances/${encodeURIComponent(instanceIndex)}/logs?lines=180`;
+        const data = await api('GET', modelNodePath(path));
+        const html = `
+            <div class="connect-section-header compact">
+                <div class="launcher-card-title">${esc(label)} logs</div>
+            </div>
+            <pre class="profile-log-view">${esc(data.logs || 'No logs.')}</pre>
+        `;
+        if (detail) setProfileOutput(profileId, html);
     } catch (e) {
-        if (detail) detail.innerHTML = `<div class="model-job-error">${esc(e.message)}</div>`;
+        if (detail) setProfileOutput(profileId, `<div class="model-job-error">${esc(e.message)}</div>`);
     }
 }
 
 async function loadProfileHealth(profileId) {
     const detail = document.getElementById(`profile-detail-${profileId}`);
-    if (detail) detail.textContent = 'Checking health...';
+    if (detail) setProfileOutput(profileId, '<div class="empty-state compact">Checking health...</div>');
     try {
         const data = await api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/health`));
-        if (detail) {
-            detail.innerHTML = `
-                <div class="profile-health-summary">${profileStateBadge(data.health)}</div>
-                ${(data.instances || []).map(item => `
-                    <div class="profile-card-line">${esc(item.unit)} · ${esc(item.systemd_state)} · TCP ${item.tcp_reachable ? 'yes' : 'no'}</div>
-                `).join('')}
-            `;
-        }
+        if (detail) setProfileOutput(profileId, renderProfileHealthOutput(data));
     } catch (e) {
-        if (detail) detail.innerHTML = `<div class="model-job-error">${esc(e.message)}</div>`;
+        if (detail) setProfileOutput(profileId, `<div class="model-job-error">${esc(e.message)}</div>`);
     }
 }
 

@@ -335,7 +335,36 @@ def render_profile(profile_id: str) -> dict:
         profile = _load_profiles_registry().get("profiles", {}).get(profile_id)
         if not profile:
             raise ProfileNotFoundError(f"Inference profile not found: {profile_id}")
-        return inference_planner.preview_profile(_profile_with_secret_values(profile), existing_profile_id=profile_id)
+        return _public_plan(
+            inference_planner.preview_profile(
+                _profile_with_secret_values(profile),
+                existing_profile_id=profile_id,
+            )
+        )
+
+
+def export_profile(profile_id: str) -> dict:
+    profile_id = _validate_profile_id(profile_id)
+    initialize_profile_registries()
+    with _lock:
+        profile = _load_profiles_registry().get("profiles", {}).get(profile_id)
+        if not profile:
+            raise ProfileNotFoundError(f"Inference profile not found: {profile_id}")
+        public_profile = _public_profile(profile)
+        validation = _public_plan(
+            inference_planner.preview_profile(
+                _profile_with_secret_values(profile),
+                existing_profile_id=profile_id,
+            )
+        )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "exported_at": _now(),
+        "profile_id": profile_id,
+        "warning": "Launcher paths, model artifacts, ports, GPU IDs, and Cloudflare resources are node-local.",
+        "profile": public_profile,
+        "validation": validation,
+    }
 
 
 def create_profile(body: dict) -> dict:

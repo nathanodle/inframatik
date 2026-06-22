@@ -106,6 +106,14 @@ async def api_render_inference_profile(profile_id: str):
         _raise_profile_error(e)
 
 
+@inference_router.get("/api/inference/profiles/{profile_id}/export")
+async def api_export_inference_profile(profile_id: str):
+    try:
+        return inference_profiles.export_profile(profile_id)
+    except inference_profiles.ProfileError as e:
+        _raise_profile_error(e)
+
+
 @inference_router.post("/api/inference/profiles/{profile_id}/api-key")
 async def api_rotate_inference_api_key(profile_id: str, body: dict = None):
     try:

@@ -1201,6 +1201,134 @@ body {
     margin-top: 10px;
 }
 
+.profile-detail-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    padding: 12px;
+}
+
+.profile-detail-header,
+.profile-detail-actions {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.profile-detail-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.profile-detail-facts {
+    margin-top: 12px;
+}
+
+.profile-instance-table {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.profile-instance-row {
+    display: grid;
+    grid-template-columns: 110px minmax(130px, 0.8fr) minmax(180px, 1.2fr) minmax(180px, 1.2fr) minmax(150px, 1fr) minmax(280px, 1.4fr);
+    gap: 8px;
+    align-items: center;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+}
+
+.profile-instance-row > div {
+    min-width: 0;
+}
+
+.profile-instance-row > div:first-child {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.profile-instance-row span:not(.model-badge) {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.profile-instance-row code {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.profile-command-preview {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.025);
+    padding: 10px;
+}
+
+.profile-command-preview summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.profile-command-block {
+    margin-top: 10px;
+}
+
+.profile-detail-output {
+    margin-top: 12px;
+}
+
+.profile-test-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    padding: 12px;
+}
+
+.profile-test-grid {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) 110px minmax(180px, 2fr);
+    gap: 8px;
+}
+
+.profile-test-grid select,
+.profile-test-grid input,
+.profile-test-panel textarea {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+}
+
+.profile-test-panel textarea {
+    margin-top: 8px;
+    resize: vertical;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.profile-test-result {
+    margin-top: 10px;
+}
+
 .profile-actions {
     justify-content: flex-start;
     flex-wrap: wrap;
@@ -2351,12 +2479,21 @@ body {
     }
 
     .connect-action-grid,
-    .connect-facts {
+    .connect-facts,
+    .profile-test-grid {
         grid-template-columns: 1fr;
     }
 
     .connect-hero {
         flex-direction: column;
+    }
+
+    .profile-detail-header {
+        flex-direction: column;
+    }
+
+    .profile-instance-row {
+        grid-template-columns: 1fr;
     }
 
     .connect-status-row {
