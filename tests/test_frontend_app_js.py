@@ -1427,7 +1427,7 @@ def test_app_js_cloudflare_section_gating_by_role():
                         const originalRenderOperations = renderInferenceOperations;
                         setTimeout = function(fn, ms) {
                             calls.push(['setTimeout', ms]);
-                            timers.push(fn);
+                            timers.push({ fn, ms });
                             return 501;
                         };
                         selectedNodeId = 'self-node';
@@ -1484,7 +1484,9 @@ def test_app_js_cloudflare_section_gating_by_role():
                             await runProfileAction('qwen-fast', 'start');
                             const getBeforeTimer = calls.some(call => call[0] === 'GET');
                             const pendingBeforeTimer = pendingInferenceProfileActions.get('qwen-fast');
-                            await timers[0]();
+                            const reconcileTimer = timers.find(item => item.ms === ACCEPTED_OPERATION_RECONCILE_DELAY_MS);
+                            if (!reconcileTimer) throw new Error('missing accepted operation reconcile timer');
+                            await reconcileTimer.fn();
                             return {
                                 calls,
                                 getBeforeTimer,
@@ -3505,6 +3507,7 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
 
             const calls = [];
             const timerCallbacks = new Map();
+            const timeoutCallbacks = new Map();
             let nextTimerId = 10;
             const context = {
                 console,
@@ -3513,8 +3516,16 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
                 location: { protocol: 'http:', host: 'localhost' },
                 WebSocket: function WebSocket() { return {}; },
                 fetch: async () => { throw new Error('fetch should not run'); },
-                setTimeout,
-                clearTimeout,
+                setTimeout: (fn, ms) => {
+                    const id = nextTimerId++;
+                    calls.push(['setTimeout', id, ms]);
+                    timeoutCallbacks.set(id, fn);
+                    return id;
+                },
+                clearTimeout: (id) => {
+                    calls.push(['clearTimeout', id]);
+                    timeoutCallbacks.delete(id);
+                },
                 setInterval: (fn, ms) => {
                     const id = nextTimerId++;
                     calls.push(['setInterval', id, ms]);
@@ -3527,6 +3538,7 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
                 },
                 calls,
                 timerCallbacks,
+                timeoutCallbacks,
             };
             context.globalThis = context;
 
@@ -3602,6 +3614,50 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
                         liveStatusEl.innerHTML.includes('Idle'),
                         'terminal fallback refresh should return the live status to idle when no work remains'
                     );
+
+                    calls.length = 0;
+                    timerCallbacks.clear();
+                    timeoutCallbacks.clear();
+                    inferenceJobsTimer = null;
+                    inferenceOperationWatchdogTimer = null;
+                    wsConnected = true;
+                    inferenceOperationsData = [{ id: 'op-watch', state: 'running', profile_id: 'qwen' }];
+                    noteInferenceOperationSnapshot(inferenceOperationsData, 'node-a', Date.now());
+                    api = async function(method, path) {
+                        calls.push(['api', method, path]);
+                        if (path === '/api/inference/operations') {
+                            return { operations: [{ id: 'op-watch', state: 'succeeded', profile_id: 'qwen' }] };
+                        }
+                        throw new Error('unexpected API call: ' + method + ' ' + path);
+                    };
+                    updateInferencePolling();
+                    const watchdogId = inferenceOperationWatchdogTimer;
+                    assert(watchdogId !== null, 'fresh websocket operation should schedule a quiet-event watchdog');
+                    assert(inferenceJobsTimer === null, 'fresh websocket operation should not immediately start fallback polling');
+                    assert(
+                        calls.some(call => call[0] === 'setTimeout' && call[1] === watchdogId && call[2] >= 1000),
+                        'operation watchdog should wait before declaring live events stale'
+                    );
+
+                    inferenceOperationUpdateTimes.set(
+                        inferenceOperationUpdateKey(inferenceOperationsData[0], 'node-a'),
+                        Date.now() - INFERENCE_OPERATION_STALE_MS - 1
+                    );
+                    timeoutCallbacks.get(watchdogId)();
+                    const staleTimerId = inferenceJobsTimer;
+                    assert(staleTimerId !== null, 'stale websocket operation should start targeted fallback polling');
+                    assert(
+                        liveStatusEl.className.includes('yellow') &&
+                        liveStatusEl.innerHTML.includes('Live sync'),
+                        'stale websocket operation should show live sync status'
+                    );
+                    await timerCallbacks.get(staleTimerId)();
+                    assert(
+                        calls.some(call => call[0] === 'api' && call[2] === '/api/inference/operations'),
+                        'stale operation fallback should refresh operations'
+                    );
+                    assert(inferenceOperationsData[0].state === 'succeeded', 'stale operation fallback should merge terminal state');
+                    assert(inferenceJobsTimer === null, 'terminal stale-operation refresh should stop fallback polling');
 
                     calls.length = 0;
                     activeInferenceTab = 'profiles';
@@ -4105,6 +4161,9 @@ def test_static_inference_model_ui_assets_present():
     assert "renderInferenceLiveStatus" in app_js
     assert "markInferenceLiveEvent" in app_js
     assert "markInferenceFallbackSync" in app_js
+    assert "scheduleInferenceOperationWatchdog" in app_js
+    assert "hasStaleInferenceOperation" in app_js
+    assert "noteInferenceOperationSnapshot" in app_js
     assert "normalizeInferenceOperationResponse" in app_js
     assert "openLauncherValidation" in app_js
     assert "launcherValidationProfileContext" in app_js

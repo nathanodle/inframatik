@@ -101,6 +101,8 @@ let profilePreviewBodyHtml = '<div class="empty-state">No preview yet.</div>';
 let profilePreviewHasResult = false;
 let profilePreviewStale = false;
 let inferenceJobsTimer = null;
+let inferenceOperationWatchdogTimer = null;
+let inferenceOperationUpdateTimes = new Map();
 let activeInferenceTab = 'profiles';
 let lastInferenceEventAt = null;
 let lastInferenceFallbackSyncAt = null;
@@ -109,6 +111,8 @@ let activeInferenceRefreshId = 0;
 const ACTIVE_MODEL_JOB_STATES = new Set(['queued', 'running', 'hashing', 'verifying']);
 const ACTIVE_INFERENCE_OPERATION_STATES = new Set(['queued', 'running']);
 const ACCEPTED_OPERATION_RECONCILE_DELAY_MS = 1200;
+const INFERENCE_OPERATION_STALE_MS = 6000;
+const INFERENCE_OPERATION_WATCHDOG_MIN_MS = 1000;
 const MANAGED_PROFILE_ENV_KEYS = new Set(['CUDA_VISIBLE_DEVICES']);
 
 // ---- Helpers ----
@@ -1757,7 +1761,11 @@ function renderInferenceLiveStatus(reason = '') {
     let tone = 'muted';
     let label = 'Connecting';
     let detail = 'Waiting for live events';
-    if (wsConnected) {
+    if (wsConnected && active && inferenceJobsTimer && hasStaleInferenceOperation()) {
+        tone = 'yellow';
+        label = 'Live sync';
+        detail = lastInferenceFallbackSyncAt ? `Last sync ${inferenceFreshnessLabel(lastInferenceFallbackSyncAt)}` : 'Operation event quiet; syncing status';
+    } else if (wsConnected) {
         tone = 'green';
         label = 'Live events';
         detail = lastInferenceEventAt ? `Last event ${inferenceFreshnessLabel(lastInferenceEventAt)}` : 'WebSocket connected';
@@ -1889,6 +1897,7 @@ function renderCachedInferenceNodeSnapshot(nodeId = selectedNodeId, options = {}
     inferenceProfilesData = snapshot.profiles || [];
     inferenceOperationsData = snapshot.operations || [];
     inferenceSystemData = snapshot.system || null;
+    noteInferenceOperationSnapshot(inferenceOperationsData, nodeId);
 
     renderInferenceSnapshotForActiveTab(snapshot);
     hydrateVisibleInferenceFailures(nodeId);
@@ -1942,6 +1951,7 @@ async function refreshInferenceProfiles() {
         inferenceLaunchersData = launchers.launchers || [];
         inferenceOperationsData = operations.operations || [];
         inferenceSystemData = overview.system || null;
+        noteInferenceOperationSnapshot(inferenceOperationsData, nodeId);
         saveInferenceNodeSnapshot(nodeId, {
             models: inferenceModelData,
             launchers: inferenceLaunchersData,
@@ -1985,6 +1995,7 @@ async function refreshInferenceJobs() {
         if (!activeInferenceRefreshIsCurrent(request)) return;
         inferenceModelData = models;
         inferenceOperationsData = operations.operations || [];
+        noteInferenceOperationSnapshot(inferenceOperationsData, nodeId);
         saveInferenceNodeSnapshot(nodeId, {
             models: inferenceModelData,
             operations: inferenceOperationsData,
@@ -4153,6 +4164,81 @@ function shouldUseInferenceOperationWs(nodeId) {
     return wsConnected;
 }
 
+function inferenceOperationUpdateKey(operation, nodeId = selectedNodeId) {
+    if (!operation || !operation.id) return '';
+    return `${nodeId || 'local'}:${operation.id}`;
+}
+
+function noteInferenceOperationUpdate(operation, nodeId = selectedNodeId, timestamp = Date.now()) {
+    const key = inferenceOperationUpdateKey(operation, nodeId);
+    if (!key) return;
+    if (ACTIVE_INFERENCE_OPERATION_STATES.has(operation.state)) {
+        inferenceOperationUpdateTimes.set(key, timestamp);
+    } else {
+        inferenceOperationUpdateTimes.delete(key);
+    }
+}
+
+function noteInferenceOperationSnapshot(operations, nodeId = selectedNodeId, timestamp = Date.now()) {
+    const liveKeys = new Set();
+    (Array.isArray(operations) ? operations : []).forEach(operation => {
+        if (!operation || !operation.id) return;
+        const key = inferenceOperationUpdateKey(operation, nodeId);
+        if (ACTIVE_INFERENCE_OPERATION_STATES.has(operation.state)) {
+            liveKeys.add(key);
+            inferenceOperationUpdateTimes.set(key, timestamp);
+        } else {
+            inferenceOperationUpdateTimes.delete(key);
+        }
+    });
+    Array.from(inferenceOperationUpdateTimes.keys()).forEach(key => {
+        if (key.startsWith(`${nodeId || 'local'}:`) && !liveKeys.has(key)) {
+            inferenceOperationUpdateTimes.delete(key);
+        }
+    });
+}
+
+function activeInferenceOperations() {
+    return Array.isArray(inferenceOperationsData)
+        ? inferenceOperationsData.filter(op => ACTIVE_INFERENCE_OPERATION_STATES.has(op.state))
+        : [];
+}
+
+function staleActiveInferenceOperations(nodeId = selectedNodeId, now = Date.now()) {
+    return activeInferenceOperations().filter(operation => {
+        const touchedAt = inferenceOperationUpdateTimes.get(inferenceOperationUpdateKey(operation, nodeId)) || 0;
+        return !touchedAt || (now - touchedAt) >= INFERENCE_OPERATION_STALE_MS;
+    });
+}
+
+function hasStaleInferenceOperation(nodeId = selectedNodeId) {
+    return staleActiveInferenceOperations(nodeId).length > 0;
+}
+
+function clearInferenceOperationWatchdog() {
+    if (inferenceOperationWatchdogTimer) {
+        clearTimeout(inferenceOperationWatchdogTimer);
+        inferenceOperationWatchdogTimer = null;
+    }
+}
+
+function scheduleInferenceOperationWatchdog() {
+    clearInferenceOperationWatchdog();
+    if (currentAppView !== 'inference' || !shouldUseInferenceOperationWs(selectedNodeId)) return;
+    const active = activeInferenceOperations();
+    if (!active.length) return;
+    const now = Date.now();
+    const nextWait = active.reduce((wait, operation) => {
+        const touchedAt = inferenceOperationUpdateTimes.get(inferenceOperationUpdateKey(operation, selectedNodeId)) || now;
+        const dueIn = Math.max(INFERENCE_OPERATION_WATCHDOG_MIN_MS, INFERENCE_OPERATION_STALE_MS - (now - touchedAt));
+        return Math.min(wait, dueIn);
+    }, INFERENCE_OPERATION_STALE_MS);
+    inferenceOperationWatchdogTimer = setTimeout(() => {
+        inferenceOperationWatchdogTimer = null;
+        updateInferencePolling();
+    }, nextWait);
+}
+
 function shouldRenderInferenceOperationList() {
     return currentAppView === 'inference' && activeInferenceTab === 'jobs';
 }
@@ -4172,6 +4258,7 @@ function inferenceFailureDiagnosticsVisible(operation) {
 
 function mergeInferenceOperation(operation, options = {}) {
     if (!operation || !operation.id) return;
+    noteInferenceOperationUpdate(operation, selectedNodeId);
     inferenceOperationsData = [
         operation,
         ...(inferenceOperationsData || []).filter(item => item.id !== operation.id),
@@ -4286,6 +4373,7 @@ function handleInferenceOperationEvent(operation, event = {}) {
 function mergeInferenceOperationSnapshot(operations, nodeId = selectedNodeId) {
     const list = Array.isArray(operations) ? operations : [];
     inferenceOperationsData = list;
+    noteInferenceOperationSnapshot(list, nodeId);
     const touchedProfileIds = new Set();
     list.forEach(operation => {
         if (operation && operation.profile_id) touchedProfileIds.add(operation.profile_id);
@@ -5728,6 +5816,7 @@ function stopInferencePolling() {
         clearInterval(inferenceJobsTimer);
         inferenceJobsTimer = null;
     }
+    clearInferenceOperationWatchdog();
     renderInferenceLiveStatus('polling-stopped');
 }
 
@@ -5738,8 +5827,7 @@ function hasActiveInferenceModelJob() {
 }
 
 function hasActiveInferenceOperation() {
-    return Array.isArray(inferenceOperationsData)
-        && inferenceOperationsData.some(op => ACTIVE_INFERENCE_OPERATION_STATES.has(op.state));
+    return activeInferenceOperations().length > 0;
 }
 
 function hasActiveInferenceActivity() {
@@ -5750,7 +5838,8 @@ async function refreshInferenceActivity() {
     const nodeId = selectedNodeId;
     if (!nodeId || currentAppView !== 'inference') return;
     const needsModels = hasActiveInferenceModelJob();
-    const needsOperations = hasActiveInferenceOperation();
+    const needsOperations = hasActiveInferenceOperation()
+        && (!shouldUseInferenceOperationWs(nodeId) || hasStaleInferenceOperation(nodeId));
     if (!needsModels && !needsOperations) {
         updateInferencePolling();
         return;
@@ -5784,14 +5873,19 @@ async function refreshInferenceActivity() {
 function updateInferencePolling() {
     const hasActiveModelJob = hasActiveInferenceModelJob();
     const hasActiveOperation = hasActiveInferenceOperation();
-    const needsOperationPoll = hasActiveOperation && !shouldUseInferenceOperationWs(selectedNodeId);
+    const needsOperationPoll = hasActiveOperation
+        && (!shouldUseInferenceOperationWs(selectedNodeId) || hasStaleInferenceOperation(selectedNodeId));
     const needsModelJobPoll = hasActiveModelJob && !shouldUseInferenceOperationWs(selectedNodeId);
     const shouldPoll = currentAppView === 'inference' && (needsModelJobPoll || needsOperationPoll);
     if (shouldPoll && !inferenceJobsTimer) {
+        clearInferenceOperationWatchdog();
         inferenceJobsTimer = setInterval(refreshInferenceActivity, 2500);
     } else if (!shouldPoll && inferenceJobsTimer) {
         stopInferencePolling();
+    } else if (shouldPoll) {
+        clearInferenceOperationWatchdog();
     }
+    if (!shouldPoll) scheduleInferenceOperationWatchdog();
     renderInferenceLiveStatus('polling');
 }
 
