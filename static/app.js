@@ -2988,14 +2988,20 @@ function operationFailureDiagnosis(operation, detail) {
     const logs = operationFailureLogs(operation);
     const lower = `${message} ${detail.message || ''} ${logs || ''}`.toLowerCase();
     const restartCount = Number(detail.restart_count);
+    const profile = profileById(operation.profile_id);
+    const launcherId = profile && profile.engine_launcher_id;
     let cause = 'The operation failed before the profile reached a healthy serving state.';
     let action = 'Open the logs below, fix the launcher/model/runtime issue, then start or restart the profile.';
+    let fixAction = '';
     if (operation.state === 'failed_interrupted') {
         cause = 'inframatik restarted while this operation was still running.';
         action = 'Check the current profile state, then start or restart the profile if the service is not running.';
     } else if (lower.includes('cannot open shared object file') || lower.includes('libcudart.so')) {
         cause = 'The launcher process cannot load a required shared library.';
         action = 'Validate the engine launcher. If Suggested Env appears, apply it to add the venv library path, then start the profile again.';
+        if (launcherId) {
+            fixAction = `<button type="button" class="btn primary" onclick="openLauncherValidation(${jsArg(launcherId)})">Validate launcher</button>`;
+        }
     } else if ((Number.isFinite(restartCount) && restartCount >= 3) || lower.includes('restarted')) {
         cause = 'The generated systemd unit is restarting before the API becomes reachable.';
         action = 'Check the logs for Python import errors, CUDA/runtime problems, missing model files, or invalid engine args.';
@@ -3024,8 +3030,17 @@ function operationFailureDiagnosis(operation, detail) {
                     <p>${esc(value)}</p>
                 </div>
             `).join('')}
+            ${fixAction ? `<div class="profile-operation-fix-action">${fixAction}</div>` : ''}
         </div>
     `;
+}
+
+async function openLauncherValidation(launcherId) {
+    if (!launcherId) return;
+    setInferenceTab('launchers');
+    renderLaunchers(inferenceLaunchersData || []);
+    setInferenceStatus(`Validating launcher ${launcherId}.`);
+    await validateLauncher(launcherId);
 }
 
 function renderOperationSteps(operation) {

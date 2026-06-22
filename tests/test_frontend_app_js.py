@@ -732,6 +732,13 @@ def test_app_js_cloudflare_section_gating_by_role():
                 );
 
                 const failedStartupHtml = vm.runInContext(`
+                    inferenceProfilesData = [{
+                        id: 'qwen',
+                        display_name: 'Qwen',
+                        engine_launcher_id: 'vllm-main',
+                        state: 'failed',
+                        instances: [],
+                    }];
                     renderProfileOperationPanel({
                         id: 'op-failed-start',
                         kind: 'profile_start',
@@ -761,10 +768,40 @@ def test_app_js_cloudflare_section_gating_by_role():
                     failedStartupHtml.includes('Next action') &&
                     failedStartupHtml.includes('Validate the engine launcher') &&
                     failedStartupHtml.includes('Suggested Env') &&
+                    failedStartupHtml.includes('openLauncherValidation(&quot;vllm-main&quot;)') &&
+                    failedStartupHtml.includes('Validate launcher') &&
                     failedStartupHtml.includes('Rollback') &&
                     failedStartupHtml.includes('Rollback stopped 1 started instance') &&
                     failedStartupHtml.includes('ImportError: libcudart.so.12'),
                     'failed startup operation panel should explain cause, next action, rollback, and captured logs'
+                );
+
+                const launcherFixActionResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'profiles';
+                        inferenceLaunchersData = [{ id: 'vllm-main', display_name: 'vLLM Main', engine: 'vllm', executable: '/opt/vllm/bin/python' }];
+                        const originalRenderLaunchers = renderLaunchers;
+                        const originalValidateLauncher = validateLauncher;
+                        renderLaunchers = function(launchers) { calls.push(['renderLaunchers', launchers.map(item => item.id).join(',')]); };
+                        validateLauncher = async function(launcherId) { calls.push(['validateLauncher', launcherId]); };
+                        setInferenceStatus = function(message) { calls.push(['status', message]); };
+                        try {
+                            await openLauncherValidation('vllm-main');
+                            return { calls, activeInferenceTab };
+                        } finally {
+                            renderLaunchers = originalRenderLaunchers;
+                            validateLauncher = originalValidateLauncher;
+                        }
+                    })()
+                `, context);
+                assert(
+                    launcherFixActionResult.activeInferenceTab === 'launchers' &&
+                    launcherFixActionResult.calls.some(call => call[0] === 'renderLaunchers' && call[1] === 'vllm-main') &&
+                    launcherFixActionResult.calls.some(call => call[0] === 'validateLauncher' && call[1] === 'vllm-main') &&
+                    launcherFixActionResult.calls.some(call => call[0] === 'status' && String(call[1]).includes('Validating launcher')),
+                    'failed startup launcher fix action should switch to Launchers and validate the profile launcher'
                 );
 
                 const startupOperationListHtml = vm.runInContext(`
@@ -2857,6 +2894,7 @@ def test_static_inference_model_ui_assets_present():
     assert "markInferenceLiveEvent" in app_js
     assert "markInferenceFallbackSync" in app_js
     assert "normalizeInferenceOperationResponse" in app_js
+    assert "openLauncherValidation" in app_js
     assert "websocketEventMatchesSelectedNode" in app_js
     assert "mergeInferenceOperationSnapshot" in app_js
     assert "selectedInferenceNodeIds" in app_js
@@ -2978,6 +3016,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-operation-facts" in style_css
     assert ".profile-operation-narrative" in style_css
     assert ".profile-operation-diagnosis" in style_css
+    assert ".profile-operation-fix-action" in style_css
     assert ".profile-live-log" in style_css
     assert ".profile-operation-log-output" in style_css
     assert ".inference-operation-context" in style_css

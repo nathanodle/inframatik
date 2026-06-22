@@ -2052,6 +2052,11 @@ body {
     line-height: 1.45;
 }
 
+.profile-operation-fix-action {
+    display: flex;
+    align-items: center;
+}
+
 .profile-operation-log-output:not(:empty) {
     margin-top: 10px;
 }
