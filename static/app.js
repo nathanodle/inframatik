@@ -2699,6 +2699,21 @@ function renderOperationFacts(detail) {
     `;
 }
 
+function operationLogButton(operation, detail = {}) {
+    if (!operation || !operation.profile_id) return '';
+    const profileIdArg = jsArg(operation.profile_id);
+    const instanceIndex = operation.instance_index !== null && operation.instance_index !== undefined
+        ? operation.instance_index
+        : detail.instance_index;
+    if (instanceIndex !== null && instanceIndex !== undefined) {
+        const numericIndex = Number(instanceIndex);
+        if (Number.isInteger(numericIndex)) {
+            return `<button class="btn" type="button" onclick="loadProfileLogs(${profileIdArg}, ${numericIndex})">Logs</button>`;
+        }
+    }
+    return `<button class="btn" type="button" onclick="loadProfileLogs(${profileIdArg})">Logs</button>`;
+}
+
 function renderProfileOperationPanel(operation, pendingAction = '') {
     if (!operation) {
         if (!pendingAction) return '';
@@ -2723,6 +2738,7 @@ function renderProfileOperationPanel(operation, pendingAction = '') {
     const logs = failed ? operationFailureLogs(operation) : '';
     const panelClass = failed ? 'failed' : ACTIVE_INFERENCE_OPERATION_STATES.has(operation.state) ? 'active' : 'complete';
     const operationIdArg = jsArg(operation.id);
+    const logButton = operationLogButton(operation, detail);
     return `
         <div class="profile-operation-panel ${panelClass}">
             <div class="profile-operation-head">
@@ -2732,6 +2748,7 @@ function renderProfileOperationPanel(operation, pendingAction = '') {
                 </div>
                 <div class="profile-operation-actions">
                     <span class="model-badge ${color}">${esc(operation.state || 'unknown')}</span>
+                    ${logButton}
                     ${operation.state === 'queued' ? `<button class="btn danger" type="button" onclick="cancelInferenceOperation(${operationIdArg})">Cancel</button>` : ''}
                 </div>
             </div>

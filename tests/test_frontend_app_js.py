@@ -354,8 +354,9 @@ def test_app_js_cloudflare_section_gating_by_role():
                     startupPanelHtml.includes('TCP') &&
                     startupPanelHtml.includes('waiting') &&
                     startupPanelHtml.includes('Restarts') &&
-                    startupPanelHtml.includes('42s / 10m'),
-                    'active inference operation panel should show live startup readiness facts'
+                    startupPanelHtml.includes('42s / 10m') &&
+                    startupPanelHtml.includes('loadProfileLogs(&quot;qwen&quot;, 0)'),
+                    'active inference operation panel should show live startup readiness facts and targeted logs'
                 );
 
                 const startupOperationListHtml = vm.runInContext(`
@@ -406,8 +407,9 @@ def test_app_js_cloudflare_section_gating_by_role():
                 `, context);
                 assert(
                     queuedOperationHtml.includes('cancelInferenceOperation') &&
-                    queuedOperationHtml.includes('Cancel'),
-                    'queued profile operations should render a cancel action'
+                    queuedOperationHtml.includes('Cancel') &&
+                    queuedOperationHtml.includes('loadProfileLogs(&quot;qwen&quot;)'),
+                    'queued profile operations should render cancel and profile log actions'
                 );
 
                 const queuedOperationsListHtml = vm.runInContext(`
@@ -1559,6 +1561,7 @@ def test_static_inference_model_ui_assets_present():
     assert "websocketEventMatchesSelectedNode" in app_js
     assert "selectedInferenceNodeIds" in app_js
     assert "renderProfileOperationPanel" in app_js
+    assert "operationLogButton" in app_js
     assert "hydrateInferenceFailureDiagnostics" in app_js
     assert "hydrateVisibleInferenceFailures" in app_js
     assert "operationWithHydratedLogs" in app_js
