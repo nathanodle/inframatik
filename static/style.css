@@ -1472,6 +1472,13 @@ body {
     margin-top: 10px;
 }
 
+.profile-command-env {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+}
+
 .profile-detail-output {
     margin-top: 12px;
 }
@@ -1533,6 +1540,65 @@ body {
     color: var(--text-primary);
     font-weight: 600;
     margin-bottom: 10px;
+}
+
+.profile-preview-title > span {
+    display: inline-flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.profile-preview-facts,
+.profile-preview-resource-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.profile-preview-facts > div,
+.profile-preview-resource-grid > div,
+.profile-command-env > div {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    padding: 8px 9px;
+}
+
+.profile-preview-facts span,
+.profile-preview-resource-grid span,
+.profile-command-env span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.profile-preview-facts code,
+.profile-preview-resource-grid code,
+.profile-command-env code {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.profile-preview-facts small {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+.profile-preview-section {
+    margin-top: 12px;
 }
 
 .profile-preview-grid {

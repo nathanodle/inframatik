@@ -2458,11 +2458,36 @@ function renderProfilePreview(plan) {
     const blockers = plan.blockers || [];
     const warnings = plan.warnings || [];
     const instances = plan.resolved_instances || [];
-    const commands = plan.command_preview || [];
+    const portPlan = plan.port_plan || {};
+    const gpuPlan = plan.gpu_plan || {};
+    const cloudflarePlan = plan.cloudflare_plan || {};
+    const restart = plan.restart_required || {};
+    const units = ((plan.systemd_preview || {}).units || []);
+    const allocatedPorts = (portPlan.allocated || []).join(', ') || '--';
+    const gpuAssignments = (gpuPlan.assignments || [])
+        .map(item => `#${item.index}: ${(item.gpu_ids || []).join(',') || 'none'}`)
+        .join(' / ') || '--';
+    const cfResources = (cloudflarePlan.resources || [])
+        .map(resource => resource.kind + (resource.hostname ? ` ${resource.hostname}` : ''))
+        .join(' / ') || 'none';
+    const restartFields = (restart.fields || []).join(', ') || '--';
     setElementHtml('profile-preview-panel', `
-        <div class="profile-preview-title">Preview ${plan.valid_for_save ? '<span class="model-badge green">Valid</span>' : '<span class="model-badge red">Blocked</span>'}</div>
+        <div class="profile-preview-title">
+            Preview
+            <span>
+                ${restart.required ? '<span class="model-badge yellow">restart required</span>' : ''}
+                ${plan.valid_for_save ? '<span class="model-badge green">Valid</span>' : '<span class="model-badge red">Blocked</span>'}
+            </span>
+        </div>
         ${blockers.length ? `<div class="profile-issue-list">${blockers.map(item => `<div class="model-job-error">${esc(item.message || item)}</div>`).join('')}</div>` : ''}
         ${warnings.length ? `<div class="profile-issue-list">${warnings.map(item => `<div class="profile-warning">${esc(item.message || item)}</div>`).join('')}</div>` : ''}
+        <div class="profile-preview-facts">
+            <div><span>Ports</span><code>${esc(allocatedPorts)}</code><small>${esc(portPlan.mode || '--')} · ${esc(portPlan.range || 'inference')} ${portPlan.range_start ? `${esc(portPlan.range_start)}-${esc(portPlan.range_end)}` : ''}</small></div>
+            <div><span>GPU Plan</span><code>${esc(gpuAssignments)}</code><small>${esc(gpuPlan.mode || '--')} · ${esc(gpuPlan.claim_mode || 'exclusive')}</small></div>
+            <div><span>Cloudflare</span><code>${esc(cloudflarePlan.would_provision ? 'would provision' : 'no changes')}</code><small>${esc(cfResources)}</small></div>
+            <div><span>Systemd</span><code>${esc(units.length ? `${units.length} unit${units.length === 1 ? '' : 's'}` : 'no units')}</code><small>${esc((units.map(unit => unit.name).join(' / ')) || '--')}</small></div>
+            <div><span>Restart</span><code>${esc(restart.required ? 'required' : 'not required')}</code><small>${esc(restartFields)}</small></div>
+        </div>
         <div class="profile-preview-grid">
             ${instances.map(instance => `
                 <div class="profile-instance-pill">
@@ -2472,7 +2497,12 @@ function renderProfilePreview(plan) {
                 </div>
             `).join('') || '<div class="empty-state">No instances resolved.</div>'}
         </div>
-        <div class="launcher-command-preview">${esc(commands.map(cmd => (cmd.argv || []).join(' ')).join('\n') || 'No command rendered.')}</div>
+        <div class="profile-preview-section">
+            <div class="launcher-card-title">Command Preview</div>
+            ${renderCommandPreview(plan)}
+        </div>
+        ${renderSystemdPreview(plan)}
+        ${renderCloudflarePreview(plan)}
     `);
 }
 
@@ -2803,6 +2833,17 @@ function renderProfileIssues(plan) {
     `;
 }
 
+function renderCommandEnv(command) {
+    const env = command.env || {};
+    const rows = Object.entries(env);
+    if (!rows.length) return '';
+    return `
+        <div class="profile-command-env">
+            ${rows.map(([key, value]) => `<div><span>${esc(key)}</span><code>${esc(value)}</code></div>`).join('')}
+        </div>
+    `;
+}
+
 function renderCommandPreview(plan) {
     const commands = plan.command_preview || [];
     if (!commands.length) return '<div class="empty-state compact">No command preview available.</div>';
@@ -2810,8 +2851,54 @@ function renderCommandPreview(plan) {
         <div class="profile-command-block">
             <div class="launcher-card-meta">${esc(command.index !== undefined ? `instance ${command.index}` : 'command')}</div>
             <pre class="profile-log-view">${esc((command.argv || []).join(' ') || 'No command rendered.')}</pre>
+            ${renderCommandEnv(command)}
         </div>
     `).join('');
+}
+
+function renderSystemdPreview(plan) {
+    const units = ((plan.systemd_preview || {}).units || []);
+    if (!units.length) return '';
+    return `
+        <details class="profile-command-preview profile-preview-section">
+            <summary>Systemd Unit Preview</summary>
+            ${units.map(unit => `
+                <div class="profile-command-block">
+                    <div class="launcher-card-meta">${esc(unit.name || `unit ${unit.index}`)}</div>
+                    <pre class="profile-log-view">${esc(unit.content || '')}</pre>
+                </div>
+            `).join('')}
+        </details>
+    `;
+}
+
+function renderCloudflarePreview(plan) {
+    const cloudflare = plan.cloudflare_plan || {};
+    const resources = cloudflare.resources || [];
+    const warnings = cloudflare.warnings || [];
+    const blockers = cloudflare.blockers || [];
+    if (!cloudflare.would_provision && !resources.length && !warnings.length && !blockers.length) return '';
+    return `
+        <div class="profile-preview-section">
+            <div class="connect-section-header compact">
+                <div>
+                    <div class="launcher-card-title">Cloudflare Plan</div>
+                    <div class="launcher-card-meta">${cloudflare.would_provision ? 'Provision on save/reconcile' : 'No Cloudflare resources planned'}</div>
+                </div>
+                ${connectBadge(cloudflare.mode || 'cloudflare', cloudflare.would_provision ? 'yellow' : '')}
+            </div>
+            ${blockers.length ? `<div class="profile-issue-list">${blockers.map(item => `<div class="model-job-error">${esc(item)}</div>`).join('')}</div>` : ''}
+            ${warnings.length ? `<div class="profile-issue-list">${warnings.map(item => `<div class="profile-warning">${esc(item)}</div>`).join('')}</div>` : ''}
+            <div class="profile-preview-resource-grid">
+                ${resources.map(resource => `
+                    <div>
+                        <span>${esc(resource.kind || 'resource')}</span>
+                        <code>${esc(resource.hostname || resource.secret || '--')}</code>
+                    </div>
+                `).join('') || '<div class="empty-state compact">No Cloudflare resources planned.</div>'}
+            </div>
+        </div>
+    `;
 }
 
 function renderProfileInstanceRows(profile, healthData) {

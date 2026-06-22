@@ -357,6 +357,63 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'active inference operation panel should show live startup readiness facts'
                 );
 
+                const richPreviewHtml = vm.runInContext(`
+                    renderProfilePreview({
+                        valid_for_save: true,
+                        resolved_instances: [
+                            { index: 0, host: '127.0.0.1', port: 10000, gpu_ids: [0], unit: 'infra-llm-qwen@0.service' },
+                        ],
+                        port_plan: {
+                            mode: 'auto',
+                            range: 'inference',
+                            range_start: 10000,
+                            range_end: 10999,
+                            allocated: [10000],
+                            persisted: false,
+                        },
+                        gpu_plan: {
+                            mode: 'one_per_instance',
+                            claim_mode: 'exclusive',
+                            assignments: [{ index: 0, gpu_ids: [0] }],
+                        },
+                        command_preview: [{
+                            index: 0,
+                            argv: ['/home/aiml/vllm/bin/python', '-m', 'vllm.entrypoints.openai.api_server', '--port', '10000'],
+                            env: { CUDA_VISIBLE_DEVICES: '0', HF_TOKEN: '<redacted>' },
+                        }],
+                        systemd_preview: {
+                            units: [{ index: 0, name: 'infra-llm-qwen@0.service', content: '[Service]\\nExecStart=/home/aiml/vllm/bin/python' }],
+                        },
+                        cloudflare_plan: {
+                            mode: 'cloudflare',
+                            would_provision: true,
+                            resources: [
+                                { kind: 'dns_record', hostname: 'qwen.example.com' },
+                                { kind: 'access_service_token', secret: 'generated_on_save' },
+                            ],
+                        },
+                        restart_required: { required: true, fields: ['common.context_length'] },
+                    });
+                    document.getElementById('profile-preview-panel').innerHTML;
+                `, context);
+                assert(
+                    richPreviewHtml.includes('restart required') &&
+                    richPreviewHtml.includes('common.context_length') &&
+                    richPreviewHtml.includes('Ports') &&
+                    richPreviewHtml.includes('10000') &&
+                    richPreviewHtml.includes('GPU Plan') &&
+                    richPreviewHtml.includes('#0: 0') &&
+                    richPreviewHtml.includes('Command Preview') &&
+                    richPreviewHtml.includes('CUDA_VISIBLE_DEVICES') &&
+                    richPreviewHtml.includes('&lt;redacted&gt;') &&
+                    richPreviewHtml.includes('Systemd Unit Preview') &&
+                    richPreviewHtml.includes('infra-llm-qwen@0.service') &&
+                    richPreviewHtml.includes('Cloudflare Plan') &&
+                    richPreviewHtml.includes('dns_record') &&
+                    richPreviewHtml.includes('generated_on_save'),
+                    'profile preview should render port/GPU, command env, systemd, Cloudflare, and restart facts'
+                );
+
                 const bundleHtml = vm.runInContext(`
                     renderClientBundle({
                         id: 'default',
@@ -1328,6 +1385,9 @@ def test_static_inference_model_ui_assets_present():
     assert "hydrateVisibleInferenceFailures" in app_js
     assert "operationWithHydratedLogs" in app_js
     assert "operationRuntimeStatus" in app_js
+    assert "renderSystemdPreview" in app_js
+    assert "renderCloudflarePreview" in app_js
+    assert "renderCommandEnv" in app_js
     assert "runtime_status" in app_js
     assert "model_job" in app_js
     assert "handleModelJobEvent" in app_js
@@ -1392,6 +1452,9 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-engine-details" in style_css
     assert ".form-check-grid" in style_css
     assert ".profile-preview-panel" in style_css
+    assert ".profile-preview-facts" in style_css
+    assert ".profile-preview-resource-grid" in style_css
+    assert ".profile-command-env" in style_css
     assert ".profile-connect-panel" in style_css
     assert ".connect-posture-panel" in style_css
     assert ".connect-posture-grid" in style_css
