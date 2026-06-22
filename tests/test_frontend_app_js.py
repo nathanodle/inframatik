@@ -2257,6 +2257,58 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile advanced editor should collect ordered argv token rows and validate raw env rows'
                 );
 
+                const advancedMoveResult = vm.runInContext(`
+                    (() => {
+                        const parent = {
+                            children: [],
+                            insertBefore(node, reference) {
+                                this.children = this.children.filter(item => item !== node);
+                                const index = this.children.indexOf(reference);
+                                if (index >= 0) this.children.splice(index, 0, node);
+                                else this.children.push(node);
+                                node.parentElement = this;
+                                this.children.forEach((child, childIndex) => {
+                                    child.previousElementSibling = this.children[childIndex - 1] || null;
+                                    child.nextElementSibling = this.children[childIndex + 1] || null;
+                                });
+                            },
+                        };
+                        function row(name) {
+                            return {
+                                name,
+                                parentElement: parent,
+                                previousElementSibling: null,
+                                nextElementSibling: null,
+                            };
+                        }
+                        const a = row('a');
+                        const b = row('b');
+                        const c = row('c');
+                        parent.children = [a, b, c];
+                        parent.children.forEach((child, index) => {
+                            child.previousElementSibling = parent.children[index - 1] || null;
+                            child.nextElementSibling = parent.children[index + 1] || null;
+                        });
+                        const buttonFor = target => ({
+                            parentElement: {
+                                closest(selector) {
+                                    return selector === '.profile-raw-arg-row' ? target : null;
+                                },
+                            },
+                        });
+                        moveProfileArgRow(buttonFor(c), -1);
+                        const afterUp = parent.children.map(item => item.name).join('');
+                        moveProfileArgRow(buttonFor(a), 1);
+                        const afterDown = parent.children.map(item => item.name).join('');
+                        return { afterUp, afterDown };
+                    })()
+                `, context);
+                assert(
+                    advancedMoveResult.afterUp === 'acb' &&
+                    advancedMoveResult.afterDown === 'cab',
+                    'profile advanced argv rows should move up and down without changing token values'
+                );
+
                 const advancedRowsRoundTrip = vm.runInContext(`
                     fillProfileForm({
                         id: 'qwen-advanced-edit',
@@ -3911,6 +3963,7 @@ def test_static_inference_model_ui_assets_present():
     assert 'class="profile-engine-details" open' in index_html
     assert "PROFILE_ENGINE_GUIDES" in app_js
     assert "addProfileArgRow" in app_js
+    assert "moveProfileArgRow" in app_js
     assert "collectProfileAdvancedArgs" in app_js
     assert "collectProfileAdvancedEnv" in app_js
     assert "setProfileEditorSection" in app_js
@@ -4150,6 +4203,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-engine-details" in style_css
     assert ".profile-raw-arg-row" in style_css
     assert ".profile-env-row" in style_css
+    assert ".profile-row-actions" in style_css
     assert ".form-check-grid" in style_css
     assert ".profile-preview-panel" in style_css
     assert ".profile-preview-stale" in style_css

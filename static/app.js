@@ -2376,6 +2376,28 @@ function appendTokenRow(container, row) {
     container._inframatikHtml = null;
 }
 
+function removeProfileTokenRow(button) {
+    const row = button && button.parentElement ? button.parentElement.closest('.profile-raw-arg-row, .profile-env-row') : null;
+    if (!row) return;
+    const parent = row.parentElement;
+    row.remove();
+    if (parent) parent._inframatikHtml = null;
+    markProfilePreviewStale();
+}
+
+function moveProfileArgRow(button, direction) {
+    const row = button && button.parentElement ? button.parentElement.closest('.profile-raw-arg-row') : null;
+    if (!row || !row.parentElement) return;
+    const parent = row.parentElement;
+    if (direction < 0 && row.previousElementSibling) {
+        parent.insertBefore(row, row.previousElementSibling);
+    } else if (direction > 0 && row.nextElementSibling) {
+        parent.insertBefore(row.nextElementSibling, row);
+    }
+    parent._inframatikHtml = null;
+    markProfilePreviewStale();
+}
+
 function addProfileArgRow(value = '') {
     const el = document.getElementById('profile-raw-arg-rows');
     if (!el) return;
@@ -2383,9 +2405,14 @@ function addProfileArgRow(value = '') {
     row.className = 'profile-raw-arg-row';
     row.innerHTML = `
         <input type="text" class="profile-raw-arg-input" value="${esc(value)}" placeholder="argv token" autocomplete="off">
-        <button class="btn danger" type="button" onclick="this.parentElement.remove()">Remove</button>
+        <div class="profile-row-actions">
+            <button class="btn" type="button" title="Move arg up" onclick="moveProfileArgRow(this, -1)">Up</button>
+            <button class="btn" type="button" title="Move arg down" onclick="moveProfileArgRow(this, 1)">Down</button>
+            <button class="btn danger" type="button" onclick="removeProfileTokenRow(this)">Remove</button>
+        </div>
     `;
     appendTokenRow(el, row);
+    markProfilePreviewStale();
 }
 
 function addProfileEnvRow(key = '', value = '') {
@@ -2396,9 +2423,10 @@ function addProfileEnvRow(key = '', value = '') {
     row.innerHTML = `
         <input type="text" class="profile-env-key" value="${esc(key)}" placeholder="KEY" autocomplete="off">
         <input type="text" class="profile-env-value" value="${esc(value)}" placeholder="value" autocomplete="off">
-        <button class="btn danger" type="button" onclick="this.parentElement.remove()">Remove</button>
+        <button class="btn danger" type="button" onclick="removeProfileTokenRow(this)">Remove</button>
     `;
     appendTokenRow(el, row);
+    markProfilePreviewStale();
 }
 
 function setProfileAdvancedArgs(args = []) {
