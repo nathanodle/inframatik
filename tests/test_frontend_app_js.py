@@ -1597,6 +1597,47 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'client bundles should provide copy controls for endpoints, headers, one-time secrets, and examples'
                 );
 
+                const missingSecretBundleHtml = vm.runInContext(`
+                    renderClientBundle({
+                        id: 'default',
+                        name: 'Default connection',
+                        profile_id: 'qwen-cf',
+                        target: { type: 'profile' },
+                        exposure_mode: 'cloudflare',
+                        base_url: 'https://llm.example.com/v1',
+                        model: 'qwen',
+                        service_token_id: 'tok-1',
+                        headers: {
+                            Authorization: 'Bearer <rotate_inference_api_key_to_show_once>',
+                            'CF-Access-Client-Id': 'client.access',
+                            'CF-Access-Client-Secret': '<rotate_or_generate_cloudflare_service_token_to_show_once>',
+                        },
+                        secret_state: {
+                            missing_secret_actions: ['rotate_inference_api_key', 'rotate_cloudflare_service_token'],
+                        },
+                        examples: {
+                            curl: 'curl https://llm.example.com/v1/models',
+                            python_openai: 'from openai import OpenAI',
+                            litellm: 'model_list:',
+                        },
+                    }, {}, 'qwen-cf');
+                `, context);
+                assert(
+                    missingSecretBundleHtml.includes('One-Time Secrets Needed') &&
+                    missingSecretBundleHtml.includes('Stored metadata is available, but raw client secrets are not persisted') &&
+                    missingSecretBundleHtml.includes('Engine API Key') &&
+                    missingSecretBundleHtml.includes('Show API Key') &&
+                    missingSecretBundleHtml.includes('rotateProfileApiKey(&quot;qwen-cf&quot;)') &&
+                    missingSecretBundleHtml.includes('Cloudflare Client Secret') &&
+                    missingSecretBundleHtml.includes('Generate New Client') &&
+                    missingSecretBundleHtml.includes('generateProfileCfToken(&quot;qwen-cf&quot;)') &&
+                    missingSecretBundleHtml.includes('Rotate This Client') &&
+                    missingSecretBundleHtml.includes('rotateProfileCfToken(&quot;qwen-cf&quot;,&quot;tok-1&quot;)') &&
+                    !missingSecretBundleHtml.includes('Missing one-time values') &&
+                    !missingSecretBundleHtml.includes('rotate_cloudflare_service_token'),
+                    'client bundles with unavailable one-time secrets should render readable recovery actions'
+                );
+
                 const replicatedConnectHtml = vm.runInContext(`
                     inferenceProfilesData = [{
                         id: 'qwen-repl',
@@ -3816,6 +3857,8 @@ def test_static_inference_model_ui_assets_present():
     assert "modelJobStagingCleaned" in app_js
     assert "showStartedModelJob" in app_js
     assert ".model-job-badges" in style_css
+    assert ".profile-missing-secrets" in style_css
+    assert ".missing-secret-row" in style_css
     assert "force_stopped_references=true" in app_js
     assert "path.startsWith('/api/models')" in app_js
     assert "path.startsWith('/api/inference')" in app_js

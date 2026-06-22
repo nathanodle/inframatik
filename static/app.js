@@ -4466,7 +4466,62 @@ function copyButton(value, label = 'Copy') {
     return `<button type="button" class="btn copy-btn" data-copy="${esc(text)}" onclick="copyText(this.dataset.copy, this)">${esc(label)}</button>`;
 }
 
-function renderClientBundle(bundle, secrets = {}) {
+function renderMissingSecretActions(bundle, missing, profileId = '') {
+    const actions = Array.isArray(missing) ? missing : [];
+    if (!actions.length) return '';
+    const profileIdArg = profileId ? jsArg(profileId) : '';
+    const serviceTokenId = bundle && bundle.service_token_id ? String(bundle.service_token_id) : '';
+    const serviceTokenArg = serviceTokenId ? jsArg(serviceTokenId) : '';
+    const rows = actions.map(action => {
+        if (action === 'rotate_inference_api_key') {
+            return `
+                <div class="missing-secret-row">
+                    <div>
+                        <div class="launcher-card-title">Engine API Key</div>
+                        <div class="launcher-card-meta">Generate or rotate the OpenAI-compatible bearer token. The raw value is shown once.</div>
+                    </div>
+                    ${profileId ? `<button class="btn" onclick="rotateProfileApiKey(${profileIdArg})">Show API Key</button>` : ''}
+                </div>
+            `;
+        }
+        if (action === 'rotate_cloudflare_service_token') {
+            return `
+                <div class="missing-secret-row">
+                    <div>
+                        <div class="launcher-card-title">Cloudflare Client Secret</div>
+                        <div class="launcher-card-meta">Cloudflare returns client secrets only when generated or rotated. Generate a new client for no-downtime rollout, or rotate this client for immediate replacement.</div>
+                    </div>
+                    <div class="model-actions">
+                        ${profileId ? `<button class="btn" onclick="generateProfileCfToken(${profileIdArg})">Generate New Client</button>` : ''}
+                        ${profileId && serviceTokenId ? `<button class="btn" onclick="rotateProfileCfToken(${profileIdArg},${serviceTokenArg})">Rotate This Client</button>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+        return `
+            <div class="missing-secret-row">
+                <div>
+                    <div class="launcher-card-title">${esc(action)}</div>
+                    <div class="launcher-card-meta">This bundle references a one-time secret that must be generated or rotated again before it can be copied.</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    return `
+        <div class="profile-missing-secrets">
+            <div class="connect-section-header compact">
+                <div>
+                    <div class="launcher-card-title">One-Time Secrets Needed</div>
+                    <div class="launcher-card-meta">Stored metadata is available, but raw client secrets are not persisted.</div>
+                </div>
+                ${connectBadge(`${actions.length} missing`, 'yellow')}
+            </div>
+            ${rows}
+        </div>
+    `;
+}
+
+function renderClientBundle(bundle, secrets = {}, profileId = '') {
     if (!bundle) {
         return '<div class="empty-state">No client bundle available.</div>';
     }
@@ -4521,7 +4576,7 @@ function renderClientBundle(bundle, secrets = {}) {
                     ${oneTimeRows.map(([label, value]) => `<div><span>${esc(label)}</span><div class="connect-copy-row"><code>${esc(value)}</code>${copyButton(value)}</div></div>`).join('')}
                 </div>
             ` : ''}
-            ${missing.length ? `<div class="profile-card-line">Missing one-time values: ${esc(missing.join(', '))}</div>` : ''}
+            ${renderMissingSecretActions(bundle, missing, profileId || bundle.profile_id || '')}
             <div class="connect-section-header compact">
                 <div class="launcher-card-title">Examples</div>
             </div>
@@ -4899,7 +4954,7 @@ function renderProfileConnect(profileId, data, secrets = {}) {
                 </section>
             ` : ''}
         </div>
-        ${renderClientBundle(bundle, secrets)}
+        ${renderClientBundle(bundle, secrets, profileId)}
         ${renderInstanceBundleOptions(instanceBundles)}
         ${renderCloudflareCleanupRecords(profileId, cleanupRecords)}
         ${isCloudflare || tokens.length ? `

@@ -2499,6 +2499,34 @@ body {
     overflow-wrap: anywhere;
 }
 
+.profile-missing-secrets {
+    margin-top: 10px;
+    border: 1px solid rgba(245, 158, 11, 0.26);
+    border-radius: var(--radius-sm);
+    background: var(--yellow-glow);
+    padding: 10px;
+}
+
+.missing-secret-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    border: 1px solid rgba(245, 158, 11, 0.22);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.12);
+    padding: 10px;
+}
+
+.missing-secret-row + .missing-secret-row {
+    margin-top: 8px;
+}
+
+.missing-secret-row .model-actions {
+    flex-shrink: 0;
+}
+
 .client-example-grid {
     display: grid;
     grid-template-columns: 1fr;
@@ -3515,6 +3543,15 @@ body {
 
     .connect-hero {
         flex-direction: column;
+    }
+
+    .missing-secret-row {
+        flex-direction: column;
+    }
+
+    .missing-secret-row .model-actions {
+        width: 100%;
+        justify-content: flex-start;
     }
 
     .profile-detail-header {
