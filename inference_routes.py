@@ -9,6 +9,8 @@ import inference_planner
 import inference_profiles
 import inference_operations
 import inference_connect
+import model_storage
+import system
 
 
 inference_router = APIRouter()
@@ -47,6 +49,37 @@ def _raise_operation_error(exc: inference_operations.OperationError):
 
 def _raise_connect_error(exc: inference_connect.InferenceConnectError):
     raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+@inference_router.get("/api/inference/overview")
+async def api_inference_overview(include_system: bool = True):
+    errors = {}
+
+    def safe_sync(name: str, default, fn):
+        try:
+            return fn()
+        except Exception as e:
+            errors[name] = str(e)
+            return default
+
+    async def safe_async(name: str, default, fn):
+        try:
+            return await fn()
+        except Exception as e:
+            errors[name] = str(e)
+            return default
+
+    overview = {
+        "profiles": safe_sync("profiles", {"profiles": []}, inference_profiles.list_profiles),
+        "models": await safe_async("models", {"artifacts": [], "jobs": []}, model_storage.list_models),
+        "launchers": safe_sync("launchers", {"launchers": []}, inference_launchers.list_launchers),
+        "operations": safe_sync("operations", {"operations": []}, inference_operations.list_operations),
+        "system": None,
+        "partial_errors": errors,
+    }
+    if include_system:
+        overview["system"] = safe_sync("system", None, system.get_system_metrics)
+    return overview
 
 
 @inference_router.post("/api/inference/profiles/preview")

@@ -11,6 +11,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import inference_launchers
+import inference_operations
 import inference_planner
 import inference_profiles
 import model_storage
@@ -59,6 +60,8 @@ def _temp_inference(tmpdir: Path):
         (inference_profiles, "INFERENCE_SECRETS_FILE", config_dir / "inference_secrets.json"),
         (inference_profiles, "INFERENCE_CLEANUP_FILE", config_dir / "inference_cleanup.json"),
         (inference_profiles, "UNIT_DIR", unit_dir),
+        (inference_operations, "CONFIG_DIR", config_dir),
+        (inference_operations, "INFERENCE_OPERATIONS_FILE", config_dir / "inference_operations.json"),
         (node_config, "CONFIG_FILE", config_file),
         (services, "SERVICES_FILE", config_dir / "services.json"),
         (services, "PORTS_ENV_FILE", config_dir / "ports.env"),
@@ -77,6 +80,7 @@ def _temp_inference(tmpdir: Path):
         model_storage.initialize_model_storage()
         inference_launchers.initialize_launcher_registry()
         inference_profiles.initialize_profile_registries()
+        inference_operations.initialize_operations_registry()
         original_metrics = system.get_system_metrics
         system.get_system_metrics = lambda: {
             "gpus": [
@@ -272,15 +276,24 @@ def test_http_profile_api_create_list_render_delete(tmp_path: Path):
                 transport = httpx.ASGITransport(app=main.app)
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                     created = await client.post("/api/inference/profiles", json=_profile())
+                    overview = await client.get("/api/inference/overview")
                     listed = await client.get("/api/inference/profiles")
                     detail = await client.get("/api/inference/profiles/qwen")
                     rendered = await client.post("/api/inference/profiles/qwen/render")
                     exported = await client.get("/api/inference/profiles/qwen/export")
                     deleted = await client.delete("/api/inference/profiles/qwen")
-                    return created, listed, detail, rendered, exported, deleted
+                    return created, overview, listed, detail, rendered, exported, deleted
 
-        created, listed, detail, rendered, exported, deleted = _run(scenario())
+        created, overview, listed, detail, rendered, exported, deleted = _run(scenario())
         assert created.status_code == 201
+        overview_body = overview.json()
+        assert overview.status_code == 200
+        assert overview_body["profiles"]["profiles"][0]["id"] == "qwen"
+        assert overview_body["models"]["artifacts"][0]["id"] == "qwen"
+        assert overview_body["launchers"]["launchers"][0]["id"] == "vllm-main"
+        assert overview_body["operations"]["operations"] == []
+        assert overview_body["system"]["gpus"][0]["name"] == "GPU 0"
+        assert overview_body["partial_errors"] == {}
         assert listed.json()["profiles"][0]["id"] == "qwen"
         assert detail.json()["units"][0]["exists"] is True
         assert rendered.json()["valid_for_save"] is True

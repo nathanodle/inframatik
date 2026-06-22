@@ -1688,19 +1688,25 @@ async function refreshInferenceProfiles() {
     if (!nodeId) return;
     setInferenceError('');
     try {
-        const [profiles, models, launchers, operations, systemData] = await Promise.all([
-            api('GET', modelNodePath('/api/inference/profiles')),
-            api('GET', modelNodePath('/api/models')),
-            api('GET', modelNodePath('/api/inference/launchers')),
-            api('GET', modelNodePath('/api/inference/operations')),
-            api('GET', modelNodePath('/api/system')).catch(() => null),
-        ]);
+        const overview = await api('GET', modelNodePath('/api/inference/overview'));
         if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        const profiles = overview.profiles || {};
+        const models = overview.models || { artifacts: [], jobs: [] };
+        const launchers = overview.launchers || {};
+        const operations = overview.operations || {};
         inferenceProfilesData = profiles.profiles || [];
         inferenceModelData = models;
         inferenceLaunchersData = launchers.launchers || [];
         inferenceOperationsData = operations.operations || [];
-        inferenceSystemData = systemData;
+        inferenceSystemData = overview.system || null;
+        const partialErrors = overview.partial_errors || {};
+        const partialKeys = Object.keys(partialErrors);
+        const statusEl = document.getElementById('inference-status');
+        if (partialKeys.length) {
+            setInferenceStatus(`Loaded with limited data: ${partialKeys.join(', ')}`);
+        } else if (statusEl && statusEl.textContent.startsWith('Loaded with limited data:')) {
+            setInferenceStatus('');
+        }
         renderProfileSelects();
         renderInferenceGpuHints();
         renderInferenceProfiles(inferenceProfilesData);

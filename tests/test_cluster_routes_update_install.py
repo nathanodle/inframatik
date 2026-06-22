@@ -437,6 +437,29 @@ def test_proxy_cf_service_update_maps_errors():
     assert exc.status_code == 502
 
 
+def test_proxy_inference_overview_forwards_include_system_flag():
+    original_proxy = cluster_routes.proxy_to_node
+    seen = []
+
+    async def fake_proxy(node_id, method, path, body=None):
+        seen.append((node_id, method, path, body))
+        return {"ok": True, "path": path}
+
+    cluster_routes.proxy_to_node = fake_proxy
+    try:
+        default_result = asyncio.run(cluster_routes.proxy_inference_overview("node-1"))
+        light_result = asyncio.run(cluster_routes.proxy_inference_overview("node-1", include_system=False))
+    finally:
+        cluster_routes.proxy_to_node = original_proxy
+
+    assert default_result["path"] == "/api/inference/overview"
+    assert light_result["path"] == "/api/inference/overview?include_system=false"
+    assert seen == [
+        ("node-1", "GET", "/api/inference/overview", None),
+        ("node-1", "GET", "/api/inference/overview?include_system=false", None),
+    ]
+
+
 def test_install_script_requires_master_role():
     original_get_cfg = cluster_routes.get_node_config
     cluster_routes.get_node_config = lambda: {"role": "worker"}

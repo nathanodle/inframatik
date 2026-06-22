@@ -347,6 +347,64 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'active model jobs should show transfer rate, elapsed time, and ETA'
                 );
 
+                const overviewLoadResult = await vm.runInContext(`
+                    (async () => {
+                        const localCalls = [];
+                        isMaster = true;
+                        selfNodeId = 'master-node';
+                        selectedNodeId = 'worker-a';
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'profiles';
+                        wsConnected = true;
+                        inferenceJobsTimer = null;
+                        nodes = [{ node_id: 'worker-a', node_name: 'Worker A', status: 'online' }];
+                        api = async function(method, path) {
+                            localCalls.push([method, path]);
+                            if (method === 'GET' && path === '/api/nodes/worker-a/inference/overview') {
+                                return {
+                                    profiles: {
+                                        profiles: [{
+                                            id: 'qwen',
+                                            display_name: 'Qwen',
+                                            engine: 'vllm',
+                                            engine_launcher_id: 'vllm-main',
+                                            model: { artifact_id: 'qwen', snapshot: 'v1' },
+                                            common: { context_length: 4096 },
+                                            deployment: {},
+                                            exposure: { mode: 'local' },
+                                            instances: [{ index: 0, host: '127.0.0.1', port: 10000, gpu_ids: [0] }],
+                                            state: 'stopped',
+                                        }],
+                                    },
+                                    models: { artifacts: [{ id: 'qwen', display_name: 'Qwen', active_snapshot: 'v1' }], jobs: [] },
+                                    launchers: { launchers: [{ id: 'vllm-main', display_name: 'vLLM', engine: 'vllm' }] },
+                                    operations: { operations: [] },
+                                    system: { gpus: [{ index: 0, name: 'GPU 0', mem_total_mb: 49152, mem_used_mb: 1024 }] },
+                                    partial_errors: {},
+                                };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        await refreshInferenceProfiles();
+                        return {
+                            calls: localCalls,
+                            profiles: inferenceProfilesData.map(profile => profile.id),
+                            launchers: inferenceLaunchersData.map(launcher => launcher.id),
+                            profileHtml: document.getElementById('inference-profiles-list').innerHTML,
+                            gpuHtml: document.getElementById('profile-gpu-hints').innerHTML,
+                        };
+                    })()
+                `, context);
+                assert(
+                    overviewLoadResult.calls.length === 1 &&
+                    overviewLoadResult.calls[0][1] === '/api/nodes/worker-a/inference/overview' &&
+                    overviewLoadResult.profiles.includes('qwen') &&
+                    overviewLoadResult.launchers.includes('vllm-main') &&
+                    overviewLoadResult.profileHtml.includes('Qwen') &&
+                    overviewLoadResult.gpuHtml.includes('GPU 0'),
+                    'Profiles tab should load selected worker inference state through one overview request'
+                );
+
                 const submitUrlJobResult = await vm.runInContext(`
                     (async () => {
                         const localCalls = [];
@@ -1838,6 +1896,7 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="model-jobs-list"' in index_html
     assert 'id="model-store-root-input"' in index_html
     assert "/api/models" in app_js
+    assert "/api/inference/overview" in app_js
     assert "/api/inference/profiles" in app_js
     assert "/api/inference/launchers" in app_js
     assert "/api/inference/operations" in app_js

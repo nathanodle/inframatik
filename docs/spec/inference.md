@@ -1768,6 +1768,7 @@ Local-node endpoints:
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/api/inference/overview` | Read optimized profile-page state for the selected node: profiles, model inventory/jobs, launchers, operations, and GPU/system facts with partial-error reporting |
 | GET | `/api/inference/profiles` | List profiles with status |
 | POST | `/api/inference/profiles/preview` | Dry-run validate and plan a draft create/update without writing state |
 | POST | `/api/inference/profiles` | Create profile |

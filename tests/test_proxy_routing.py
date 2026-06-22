@@ -12,6 +12,7 @@ import inference_launchers
 import inference_planner
 import inference_profiles
 import inference_operations
+import inference_routes
 import proxy
 import services
 import system
@@ -294,7 +295,12 @@ def test_handle_local_inference_launchers_dispatch():
     original_validate = inference_launchers.validate_launcher_path
     original_delete = inference_launchers.delete_launcher
     original_preview = inference_planner.preview_profile
+    original_overview = inference_routes.api_inference_overview
     calls = []
+
+    async def fake_overview(include_system=True):
+        calls.append(("overview", include_system))
+        return {"profiles": {"profiles": []}, "system": include_system}
 
     inference_launchers.list_launchers = lambda include_validation=False: {
         "launchers": [],
@@ -305,8 +311,10 @@ def test_handle_local_inference_launchers_dispatch():
     inference_launchers.validate_launcher_path = lambda launcher_id: calls.append(("validate", launcher_id)) or {"valid": True}
     inference_launchers.delete_launcher = lambda launcher_id, force_stopped_references=False: calls.append(("delete", launcher_id, force_stopped_references)) or {"deleted": launcher_id}
     inference_planner.preview_profile = lambda body: calls.append(("preview", body)) or {"valid_for_save": True}
+    inference_routes.api_inference_overview = fake_overview
     try:
         previewed = _run(proxy._handle_local_inference("POST", "/api/inference/profiles/preview", {}, {"id": "draft"}))
+        overview = _run(proxy._handle_local_inference("GET", "/api/inference/overview", {"include_system": ["false"]}))
         listed = _run(proxy._handle_local_inference("GET", "/api/inference/launchers", {"include_validation": ["true"]}))
         created = _run(proxy._handle_local_inference("POST", "/api/inference/launchers", {}, {"id": "vllm-main", "engine": "vllm", "executable": "/x"}))
         updated = _run(proxy._handle_local_inference("PUT", "/api/inference/launchers/vllm-main", {}, {"base_args": ["serve"]}))
@@ -319,14 +327,17 @@ def test_handle_local_inference_launchers_dispatch():
         inference_launchers.validate_launcher_path = original_validate
         inference_launchers.delete_launcher = original_delete
         inference_planner.preview_profile = original_preview
+        inference_routes.api_inference_overview = original_overview
 
     assert previewed == {"valid_for_save": True}
+    assert overview == {"profiles": {"profiles": []}, "system": False}
     assert listed["include_validation"] is True
     assert created == {"id": "vllm-main"}
     assert updated == {"id": "vllm-main"}
     assert validated == {"valid": True}
     assert deleted == {"deleted": "vllm-main"}
     assert calls[0] == ("preview", {"id": "draft"})
+    assert calls[1] == ("overview", False)
     assert calls[-1] == ("delete", "vllm-main", True)
 
 

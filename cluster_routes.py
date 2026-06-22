@@ -1470,6 +1470,17 @@ async def proxy_models_delete(
         raise HTTPException(502, str(e))
 
 
+@cluster_router.get("/api/nodes/{node_id}/inference/overview")
+async def proxy_inference_overview(node_id: str, include_system: bool = True):
+    path = "/api/inference/overview"
+    if not include_system:
+        path = f"{path}?{urlencode({'include_system': 'false'})}"
+    try:
+        return await proxy_to_node(node_id, "GET", path)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
 @cluster_router.get("/api/nodes/{node_id}/inference/launchers")
 async def proxy_inference_launchers(node_id: str, include_validation: bool = False):
     path = "/api/inference/launchers"

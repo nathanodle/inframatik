@@ -289,6 +289,13 @@ async def _handle_local_inference(method: str, route_path: str, query: dict[str,
 
         return inference_planner.preview_profile(body or {})
 
+    if route_path == "/api/inference/overview" and method == "GET":
+        import inference_routes
+
+        return await inference_routes.api_inference_overview(
+            include_system=_query_bool(query, "include_system", True)
+        )
+
     if route_path == "/api/inference/profiles":
         import inference_profiles
 
