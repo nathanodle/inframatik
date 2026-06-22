@@ -423,6 +423,8 @@ def test_app_js_cloudflare_section_gating_by_role():
                 `, context);
                 assert(
                     replicatedConnectHtml.includes('Instance Endpoints') &&
+                    replicatedConnectHtml.includes('Security Posture') &&
+                    replicatedConnectHtml.includes('Local only') &&
                     replicatedConnectHtml.includes('Instance 0') &&
                     replicatedConnectHtml.includes('Instance 1') &&
                     replicatedConnectHtml.includes('data-copy="http://127.0.0.1:10000/v1"') &&
@@ -461,6 +463,11 @@ def test_app_js_cloudflare_section_gating_by_role():
                 `, context);
                 assert(
                     cleanupHtml.includes('Cloudflare Cleanup Pending') &&
+                    cleanupHtml.includes('Security Posture') &&
+                    cleanupHtml.includes('Cloudflare Access') &&
+                    cleanupHtml.includes('Service Auth ready') &&
+                    cleanupHtml.includes('Cloudflare clients') &&
+                    cleanupHtml.includes('Generate Client') &&
                     cleanupHtml.includes('dns_record') &&
                     cleanupHtml.includes('qwen.example.com') &&
                     cleanupHtml.includes('retryInferenceCleanup') &&
@@ -1304,6 +1311,7 @@ def test_static_inference_model_ui_assets_present():
     assert "loadProfileConnect" in app_js
     assert "copyButton" in app_js
     assert "data-copy" in app_js
+    assert "renderConnectionPosture" in app_js
     assert "renderInstanceBundleOptions" in app_js
     assert "profile-cf-hostname-" in app_js
     assert "prompt('Cloudflare hostname')" not in app_js
@@ -1385,6 +1393,9 @@ def test_static_inference_model_ui_assets_present():
     assert ".form-check-grid" in style_css
     assert ".profile-preview-panel" in style_css
     assert ".profile-connect-panel" in style_css
+    assert ".connect-posture-panel" in style_css
+    assert ".connect-posture-grid" in style_css
+    assert ".connect-posture-item" in style_css
     assert ".connect-action-grid" in style_css
     assert ".connect-inline-form" in style_css
     assert ".connect-mini-facts" in style_css

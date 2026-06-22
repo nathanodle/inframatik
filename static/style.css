@@ -1774,6 +1774,50 @@ body {
     background: rgba(255, 255, 255, 0.025);
 }
 
+.connect-posture-panel {
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.connect-posture-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 8px;
+}
+
+.connect-posture-item {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+}
+
+.connect-posture-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.connect-posture-head span {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.connect-posture-detail {
+    margin-top: 7px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.connect-posture-action {
+    margin-top: 9px;
+}
+
 .connect-inline-form {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

@@ -3402,6 +3402,91 @@ function renderCloudflareCleanupRecords(profileId, records) {
     `;
 }
 
+function renderConnectionPosture(profileId, context) {
+    const exposure = context.exposure || {};
+    const mode = exposure.mode || 'local';
+    const isCloudflare = mode === 'cloudflare' || context.cfResourcesConfigured;
+    const isLan = mode === 'lan';
+    const profileIdArg = jsArg(profileId);
+    const hasEngineKey = Boolean(context.hasEngineKey);
+    const cfReady = Boolean(context.cfResourcesReady);
+    const activeTokenCount = (context.activeTokens || []).length;
+    const cleanupCount = (context.cleanupRecords || []).length;
+    const items = [
+        {
+            label: 'Exposure',
+            state: isCloudflare ? 'Cloudflare tunnel' : isLan ? 'LAN' : 'Local only',
+            tone: isCloudflare ? (cfReady ? 'green' : 'yellow') : isLan ? 'yellow' : 'green',
+            detail: isCloudflare
+                ? (cfReady ? `Public hostname ${context.endpointHostname || '--'} is provisioned.` : 'Cloudflare hostname or Access resources still need provisioning.')
+                : isLan
+                    ? 'The model server is reachable on the node network.'
+                    : 'The model server binds locally on the node.',
+        },
+        {
+            label: 'Engine API key',
+            state: hasEngineKey ? 'Configured' : 'Missing',
+            tone: hasEngineKey ? 'green' : (isLan || isCloudflare ? 'yellow' : ''),
+            detail: hasEngineKey
+                ? 'Clients use an OpenAI-compatible Authorization bearer token.'
+                : (isLan || isCloudflare ? 'Recommended for LAN and public endpoints.' : 'Optional for local-only endpoints.'),
+            action: hasEngineKey
+                ? `<button class="btn" onclick="rotateProfileApiKey(${profileIdArg})">Rotate</button>`
+                : `<button class="btn" onclick="rotateProfileApiKey(${profileIdArg})">Generate</button>`,
+        },
+    ];
+    if (isCloudflare) {
+        items.push({
+            label: 'Cloudflare Access',
+            state: cfReady ? 'Service Auth ready' : 'Needs provisioning',
+            tone: cfReady ? 'green' : 'yellow',
+            detail: cfReady
+                ? 'Cloudflare Access policy is attached to this inference hostname.'
+                : 'Provision the endpoint to create or reconcile DNS, route, Access app, and policy.',
+            action: `<button class="btn" onclick="provisionProfileCloudflare(${profileIdArg})">${context.cfResourcesConfigured ? 'Reconcile' : 'Provision'}</button>`,
+        });
+        items.push({
+            label: 'Cloudflare clients',
+            state: `${activeTokenCount} active`,
+            tone: activeTokenCount ? 'green' : 'yellow',
+            detail: activeTokenCount
+                ? 'Active service-token clients can call through Cloudflare.'
+                : 'Generate a client to receive a Client ID and one-time Client Secret.',
+            action: `<button class="btn" onclick="generateProfileCfToken(${profileIdArg})" ${cfReady ? '' : 'disabled'}>Generate Client</button>`,
+        });
+    }
+    if (cleanupCount) {
+        items.push({
+            label: 'Cleanup',
+            state: `${cleanupCount} pending`,
+            tone: 'yellow',
+            detail: 'Cloudflare resources have retryable cleanup records below.',
+        });
+    }
+    return `
+        <div class="profile-connect-panel connect-posture-panel">
+            <div class="connect-section-header compact">
+                <div>
+                    <div class="launcher-card-title">Security Posture</div>
+                    <div class="launcher-card-meta">Auth layers and next actions for this endpoint</div>
+                </div>
+            </div>
+            <div class="connect-posture-grid">
+                ${items.map(item => `
+                    <div class="connect-posture-item">
+                        <div class="connect-posture-head">
+                            <span>${esc(item.label)}</span>
+                            ${connectBadge(item.state, item.tone || '')}
+                        </div>
+                        <div class="connect-posture-detail">${esc(item.detail)}</div>
+                        ${item.action ? `<div class="connect-posture-action">${item.action}</div>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
 function renderProfileConnect(profileId, data, secrets = {}) {
     const profile = inferenceProfilesData.find(item => item.id === profileId) || {};
     const exposure = profile.exposure || {};
@@ -3452,6 +3537,17 @@ function renderProfileConnect(profileId, data, secrets = {}) {
                 ${connectBadge(`${activeTokens.length} active client${activeTokens.length === 1 ? '' : 's'}`, activeTokens.length ? 'green' : '')}
             </div>
         </div>
+        ${renderConnectionPosture(profileId, {
+            exposure,
+            cloudflare,
+            bundle,
+            hasEngineKey,
+            cfResourcesReady,
+            cfResourcesConfigured,
+            activeTokens,
+            endpointHostname,
+            cleanupRecords,
+        })}
         <div class="connect-action-grid">
             <section>
                 <div class="connect-section-header">
