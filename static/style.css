@@ -2074,6 +2074,44 @@ body {
     align-items: center;
 }
 
+.profile-operation-readiness {
+    margin-top: 9px;
+}
+
+.profile-operation-readiness-head,
+.profile-operation-readiness-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.profile-operation-readiness-head span {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.profile-operation-readiness-head strong {
+    color: var(--text-primary);
+    font-size: 12px;
+}
+
+.profile-operation-readiness-track {
+    height: 5px;
+    margin: 6px 0;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.profile-operation-readiness-track div {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--yellow);
+}
+
 .profile-operation-log-output:not(:empty) {
     margin-top: 10px;
 }

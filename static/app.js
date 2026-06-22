@@ -3160,6 +3160,39 @@ function renderOperationFacts(detail) {
     `;
 }
 
+function renderOperationReadiness(detail) {
+    detail = detail || {};
+    const elapsedRaw = Number(detail.elapsed_seconds);
+    const timeoutRaw = Number(detail.timeout_seconds);
+    if (!Number.isFinite(elapsedRaw) || !Number.isFinite(timeoutRaw) || timeoutRaw <= 0) return '';
+    const elapsed = Math.max(0, elapsedRaw);
+    const timeout = Math.max(1, timeoutRaw);
+    const pct = Math.max(0, Math.min(100, (elapsed / timeout) * 100));
+    const remaining = Math.max(0, timeout - elapsed);
+    const status = detail.tcp_reachable
+        ? 'TCP reachable'
+        : detail.systemd_state === 'active'
+            ? 'Waiting for TCP'
+            : detail.systemd_state
+                ? `Systemd ${detail.systemd_state}`
+                : 'Waiting for systemd';
+    return `
+        <div class="profile-operation-readiness">
+            <div class="profile-operation-readiness-head">
+                <span>Readiness wait</span>
+                <strong>${esc(status)}</strong>
+            </div>
+            <div class="profile-operation-readiness-track">
+                <div style="width:${pct.toFixed(0)}%"></div>
+            </div>
+            <div class="profile-operation-readiness-meta">
+                <span>${esc(formatSeconds(elapsed))} elapsed</span>
+                <span>${esc(formatSeconds(remaining))} remaining</span>
+            </div>
+        </div>
+    `;
+}
+
 function renderOperationLiveLog(detail) {
     detail = detail || {};
     const logTail = detail.log_tail || '';
@@ -3242,6 +3275,7 @@ function renderProfileOperationPanel(operation, pendingAction = '', options = {}
             </div>
             <div class="progress-bar"><div class="progress-fill ${color}" style="width:${progress}%"></div></div>
             ${narrative ? `<div class="profile-operation-narrative">${esc(narrative)}</div>` : ''}
+            ${!failed ? renderOperationReadiness(detail) : ''}
             ${renderOperationSteps(operation)}
             ${renderOperationFacts(detail)}
             ${!failed ? renderOperationLiveLog(detail) : ''}

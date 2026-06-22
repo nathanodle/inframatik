@@ -776,6 +776,11 @@ def test_app_js_cloudflare_section_gating_by_role():
                     startupPanelHtml.includes('is active; waiting for the inference API port') &&
                     startupPanelHtml.includes('Restarts') &&
                     startupPanelHtml.includes('42s / 10m') &&
+                    startupPanelHtml.includes('profile-operation-readiness') &&
+                    startupPanelHtml.includes('Readiness wait') &&
+                    startupPanelHtml.includes('Waiting for TCP') &&
+                    startupPanelHtml.includes('42s elapsed') &&
+                    startupPanelHtml.includes('9m 18s remaining') &&
                     startupPanelHtml.includes('Startup log tail') &&
                     startupPanelHtml.includes('2 lines') &&
                     startupPanelHtml.includes('Loading model shard 1/8') &&
@@ -908,6 +913,8 @@ def test_app_js_cloudflare_section_gating_by_role():
                     startupOperationListHtml.includes('TCP') &&
                     startupOperationListHtml.includes('waiting') &&
                     startupOperationListHtml.includes('42s / 10m') &&
+                    startupOperationListHtml.includes('Readiness wait') &&
+                    startupOperationListHtml.includes('9m 18s remaining') &&
                     startupOperationListHtml.includes('Startup log tail') &&
                     startupOperationListHtml.includes('CUDA graph capture starting'),
                     'operations tab should reuse the rich operation panel with live readiness facts and log tail'
@@ -3131,6 +3138,7 @@ def test_static_inference_model_ui_assets_present():
     assert "operationLogButton" in app_js
     assert "operationLogOutputCache" in app_js
     assert "loadOperationLogs" in app_js
+    assert "renderOperationReadiness" in app_js
     assert "renderOperationLiveLog" in app_js
     assert "profileLogRequest" in app_js
     assert "hydrateInferenceFailureDiagnostics" in app_js
@@ -3251,6 +3259,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-operation-narrative" in style_css
     assert ".profile-operation-diagnosis" in style_css
     assert ".profile-operation-fix-action" in style_css
+    assert ".profile-operation-readiness" in style_css
     assert ".profile-live-log" in style_css
     assert ".profile-operation-log-output" in style_css
     assert ".inference-operation-context" in style_css
