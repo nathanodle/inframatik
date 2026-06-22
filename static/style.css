@@ -1186,6 +1186,17 @@ body {
     margin-top: 12px;
 }
 
+.profile-token-section {
+    min-width: 0;
+}
+
+.profile-token-help {
+    margin: -2px 0 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 .launcher-token-header {
     display: flex;
     align-items: center;
@@ -1226,22 +1237,28 @@ body {
 }
 
 .launcher-arg-row,
-.launcher-env-row {
+.launcher-env-row,
+.profile-raw-arg-row,
+.profile-env-row {
     display: grid;
     gap: 8px;
     align-items: center;
 }
 
-.launcher-arg-row {
+.launcher-arg-row,
+.profile-raw-arg-row {
     grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.launcher-env-row {
+.launcher-env-row,
+.profile-env-row {
     grid-template-columns: minmax(120px, 0.6fr) minmax(0, 1fr) auto;
 }
 
 .launcher-arg-row input,
-.launcher-env-row input {
+.launcher-env-row input,
+.profile-raw-arg-row input,
+.profile-env-row input {
     width: 100%;
     padding: 8px 10px;
     background: var(--bg-input);
@@ -3707,6 +3724,11 @@ body {
 
     .profile-engine-guide-chips {
         justify-content: flex-start;
+    }
+
+    .profile-raw-arg-row,
+    .profile-env-row {
+        grid-template-columns: 1fr;
     }
 
     .model-form-grid {

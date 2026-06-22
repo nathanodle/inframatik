@@ -2188,6 +2188,106 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile editor should round-trip LoRA fields without duplicating them into raw common JSON'
                 );
 
+                const advancedRowsResult = vm.runInContext(`
+                    (() => {
+                        const originalQuerySelectorAll = document.querySelectorAll;
+                        function argRow(value) {
+                            return {
+                                querySelector(selector) {
+                                    if (selector === '.profile-raw-arg-input') return { value };
+                                    return null;
+                                },
+                            };
+                        }
+                        function envRow(key, value) {
+                            return {
+                                querySelector(selector) {
+                                    if (selector === '.profile-env-key') return { value: key };
+                                    if (selector === '.profile-env-value') return { value };
+                                    return null;
+                                },
+                            };
+                        }
+                        try {
+                            resetProfileForm();
+                            document.getElementById('profile-id').value = 'qwen-advanced';
+                            document.getElementById('profile-engine').value = 'vllm';
+                            document.getElementById('profile-launcher').value = 'vllm-main';
+                            document.getElementById('profile-model').value = 'qwen@v1';
+                            document.querySelectorAll = function(selector) {
+                                if (selector === '.profile-raw-arg-row') return [argRow('--max-num-seqs'), argRow('16'), argRow('--disable-log-requests')];
+                                if (selector === '.profile-env-row') return [envRow('CUDA_DEVICE_MAX_CONNECTIONS', '1'), envRow('NCCL_NVLS_ENABLE', '1')];
+                                return originalQuerySelectorAll.call(document, selector);
+                            };
+                            const advanced = buildProfileDraft().advanced;
+                            document.querySelectorAll = function(selector) {
+                                if (selector === '.profile-raw-arg-row') return [argRow('')];
+                                if (selector === '.profile-env-row') return [];
+                                return originalQuerySelectorAll.call(document, selector);
+                            };
+                            let emptyArgError = '';
+                            try {
+                                buildProfileDraft();
+                            } catch (e) {
+                                emptyArgError = e.message;
+                            }
+                            document.querySelectorAll = function(selector) {
+                                if (selector === '.profile-raw-arg-row') return [];
+                                if (selector === '.profile-env-row') return [envRow('BAD-NAME', '1')];
+                                return originalQuerySelectorAll.call(document, selector);
+                            };
+                            let badEnvError = '';
+                            try {
+                                buildProfileDraft();
+                            } catch (e) {
+                                badEnvError = e.message;
+                            }
+                            return { advanced, emptyArgError, badEnvError };
+                        } finally {
+                            document.querySelectorAll = originalQuerySelectorAll;
+                        }
+                    })()
+                `, context);
+                assert(
+                    advancedRowsResult.advanced.args.join('|') === '--max-num-seqs|16|--disable-log-requests' &&
+                    advancedRowsResult.advanced.env.CUDA_DEVICE_MAX_CONNECTIONS === '1' &&
+                    advancedRowsResult.advanced.env.NCCL_NVLS_ENABLE === '1' &&
+                    advancedRowsResult.emptyArgError.includes('Raw arg row 1 is empty') &&
+                    advancedRowsResult.badEnvError.includes('invalid key'),
+                    'profile advanced editor should collect ordered argv token rows and validate raw env rows'
+                );
+
+                const advancedRowsRoundTrip = vm.runInContext(`
+                    fillProfileForm({
+                        id: 'qwen-advanced-edit',
+                        display_name: 'Qwen Advanced Edit',
+                        engine: 'vllm',
+                        engine_launcher_id: 'vllm-main',
+                        model: { artifact_id: 'qwen', snapshot: 'v1' },
+                        common: {},
+                        deployment: {},
+                        advanced: {
+                            args: ['--max-num-seqs', '64'],
+                            env: { VLLM_USE_V1: '1' },
+                        },
+                        engine_config: {},
+                        exposure: {},
+                        instances: [],
+                        state: 'stopped',
+                    });
+                    ({
+                        argsHtml: document.getElementById('profile-raw-arg-rows').innerHTML,
+                        envHtml: document.getElementById('profile-env-rows').innerHTML,
+                    });
+                `, context);
+                assert(
+                    advancedRowsRoundTrip.argsHtml.includes('--max-num-seqs') &&
+                    advancedRowsRoundTrip.argsHtml.includes('64') &&
+                    advancedRowsRoundTrip.envHtml.includes('VLLM_USE_V1') &&
+                    advancedRowsRoundTrip.envHtml.includes('1'),
+                    'profile editor should round-trip advanced args/env into row editors'
+                );
+
                 const vllmContextParallelDraftResult = vm.runInContext(`
                     resetProfileForm();
                     document.getElementById('profile-id').value = 'qwen-vllm-cp';
@@ -3793,6 +3893,8 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-model"' in index_html
     assert 'id="profile-port-policy"' in index_html
     assert 'id="profile-ports"' in index_html
+    assert 'id="profile-raw-arg-rows"' in index_html
+    assert 'id="profile-env-rows"' in index_html
     assert 'id="profile-common-json"' in index_html
     assert 'id="profile-engine-json"' in index_html
     assert 'id="profile-save-restart-btn"' in index_html
@@ -3808,6 +3910,9 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-engine-guide"' in index_html
     assert 'class="profile-engine-details" open' in index_html
     assert "PROFILE_ENGINE_GUIDES" in app_js
+    assert "addProfileArgRow" in app_js
+    assert "collectProfileAdvancedArgs" in app_js
+    assert "collectProfileAdvancedEnv" in app_js
     assert "setProfileEditorSection" in app_js
     assert "profileIssueSection" in app_js
     assert "updateProfileEditorIssueBadges" in app_js
@@ -4043,6 +4148,8 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-engine-guide" in style_css
     assert ".profile-engine-guide-chips" in style_css
     assert ".profile-engine-details" in style_css
+    assert ".profile-raw-arg-row" in style_css
+    assert ".profile-env-row" in style_css
     assert ".form-check-grid" in style_css
     assert ".profile-preview-panel" in style_css
     assert ".profile-preview-stale" in style_css

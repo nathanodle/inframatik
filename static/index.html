@@ -933,13 +933,21 @@
                     </div>
                     <div class="profile-editor-section" data-profile-editor-panel="advanced" role="tabpanel">
                     <div class="model-form-grid">
-                        <div class="form-group">
-                            <label>Raw Args</label>
-                            <textarea id="profile-raw-args" rows="4" placeholder="--max-num-seqs&#10;64"></textarea>
+                        <div class="launcher-token-section profile-token-section">
+                            <div class="launcher-token-header">
+                                <label>Raw Args</label>
+                                <button class="btn" type="button" onclick="addProfileArgRow()">Add Arg</button>
+                            </div>
+                            <div class="profile-token-help">One argv token per row. Order is preserved and tokens are appended after inframatik-rendered engine args.</div>
+                            <div id="profile-raw-arg-rows" class="launcher-token-rows profile-token-rows"></div>
                         </div>
-                        <div class="form-group">
-                            <label>Env</label>
-                            <textarea id="profile-env" rows="4" placeholder="KEY=value"></textarea>
+                        <div class="launcher-token-section profile-token-section">
+                            <div class="launcher-token-header">
+                                <label>Env</label>
+                                <button class="btn" type="button" onclick="addProfileEnvRow()">Add Env</button>
+                            </div>
+                            <div class="profile-token-help">Profile env is merged over launcher env in the rendered command preview.</div>
+                            <div id="profile-env-rows" class="launcher-token-rows profile-token-rows"></div>
                         </div>
                     </div>
                     <div class="model-form-grid">

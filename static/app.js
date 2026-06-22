@@ -2359,17 +2359,82 @@ function syncProfileDeploymentPortDefaults() {
     syncProfilePortPolicyFields();
 }
 
-function profileTextAreaLines(id) {
+function clearProfileTokenRows(id) {
     const el = document.getElementById(id);
-    if (!el) return [];
-    return el.value.split('\n').map(line => line.trim()).filter(Boolean);
+    if (!el) return;
+    el.innerHTML = '';
+    el._inframatikHtml = '';
 }
 
-function profileEnvFromTextArea() {
+function appendTokenRow(container, row) {
+    if (!container || !row) return;
+    if (typeof container.appendChild === 'function') {
+        container.appendChild(row);
+    } else {
+        container.innerHTML = `${container.innerHTML || ''}${row.innerHTML || ''}`;
+    }
+    container._inframatikHtml = null;
+}
+
+function addProfileArgRow(value = '') {
+    const el = document.getElementById('profile-raw-arg-rows');
+    if (!el) return;
+    const row = document.createElement('div');
+    row.className = 'profile-raw-arg-row';
+    row.innerHTML = `
+        <input type="text" class="profile-raw-arg-input" value="${esc(value)}" placeholder="argv token" autocomplete="off">
+        <button class="btn danger" type="button" onclick="this.parentElement.remove()">Remove</button>
+    `;
+    appendTokenRow(el, row);
+}
+
+function addProfileEnvRow(key = '', value = '') {
+    const el = document.getElementById('profile-env-rows');
+    if (!el) return;
+    const row = document.createElement('div');
+    row.className = 'profile-env-row';
+    row.innerHTML = `
+        <input type="text" class="profile-env-key" value="${esc(key)}" placeholder="KEY" autocomplete="off">
+        <input type="text" class="profile-env-value" value="${esc(value)}" placeholder="value" autocomplete="off">
+        <button class="btn danger" type="button" onclick="this.parentElement.remove()">Remove</button>
+    `;
+    appendTokenRow(el, row);
+}
+
+function setProfileAdvancedArgs(args = []) {
+    clearProfileTokenRows('profile-raw-arg-rows');
+    (args || []).forEach(arg => addProfileArgRow(arg));
+}
+
+function setProfileAdvancedEnv(env = {}) {
+    clearProfileTokenRows('profile-env-rows');
+    Object.entries(env || {}).forEach(([key, value]) => addProfileEnvRow(key, value));
+}
+
+function collectProfileAdvancedArgs() {
+    const rows = Array.from(document.querySelectorAll('.profile-raw-arg-row'));
+    const args = [];
+    rows.forEach((row, index) => {
+        const input = row.querySelector('.profile-raw-arg-input');
+        const value = input ? input.value.trim() : '';
+        if (!value) throw new Error(`Raw arg row ${index + 1} is empty.`);
+        args.push(value);
+    });
+    return args;
+}
+
+function collectProfileAdvancedEnv() {
+    const rows = Array.from(document.querySelectorAll('.profile-env-row'));
     const env = {};
-    profileTextAreaLines('profile-env').forEach(line => {
-        const idx = line.indexOf('=');
-        if (idx > 0) env[line.slice(0, idx).trim()] = line.slice(idx + 1);
+    rows.forEach((row, index) => {
+        const keyEl = row.querySelector('.profile-env-key');
+        const valueEl = row.querySelector('.profile-env-value');
+        const key = keyEl ? keyEl.value.trim() : '';
+        const value = valueEl ? valueEl.value : '';
+        if (!key && !value) return;
+        if (!key) throw new Error(`Env row ${index + 1} is missing a key.`);
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`Env row ${index + 1} has an invalid key.`);
+        env[key] = value;
     });
     return env;
 }
@@ -2659,8 +2724,8 @@ function buildProfileDraft() {
         hostname: modelOptionalValue('profile-hostname'),
     };
     const advanced = {
-        args: profileTextAreaLines('profile-raw-args'),
-        env: profileEnvFromTextArea(),
+        args: collectProfileAdvancedArgs(),
+        env: collectProfileAdvancedEnv(),
     };
     return {
         id,
@@ -2709,11 +2774,13 @@ function resetProfileForm() {
         'profile-llama-gpu-layers', 'profile-llama-main-gpu', 'profile-llama-split-mode',
         'profile-llama-tensor-split', 'profile-llama-threads', 'profile-llama-threads-batch',
         'profile-llama-batch-size', 'profile-llama-ubatch-size', 'profile-llama-cache-type-k',
-        'profile-llama-cache-type-v', 'profile-llama-mmproj-ref', 'profile-raw-args', 'profile-env',
+        'profile-llama-cache-type-v', 'profile-llama-mmproj-ref',
         'profile-common-json', 'profile-engine-json'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
+    setProfileAdvancedArgs([]);
+    setProfileAdvancedEnv({});
     ['profile-trust-remote-code', 'profile-prefix-caching', 'profile-auto-tool-choice',
         'profile-metrics', 'profile-lora-enabled',
         'profile-vllm-expert-parallel', 'profile-vllm-ep-weight-filter', 'profile-vllm-eplb', 'profile-vllm-dbo',
@@ -2822,8 +2889,8 @@ function fillProfileForm(profile) {
     document.getElementById('profile-exposure-mode').value = exposure.mode || 'local';
     document.getElementById('profile-hostname').value = exposure.hostname || '';
     const advanced = profile.advanced || {};
-    document.getElementById('profile-raw-args').value = (advanced.args || []).join('\n');
-    document.getElementById('profile-env').value = Object.entries(advanced.env || {}).map(([key, value]) => `${key}=${value}`).join('\n');
+    setProfileAdvancedArgs(advanced.args || []);
+    setProfileAdvancedEnv(advanced.env || {});
     document.getElementById('profile-common-json').value = jsonForTextarea(omitKeys(common, STRUCTURED_COMMON_KEYS));
     const engineConfig = profile.engine_config || {};
     const engineSpecific = getEngineSpecificConfig(engineConfig, profile.engine || 'vllm');
