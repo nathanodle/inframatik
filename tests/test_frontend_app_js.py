@@ -405,6 +405,73 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'Profiles tab should load selected worker inference state through one overview request'
                 );
 
+                const profileDetailResult = await vm.runInContext(`
+                    (async () => {
+                        const localCalls = [];
+                        isMaster = true;
+                        selfNodeId = 'master-node';
+                        selectedNodeId = 'worker-a';
+                        currentAppView = 'inference';
+                        inferenceProfilesData = [{
+                            id: 'qwen',
+                            display_name: 'Qwen',
+                            engine: 'vllm',
+                            engine_launcher_id: 'vllm-main',
+                            model: { artifact_id: 'qwen', snapshot: 'v1' },
+                            common: { context_length: 4096 },
+                            deployment: {},
+                            exposure: { mode: 'local' },
+                            instances: [{ index: 0, host: '127.0.0.1', port: 10000, gpu_ids: [0], unit: 'infra-llm-qwen.service' }],
+                            state: 'stopped',
+                        }];
+                        inferenceOperationsData = [];
+                        api = async function(method, path) {
+                            localCalls.push([method, path]);
+                            if (method === 'GET' && path === '/api/nodes/worker-a/inference/profiles/qwen/detail') {
+                                return {
+                                    profile: inferenceProfilesData[0],
+                                    instances: {
+                                        profile_id: 'qwen',
+                                        health: 'degraded',
+                                        instances: [{
+                                            index: 0,
+                                            host: '127.0.0.1',
+                                            port: 10000,
+                                            gpu_ids: [0],
+                                            unit: 'infra-llm-qwen.service',
+                                            systemd_state: 'active',
+                                            tcp_reachable: false,
+                                            health: 'degraded',
+                                        }],
+                                    },
+                                    plan: {
+                                        blockers: [],
+                                        warnings: [{ message: 'restart required before live traffic' }],
+                                        command_preview: [{ argv: ['vllm', 'serve', '/models/qwen'], env: {} }],
+                                        systemd_preview: { units: [] },
+                                    },
+                                    partial_errors: { plan: 'preview timed out' },
+                                };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        await loadProfileDetails('qwen');
+                        return {
+                            calls: localCalls,
+                            html: document.getElementById('profile-detail-qwen').innerHTML,
+                        };
+                    })()
+                `, context);
+                assert(
+                    profileDetailResult.calls.length === 1 &&
+                    profileDetailResult.calls[0][1] === '/api/nodes/worker-a/inference/profiles/qwen/detail' &&
+                    profileDetailResult.html.includes('Some live detail could not be loaded') &&
+                    profileDetailResult.html.includes('infra-llm-qwen.service') &&
+                    profileDetailResult.html.includes('TCP no') &&
+                    profileDetailResult.html.includes('vllm serve /models/qwen'),
+                    'Profile Details should load through one detail request and preserve partial diagnostics'
+                );
+
                 const submitUrlJobResult = await vm.runInContext(`
                     (async () => {
                         const localCalls = [];
@@ -1903,6 +1970,7 @@ def test_static_inference_model_ui_assets_present():
     assert "client-bundles" in app_js
     assert "cloudflare/service-tokens" in app_js
     assert "cloudflare/exposure" in app_js
+    assert "/api/inference/profiles/${encodeURIComponent(profileId)}/detail" in app_js
     assert "loadProfileDetails" in app_js
     assert "runInstanceAction" in app_js
     assert "runProfileTest" in app_js

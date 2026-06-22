@@ -3059,9 +3059,13 @@ function renderProfileInstanceRows(profile, healthData) {
     return rows || '<div class="empty-state compact">No resolved instances.</div>';
 }
 
-function renderProfileDetail(profile, healthData, plan) {
+function renderProfileDetail(profile, healthData, plan, partialErrors = {}) {
     const profileIdArg = jsArg(profile.id);
     const chips = profileConfigChips(profile);
+    const errorKeys = Object.keys(partialErrors || {});
+    const partialWarning = errorKeys.length
+        ? `<div class="profile-warning">Some live detail could not be loaded: ${esc(errorKeys.join(', '))}</div>`
+        : '';
     return `
         <div class="profile-detail-panel">
             <div class="profile-detail-header">
@@ -3082,6 +3086,7 @@ function renderProfileDetail(profile, healthData, plan) {
                 <button type="button" class="btn" onclick="exportInferenceProfile(${profileIdArg})">Export</button>
                 <button type="button" class="btn" onclick="clearProfileDetail(${profileIdArg})">Close</button>
             </div>
+            ${partialWarning}
             ${profile.restart_required ? `<div class="profile-warning">Restart required: ${esc((profile.restart_required_fields || []).join(', ') || 'saved runtime changes')}</div>` : ''}
             <div class="connect-facts profile-detail-facts">${profileSummaryFacts(profile)}</div>
             <div class="connect-section-header compact">
@@ -3101,13 +3106,11 @@ function renderProfileDetail(profile, healthData, plan) {
 async function loadProfileDetails(profileId) {
     setProfileDetail(profileId, '<div class="empty-state compact">Loading profile details...</div>', 'details');
     try {
-        const localProfile = profileById(profileId);
-        const [profile, healthData, plan] = await Promise.all([
-            localProfile ? Promise.resolve(localProfile) : api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}`)),
-            api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/instances`)),
-            api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/render`)),
-        ]);
-        setProfileDetail(profileId, renderProfileDetail(profile, healthData, plan), 'details');
+        const detail = await api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/detail`));
+        const profile = detail.profile || profileById(profileId) || { id: profileId, instances: [] };
+        const healthData = detail.instances || { instances: profile.instances || [], health: profile.state || 'unknown' };
+        const plan = detail.plan || { blockers: [], warnings: [], command_preview: [], systemd_preview: { units: [] } };
+        setProfileDetail(profileId, renderProfileDetail(profile, healthData, plan, detail.partial_errors || {}), 'details');
     } catch (e) {
         setProfileDetail(profileId, `<div class="model-job-error">${esc(e.message)}</div>`, 'details');
     }

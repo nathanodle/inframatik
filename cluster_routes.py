@@ -1563,6 +1563,14 @@ async def proxy_get_inference_profile(node_id: str, profile_id: str):
         raise HTTPException(502, str(e))
 
 
+@cluster_router.get("/api/nodes/{node_id}/inference/profiles/{profile_id}/detail")
+async def proxy_inference_profile_detail(node_id: str, profile_id: str):
+    try:
+        return await proxy_to_node(node_id, "GET", f"/api/inference/profiles/{profile_id}/detail")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
 @cluster_router.put("/api/nodes/{node_id}/inference/profiles/{profile_id}")
 async def proxy_update_inference_profile(node_id: str, profile_id: str, body: dict):
     try:

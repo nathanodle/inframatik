@@ -449,14 +449,17 @@ def test_proxy_inference_overview_forwards_include_system_flag():
     try:
         default_result = asyncio.run(cluster_routes.proxy_inference_overview("node-1"))
         light_result = asyncio.run(cluster_routes.proxy_inference_overview("node-1", include_system=False))
+        detail_result = asyncio.run(cluster_routes.proxy_inference_profile_detail("node-1", "qwen"))
     finally:
         cluster_routes.proxy_to_node = original_proxy
 
     assert default_result["path"] == "/api/inference/overview"
     assert light_result["path"] == "/api/inference/overview?include_system=false"
+    assert detail_result["path"] == "/api/inference/profiles/qwen/detail"
     assert seen == [
         ("node-1", "GET", "/api/inference/overview", None),
         ("node-1", "GET", "/api/inference/overview?include_system=false", None),
+        ("node-1", "GET", "/api/inference/profiles/qwen/detail", None),
     ]
 
 

@@ -111,6 +111,54 @@ async def api_get_inference_profile(profile_id: str):
         _raise_profile_error(e)
 
 
+@inference_router.get("/api/inference/profiles/{profile_id}/detail")
+async def api_inference_profile_detail(profile_id: str):
+    try:
+        profile = inference_profiles.get_profile(profile_id)
+    except inference_profiles.ProfileError as e:
+        _raise_profile_error(e)
+
+    errors = {}
+
+    async def safe_async(name: str, default, fn):
+        try:
+            return await fn()
+        except Exception as e:
+            errors[name] = str(e)
+            return default
+
+    def safe_sync(name: str, default, fn):
+        try:
+            return fn()
+        except Exception as e:
+            errors[name] = str(e)
+            return default
+
+    instances = await safe_async(
+        "instances",
+        {"profile_id": profile_id, "instances": profile.get("instances") or [], "health": profile.get("state") or "unknown"},
+        lambda: inference_operations.get_profile_instances(profile_id),
+    )
+    plan = safe_sync(
+        "plan",
+        {
+            "valid_for_save": False,
+            "valid_for_start": False,
+            "blockers": [],
+            "warnings": [{"message": "Command preview is unavailable."}],
+            "command_preview": [],
+            "systemd_preview": {"units": []},
+        },
+        lambda: inference_profiles.render_profile(profile_id),
+    )
+    return {
+        "profile": profile,
+        "instances": instances,
+        "plan": plan,
+        "partial_errors": errors,
+    }
+
+
 @inference_router.put("/api/inference/profiles/{profile_id}")
 async def api_update_inference_profile(profile_id: str, body: dict):
     try:

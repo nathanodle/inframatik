@@ -316,6 +316,10 @@ async def _handle_local_inference(method: str, route_path: str, query: dict[str,
         suffix = "/" + "/".join(parts[1:]) if len(parts) > 1 else ""
         if method == "GET" and suffix == "":
             return inference_profiles.get_profile(profile_id)
+        if method == "GET" and suffix == "/detail":
+            import inference_routes
+
+            return await inference_routes.api_inference_profile_detail(profile_id)
         if method == "PUT" and suffix == "":
             return inference_profiles.update_profile(profile_id, body or {})
         if method == "DELETE" and suffix == "":

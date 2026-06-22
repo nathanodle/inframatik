@@ -1773,6 +1773,7 @@ Local-node endpoints:
 | POST | `/api/inference/profiles/preview` | Dry-run validate and plan a draft create/update without writing state |
 | POST | `/api/inference/profiles` | Create profile |
 | GET | `/api/inference/profiles/{id}` | Get profile detail |
+| GET | `/api/inference/profiles/{id}/detail` | Read optimized profile detail payload: profile config, live instance/systemd/TCP facts, command/unit preview, and partial-error reporting |
 | PUT | `/api/inference/profiles/{id}` | Update profile |
 | DELETE | `/api/inference/profiles/{id}` | Delete profile |
 | GET | `/api/inference/profiles/{id}/export` | Export redacted profile JSON for backup/debug |

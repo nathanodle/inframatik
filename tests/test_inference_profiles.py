@@ -271,20 +271,31 @@ def test_http_profile_api_create_list_render_delete(tmp_path: Path):
         async def auth_true(_request):
             return True
 
+        async def unit_state(_unit):
+            return "active"
+
+        async def tcp_ready(_host, _port):
+            return True
+
         async def scenario():
-            with _Patch([(auth, "check_auth", auth_true)]):
+            with _Patch([
+                (auth, "check_auth", auth_true),
+                (inference_operations, "unit_active_state", unit_state),
+                (inference_operations, "tcp_ready", tcp_ready),
+            ]):
                 transport = httpx.ASGITransport(app=main.app)
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                     created = await client.post("/api/inference/profiles", json=_profile())
                     overview = await client.get("/api/inference/overview")
                     listed = await client.get("/api/inference/profiles")
                     detail = await client.get("/api/inference/profiles/qwen")
+                    detail_bundle = await client.get("/api/inference/profiles/qwen/detail")
                     rendered = await client.post("/api/inference/profiles/qwen/render")
                     exported = await client.get("/api/inference/profiles/qwen/export")
                     deleted = await client.delete("/api/inference/profiles/qwen")
-                    return created, overview, listed, detail, rendered, exported, deleted
+                    return created, overview, listed, detail, detail_bundle, rendered, exported, deleted
 
-        created, overview, listed, detail, rendered, exported, deleted = _run(scenario())
+        created, overview, listed, detail, detail_bundle, rendered, exported, deleted = _run(scenario())
         assert created.status_code == 201
         overview_body = overview.json()
         assert overview.status_code == 200
@@ -296,6 +307,12 @@ def test_http_profile_api_create_list_render_delete(tmp_path: Path):
         assert overview_body["partial_errors"] == {}
         assert listed.json()["profiles"][0]["id"] == "qwen"
         assert detail.json()["units"][0]["exists"] is True
+        detail_body = detail_bundle.json()
+        assert detail_bundle.status_code == 200
+        assert detail_body["profile"]["id"] == "qwen"
+        assert detail_body["instances"]["instances"][0]["health"] == "healthy"
+        assert detail_body["plan"]["valid_for_save"] is True
+        assert detail_body["partial_errors"] == {}
         assert rendered.json()["valid_for_save"] is True
         assert exported.status_code == 200
         assert exported.json()["profile"]["id"] == "qwen"

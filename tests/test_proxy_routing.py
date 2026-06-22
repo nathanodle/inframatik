@@ -348,7 +348,12 @@ def test_handle_local_inference_profiles_dispatch():
     original_update = inference_profiles.update_profile
     original_delete = inference_connect.delete_profile_with_cleanup
     original_render = inference_profiles.render_profile
+    original_detail = inference_routes.api_inference_profile_detail
     calls = []
+
+    async def fake_detail(profile_id):
+        calls.append(("detail", profile_id))
+        return {"profile": {"id": profile_id}, "instances": {"instances": []}, "plan": {}}
 
     inference_profiles.list_profiles = lambda: calls.append(("list",)) or {"profiles": []}
     inference_profiles.create_profile = lambda body: calls.append(("create", body)) or {"profile": {"id": body["id"]}}
@@ -360,10 +365,12 @@ def test_handle_local_inference_profiles_dispatch():
 
     inference_connect.delete_profile_with_cleanup = fake_delete
     inference_profiles.render_profile = lambda profile_id: calls.append(("render", profile_id)) or {"valid_for_save": True}
+    inference_routes.api_inference_profile_detail = fake_detail
     try:
         listed = _run(proxy._handle_local_inference("GET", "/api/inference/profiles", {}))
         created = _run(proxy._handle_local_inference("POST", "/api/inference/profiles", {}, {"id": "qwen"}))
         detail = _run(proxy._handle_local_inference("GET", "/api/inference/profiles/qwen", {}))
+        detail_bundle = _run(proxy._handle_local_inference("GET", "/api/inference/profiles/qwen/detail", {}))
         updated = _run(proxy._handle_local_inference("PUT", "/api/inference/profiles/qwen", {}, {"display_name": "Qwen"}))
         rendered = _run(proxy._handle_local_inference("POST", "/api/inference/profiles/qwen/render", {}))
         deleted = _run(proxy._handle_local_inference("DELETE", "/api/inference/profiles/qwen", {"force": ["true"]}))
@@ -374,10 +381,12 @@ def test_handle_local_inference_profiles_dispatch():
         inference_profiles.update_profile = original_update
         inference_connect.delete_profile_with_cleanup = original_delete
         inference_profiles.render_profile = original_render
+        inference_routes.api_inference_profile_detail = original_detail
 
     assert listed == {"profiles": []}
     assert created == {"profile": {"id": "qwen"}}
     assert detail == {"id": "qwen"}
+    assert detail_bundle["profile"]["id"] == "qwen"
     assert updated == {"id": "qwen"}
     assert rendered == {"valid_for_save": True}
     assert deleted == {"deleted": "qwen"}
@@ -385,6 +394,7 @@ def test_handle_local_inference_profiles_dispatch():
         ("list",),
         ("create", {"id": "qwen"}),
         ("get", "qwen"),
+        ("detail", "qwen"),
         ("update", "qwen", {"display_name": "Qwen"}),
         ("render", "qwen"),
         ("delete", "qwen", True, False),
