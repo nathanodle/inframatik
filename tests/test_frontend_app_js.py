@@ -669,7 +669,30 @@ def test_app_js_cloudflare_section_gating_by_role():
                         id: 'qwen-cleanup',
                         display_name: 'Qwen Cleanup',
                         exposure: { mode: 'cloudflare' },
-                        cloudflare: { hostname: 'qwen.example.com', access_app_id: 'app-1', access_policy_id: 'pol-1' },
+                        cloudflare: {
+                            hostname: 'qwen.example.com',
+                            access_app_id: 'app-1',
+                            access_policy_id: 'pol-1',
+                            service_tokens: [{
+                                id: 'tok-owned',
+                                name: 'owned client',
+                                client_id: 'owned.access',
+                                state: 'active',
+                                owned_by_inframatik: true,
+                            }, {
+                                id: 'tok-ext',
+                                name: 'external client',
+                                client_id: 'external.access',
+                                state: 'active',
+                                owned_by_inframatik: false,
+                            }, {
+                                id: 'tok-old',
+                                name: 'retired client',
+                                client_id: 'old.access',
+                                state: 'retired',
+                                owned_by_inframatik: true,
+                            }],
+                        },
                     }];
                     renderProfileConnect('qwen-cleanup', {
                         default: {
@@ -703,8 +726,15 @@ def test_app_js_cloudflare_section_gating_by_role():
                     cleanupHtml.includes('dns_record') &&
                     cleanupHtml.includes('qwen.example.com') &&
                     cleanupHtml.includes('retryInferenceCleanup') &&
-                    cleanupHtml.includes('forgetInferenceCleanup'),
-                    'Connect view should show pending Cloudflare cleanup records with retry and forget actions'
+                    cleanupHtml.includes('forgetInferenceCleanup') &&
+                    cleanupHtml.includes('owned client') &&
+                    cleanupHtml.includes('rotateProfileCfToken(&quot;qwen-cleanup&quot;,&quot;tok-owned&quot;)') &&
+                    cleanupHtml.includes('external client') &&
+                    cleanupHtml.includes('Detach') &&
+                    !cleanupHtml.includes('rotateProfileCfToken(&quot;qwen-cleanup&quot;,&quot;tok-ext&quot;)') &&
+                    cleanupHtml.includes('retired client') &&
+                    cleanupHtml.includes('retired</span>'),
+                    'Connect view should show cleanup records and ownership-aware Cloudflare token actions'
                 );
 
                 const restartButtonDisplay = vm.runInContext(`
@@ -1585,6 +1615,7 @@ def test_static_inference_model_ui_assets_present():
     assert "loadProfileConnect" in app_js
     assert "copyButton" in app_js
     assert "data-copy" in app_js
+    assert "profile-token-guidance" in app_js
     assert "renderConnectionPosture" in app_js
     assert "renderInstanceBundleOptions" in app_js
     assert "profile-cf-hostname-" in app_js
@@ -1700,6 +1731,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".cleanup-record-row" in style_css
     assert ".profile-one-time-secret" in style_css
     assert ".profile-token-row" in style_css
+    assert ".profile-token-guidance" in style_css
 
 
 def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():

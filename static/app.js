@@ -3730,15 +3730,25 @@ function renderProfileConnect(profileId, data, secrets = {}) {
     const tokenRows = tokens.map(token => {
         const profileIdArg = jsArg(profileId);
         const tokenIdArg = jsArg(token.id);
+        const state = token.state || 'active';
+        const owned = Boolean(token.owned_by_inframatik);
+        const active = state === 'active';
+        const ownershipLabel = owned ? 'inframatik owned' : 'external';
+        const guidance = active
+            ? owned
+                ? 'New client secrets can be rotated here and are shown once.'
+                : 'Detach removes this token from the profile policy; inframatik cannot recover its client secret.'
+            : 'Retired clients are no longer accepted by this profile policy.';
         return `
             <div class="profile-token-row">
                 <div>
                     <div class="launcher-card-title">${esc(token.name || token.id)}</div>
-                    <div class="launcher-card-meta">${esc(token.client_id || '--')} · ${esc(token.state || 'active')} · ${token.owned_by_inframatik ? 'owned' : 'external'}</div>
+                    <div class="launcher-card-meta">${esc(token.client_id || '--')} · ${esc(state)} · ${esc(ownershipLabel)}</div>
+                    <div class="profile-token-guidance">${esc(guidance)}</div>
                 </div>
                 <div class="model-actions">
-                    <button class="btn" onclick="rotateProfileCfToken(${profileIdArg},${tokenIdArg})">Rotate</button>
-                    <button class="btn danger" onclick="retireProfileCfToken(${profileIdArg},${tokenIdArg})">Retire</button>
+                    ${active && owned ? `<button class="btn" onclick="rotateProfileCfToken(${profileIdArg},${tokenIdArg})">Rotate</button>` : ''}
+                    ${active ? `<button class="btn ${owned ? 'danger' : ''}" onclick="retireProfileCfToken(${profileIdArg},${tokenIdArg})">${owned ? 'Retire' : 'Detach'}</button>` : '<span class="model-badge">retired</span>'}
                 </div>
             </div>
         `;
