@@ -1207,14 +1207,18 @@ def test_app_js_main_refresh_loop_is_view_scoped():
                     selectedNodeId = 'node-a';
                     currentAppView = 'main';
                     refreshInterval = 77;
+                    sidebarInterval = 88;
                     loadInferenceView = async function() { calls.push(['loadInferenceView']); };
                     loadSettingsView = async function() { calls.push(['loadSettingsView']); };
                     refreshAll = async function() { calls.push(['refreshAll', currentAppView]); };
+                    refreshSidebar = async function() { calls.push(['refreshSidebar', currentAppView]); };
 
                     await showAppView('inference');
                     assert(currentAppView === 'inference', 'inference view should be active');
                     assert(refreshInterval === null, 'main refresh interval should be cleared in inference view');
+                    assert(sidebarInterval === null, 'sidebar refresh interval should be cleared in inference view');
                     assert(calls.some(call => call[0] === 'clearInterval' && call[1] === 77), 'inference view should clear the previous main interval');
+                    assert(calls.some(call => call[0] === 'clearInterval' && call[1] === 88), 'inference view should clear the previous sidebar interval');
                     assert(calls.some(call => call[0] === 'loadInferenceView'), 'inference view should load');
                     assert(!calls.some(call => call[0] === 'setInterval'), 'inference view should not start the main refresh interval');
 
@@ -1222,20 +1226,26 @@ def test_app_js_main_refresh_loop_is_view_scoped():
                     await showAppView('settings');
                     assert(currentAppView === 'settings', 'settings view should be active');
                     assert(refreshInterval === null, 'settings view should leave main refresh stopped');
+                    assert(sidebarInterval === null, 'settings view should leave sidebar refresh stopped');
                     assert(calls.some(call => call[0] === 'loadSettingsView'), 'settings view should load');
-                    assert(!calls.some(call => call[0] === 'setInterval'), 'settings view should not start the main refresh interval');
+                    assert(!calls.some(call => call[0] === 'setInterval'), 'settings view should not start background refresh intervals');
 
                     calls.length = 0;
                     await showAppView('main');
                     assert(currentAppView === 'main', 'main view should be active');
+                    assert(calls.some(call => call[0] === 'refreshSidebar' && call[1] === 'main'), 'main view should refresh the sidebar immediately');
                     assert(calls.some(call => call[0] === 'refreshAll' && call[1] === 'main'), 'main view should refresh immediately');
+                    assert(calls.some(call => call[0] === 'setInterval' && call[2] === 15000), 'main view should start the sidebar refresh interval');
                     assert(calls.some(call => call[0] === 'setInterval' && call[2] === 5000), 'main view should start the dashboard refresh interval');
                     const intervalId = refreshInterval;
+                    const sidebarId = sidebarInterval;
                     assert(intervalId !== null, 'main refresh interval id should be stored');
+                    assert(sidebarId !== null, 'sidebar refresh interval id should be stored');
 
                     calls.length = 0;
                     await showAppView('inference');
                     assert(calls.some(call => call[0] === 'clearInterval' && call[1] === intervalId), 'leaving main should clear the new interval');
+                    assert(calls.some(call => call[0] === 'clearInterval' && call[1] === sidebarId), 'leaving main should clear the new sidebar interval');
                 })().catch((error) => {
                     console.error(error.stack || error.message);
                     process.exit(1);
@@ -1801,6 +1811,8 @@ def test_static_inference_model_ui_assets_present():
     assert "setProfileDetail(profileId, html, 'connect')" in app_js
     assert "activeInferenceTab = 'profiles'" in app_js
     assert "refreshInferenceProfiles" in app_js
+    assert "stopSidebarLoop" in app_js
+    assert "startSidebarLoop" in app_js
     assert "inference_operation" in app_js
     assert "handleInferenceOperationEvent" in app_js
     assert "handleInferenceOperationEvent(msg.operation, msg)" in app_js

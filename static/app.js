@@ -158,14 +158,19 @@ async function showAppView(view) {
     syncAppViewChrome();
     if (currentAppView === 'settings') {
         stopRefreshLoop();
+        stopSidebarLoop();
         stopInferencePolling();
         await loadSettingsView();
     } else if (currentAppView === 'inference') {
         stopRefreshLoop();
+        stopSidebarLoop();
         await loadInferenceView();
     } else if (selectedNodeId) {
         stopInferencePolling();
-        await startRefreshLoop();
+        await Promise.all([
+            isMaster ? startSidebarLoop() : Promise.resolve(),
+            startRefreshLoop(),
+        ]);
     }
 }
 
@@ -381,8 +386,7 @@ async function initCluster() {
             selectedNodeId = info.node_id;
             syncAppViewChrome();
             setElementHtml('topbar-title', `${esc(info.node_name)} <span>/ inframatik</span>`);
-            await refreshSidebar();
-            sidebarInterval = setInterval(refreshSidebar, 15000);
+            await startSidebarLoop();
             await updateCurrentTunnelId(info.node_id);
         } else if (info.node_name) {
             // Standalone or worker — show node name in topbar
@@ -1064,6 +1068,21 @@ async function refreshSidebar() {
     } catch (e) {
         console.error('Failed to fetch nodes:', e);
     }
+}
+
+function stopSidebarLoop() {
+    if (sidebarInterval) {
+        clearInterval(sidebarInterval);
+        sidebarInterval = null;
+    }
+}
+
+function startSidebarLoop() {
+    if (!isMaster) return Promise.resolve();
+    stopSidebarLoop();
+    const initial = refreshSidebar();
+    sidebarInterval = setInterval(refreshSidebar, 15000);
+    return initial;
 }
 
 function renderSidebar(nodeList) {
