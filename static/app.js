@@ -2659,6 +2659,88 @@ function renderProfilePreview(plan) {
     `);
 }
 
+function renderProfileCard(profile) {
+    const instances = profile.instances || [];
+    const instanceText = instances.map(item => `${item.host}:${item.port}${item.gpu_ids && item.gpu_ids.length ? ` · GPU ${item.gpu_ids.join(',')}` : ''}`).join(' / ') || 'no instances';
+    const configChips = profileConfigChips(profile);
+    const profileOps = (inferenceOperationsData || []).filter(item => item.profile_id === profile.id);
+    const op = profileOps.find(item => ACTIVE_INFERENCE_OPERATION_STATES.has(item.state));
+    const recentOp = op || profileOps.find(item => ['failed', 'failed_interrupted', 'succeeded', 'canceled'].includes(item.state));
+    const pendingAction = pendingInferenceProfileActions.get(profile.id);
+    const busy = Boolean(op || pendingAction);
+    const failedOp = recentOp && ['failed', 'failed_interrupted'].includes(recentOp.state) ? recentOp : null;
+    const profileIdArg = jsArg(profile.id);
+    const labelArg = jsArg(profile.display_name || profile.id);
+    const profileIdData = esc(profile.id);
+    const disabled = busy ? ' disabled' : '';
+    return `
+        <div class="profile-card" id="profile-card-${esc(profile.id)}">
+            <div class="launcher-card-header">
+                <div>
+                    <div class="launcher-card-title">${esc(profile.display_name || profile.id)}</div>
+                    <div class="launcher-card-meta">${esc(profile.id)} · ${esc(profile.engine)} · ${esc(profile.engine_launcher_id || '--')}</div>
+                </div>
+                <div>${profileStateBadge(op ? op.state : profile.state)}</div>
+            </div>
+            <div class="profile-card-line">${esc(profile.model ? `${profile.model.artifact_id}@${profile.model.snapshot || ''}` : '--')}</div>
+            <div class="profile-card-line">${esc(instanceText)}</div>
+            ${configChips.length ? `<div class="profile-config-chips">${configChips.map(chip => `<span>${esc(chip)}</span>`).join('')}</div>` : ''}
+            ${profile.restart_required ? '<div class="profile-warning">Restart required for saved changes.</div>' : ''}
+            ${renderProfileOperationPanel(op || failedOp, pendingAction, { context: `profile-${profile.id}` })}
+            <div class="model-actions profile-actions">
+                <button type="button" class="btn" onclick="editInferenceProfile(${profileIdArg})">Edit</button>
+                <button type="button" class="btn" onclick="loadProfileDetails(${profileIdArg})">Details</button>
+                <button type="button" class="btn primary" data-profile-id="${profileIdData}" data-profile-action="start"${disabled}>Start</button>
+                <button type="button" class="btn" data-profile-id="${profileIdData}" data-profile-action="stop"${disabled}>Stop</button>
+                <button type="button" class="btn" data-profile-id="${profileIdData}" data-profile-action="restart"${disabled}>Restart</button>
+                <button type="button" class="btn" onclick="loadProfileConnect(${profileIdArg})">Connect</button>
+                <button type="button" class="btn" onclick="loadProfileTest(${profileIdArg})">Test</button>
+                <button type="button" class="btn" onclick="loadProfileHealth(${profileIdArg})">Health</button>
+                <button type="button" class="btn" onclick="loadProfileLogs(${profileIdArg})">Logs</button>
+                <button type="button" class="btn" onclick="exportInferenceProfile(${profileIdArg})">Export</button>
+                <button type="button" class="btn danger" onclick="deleteInferenceProfile(${profileIdArg},${labelArg})">Delete</button>
+            </div>
+            <div class="profile-card-detail" id="profile-detail-${esc(profile.id)}"></div>
+        </div>
+    `;
+}
+
+function stampProfileCardCache(profileId, html) {
+    const card = document.getElementById(`profile-card-${profileId}`);
+    if (card) card._inframatikHtml = html;
+}
+
+function restoreProfileDetail(profileId) {
+    const html = profileDetailCache.get(profileId);
+    const el = document.getElementById(profileDetailId(profileId));
+    if (!el || html === undefined) return;
+    setHtmlIfChanged(el, html);
+    restoreProfileOutput(profileId);
+}
+
+function updateInferenceProfileCard(profileId) {
+    const profile = profileById(profileId);
+    const listEl = document.getElementById('inference-profiles-list');
+    const cardEl = document.getElementById(`profile-card-${profileId}`);
+    if (!profile || !listEl || !cardEl) {
+        renderInferenceProfiles(inferenceProfilesData);
+        return;
+    }
+    const html = renderProfileCard(profile);
+    if (cardEl._inframatikHtml === html) {
+        restoreProfileDetail(profileId);
+        return;
+    }
+    const template = document.createElement('template');
+    template.innerHTML = html.trim();
+    const next = template.content.firstElementChild;
+    if (!next) return;
+    next._inframatikHtml = html;
+    cardEl.replaceWith(next);
+    listEl._inframatikHtml = null;
+    restoreProfileDetail(profileId);
+}
+
 function renderInferenceProfiles(profiles) {
     const el = document.getElementById('inference-profiles-list');
     if (!el) return;
@@ -2666,52 +2748,9 @@ function renderInferenceProfiles(profiles) {
         setHtmlIfChanged(el, '<div class="empty-state">No inference profiles yet.</div>');
         return;
     }
-    const html = profiles.map(profile => {
-        const instances = profile.instances || [];
-        const instanceText = instances.map(item => `${item.host}:${item.port}${item.gpu_ids && item.gpu_ids.length ? ` · GPU ${item.gpu_ids.join(',')}` : ''}`).join(' / ') || 'no instances';
-        const configChips = profileConfigChips(profile);
-        const profileOps = (inferenceOperationsData || []).filter(item => item.profile_id === profile.id);
-        const op = profileOps.find(item => ACTIVE_INFERENCE_OPERATION_STATES.has(item.state));
-        const recentOp = op || profileOps.find(item => ['failed', 'failed_interrupted', 'succeeded', 'canceled'].includes(item.state));
-        const pendingAction = pendingInferenceProfileActions.get(profile.id);
-        const busy = Boolean(op || pendingAction);
-        const failedOp = recentOp && ['failed', 'failed_interrupted'].includes(recentOp.state) ? recentOp : null;
-        const profileIdArg = jsArg(profile.id);
-        const labelArg = jsArg(profile.display_name || profile.id);
-        const profileIdData = esc(profile.id);
-        const disabled = busy ? ' disabled' : '';
-        return `
-            <div class="profile-card" id="profile-card-${esc(profile.id)}">
-                <div class="launcher-card-header">
-                    <div>
-                        <div class="launcher-card-title">${esc(profile.display_name || profile.id)}</div>
-                        <div class="launcher-card-meta">${esc(profile.id)} · ${esc(profile.engine)} · ${esc(profile.engine_launcher_id || '--')}</div>
-                    </div>
-                    <div>${profileStateBadge(op ? op.state : profile.state)}</div>
-                </div>
-                <div class="profile-card-line">${esc(profile.model ? `${profile.model.artifact_id}@${profile.model.snapshot || ''}` : '--')}</div>
-                <div class="profile-card-line">${esc(instanceText)}</div>
-                ${configChips.length ? `<div class="profile-config-chips">${configChips.map(chip => `<span>${esc(chip)}</span>`).join('')}</div>` : ''}
-                ${profile.restart_required ? '<div class="profile-warning">Restart required for saved changes.</div>' : ''}
-                ${renderProfileOperationPanel(op || failedOp, pendingAction, { context: `profile-${profile.id}` })}
-                <div class="model-actions profile-actions">
-                    <button type="button" class="btn" onclick="editInferenceProfile(${profileIdArg})">Edit</button>
-                    <button type="button" class="btn" onclick="loadProfileDetails(${profileIdArg})">Details</button>
-                    <button type="button" class="btn primary" data-profile-id="${profileIdData}" data-profile-action="start"${disabled}>Start</button>
-                    <button type="button" class="btn" data-profile-id="${profileIdData}" data-profile-action="stop"${disabled}>Stop</button>
-                    <button type="button" class="btn" data-profile-id="${profileIdData}" data-profile-action="restart"${disabled}>Restart</button>
-                    <button type="button" class="btn" onclick="loadProfileConnect(${profileIdArg})">Connect</button>
-                    <button type="button" class="btn" onclick="loadProfileTest(${profileIdArg})">Test</button>
-                    <button type="button" class="btn" onclick="loadProfileHealth(${profileIdArg})">Health</button>
-                    <button type="button" class="btn" onclick="loadProfileLogs(${profileIdArg})">Logs</button>
-                    <button type="button" class="btn" onclick="exportInferenceProfile(${profileIdArg})">Export</button>
-                    <button type="button" class="btn danger" onclick="deleteInferenceProfile(${profileIdArg},${labelArg})">Delete</button>
-                </div>
-                <div class="profile-card-detail" id="profile-detail-${esc(profile.id)}"></div>
-            </div>
-        `;
-    }).join('');
-    setHtmlIfChanged(el, html);
+    const cards = profiles.map(profile => [profile.id, renderProfileCard(profile)]);
+    setHtmlIfChanged(el, cards.map(([, html]) => html).join(''));
+    cards.forEach(([profileId, html]) => stampProfileCardCache(profileId, html));
     restoreProfileDetails();
 }
 
@@ -3050,7 +3089,8 @@ function patchInferenceProfile(profile) {
     });
     if (!found) inferenceProfilesData = [profile, ...(inferenceProfilesData || [])];
     if (currentAppView === 'inference' && activeInferenceTab === 'profiles') {
-        renderInferenceProfiles(inferenceProfilesData);
+        if (found) updateInferenceProfileCard(profile.id);
+        else renderInferenceProfiles(inferenceProfilesData);
     }
     renderProfileSelects();
     return true;
@@ -3455,7 +3495,8 @@ function mergeInferenceOperation(operation, options = {}) {
         }
     }
     if (currentAppView === 'inference' && activeInferenceTab === 'profiles' && !options.suppressProfileRender) {
-        renderInferenceProfiles(inferenceProfilesData);
+        if (operation.profile_id) updateInferenceProfileCard(operation.profile_id);
+        else renderInferenceProfiles(inferenceProfilesData);
     }
     renderInferenceOperations(inferenceOperationsData);
     if (options.hydrateLogs !== false) {
@@ -3520,7 +3561,7 @@ function patchProfileFromOperation(operation) {
         return next;
     });
     if (changed && currentAppView === 'inference' && activeInferenceTab === 'profiles') {
-        renderInferenceProfiles(inferenceProfilesData);
+        updateInferenceProfileCard(operation.profile_id);
     }
     return changed;
 }
@@ -3531,7 +3572,7 @@ function handleInferenceOperationEvent(operation, event = {}) {
     mergeInferenceOperation(operation, { suppressProfileRender: terminal });
     if (terminal && currentAppView === 'inference') {
         const patched = patchProfileFromOperation(operation);
-        if (!patched && activeInferenceTab === 'profiles') renderInferenceProfiles(inferenceProfilesData);
+        if (!patched && activeInferenceTab === 'profiles' && operation.profile_id) updateInferenceProfileCard(operation.profile_id);
         if (operation.profile_id && profileDetailModes.get(operation.profile_id) === 'details') {
             loadProfileDetails(operation.profile_id);
         }
@@ -3541,22 +3582,22 @@ function handleInferenceOperationEvent(operation, event = {}) {
 function mergeInferenceOperationSnapshot(operations, nodeId = selectedNodeId) {
     const list = Array.isArray(operations) ? operations : [];
     inferenceOperationsData = list;
-    let needsProfileRender = false;
+    const touchedProfileIds = new Set();
     list.forEach(operation => {
+        if (operation && operation.profile_id) touchedProfileIds.add(operation.profile_id);
         if (!isTerminalInferenceOperation(operation) || !operation.profile_id) return;
         pendingInferenceProfileActions.delete(operation.profile_id);
         if (operation.instance_index !== null && operation.instance_index !== undefined) {
             pendingInferenceInstanceActions.delete(instanceActionKey(operation.profile_id, operation.instance_index));
         }
-        const patched = patchProfileFromOperation(operation);
-        if (!patched && currentAppView === 'inference' && activeInferenceTab === 'profiles') {
-            needsProfileRender = true;
-        }
+        patchProfileFromOperation(operation);
         if (operation.profile_id && profileDetailModes.get(operation.profile_id) === 'details') {
             loadProfileDetails(operation.profile_id);
         }
     });
-    if (needsProfileRender) renderInferenceProfiles(inferenceProfilesData);
+    if (currentAppView === 'inference' && activeInferenceTab === 'profiles') {
+        touchedProfileIds.forEach(profileId => updateInferenceProfileCard(profileId));
+    }
     renderInferenceOperations(inferenceOperationsData);
     hydrateVisibleInferenceFailures(nodeId);
     updateInferencePolling();
@@ -3693,7 +3734,7 @@ async function runProfileAction(profileId, action, button) {
     setInferenceStatus(`${profileActionLabel(action)} queued for ${profileId}...`);
     pendingInferenceProfileActions.set(profileId, action);
     if (button) button.disabled = true;
-    renderInferenceProfiles(inferenceProfilesData);
+    updateInferenceProfileCard(profileId);
     try {
         const operation = await api('POST', nodePathFor(nodeId, `/api/inference/profiles/${encodeURIComponent(profileId)}/${action}`));
         mergeInferenceOperation(operation);
@@ -3703,7 +3744,7 @@ async function runProfileAction(profileId, action, button) {
         if (button) button.disabled = false;
         const surfaced = await surfaceActiveInferenceOperation(e, nodeId);
         if (!surfaced) setInferenceError(e.message);
-        renderInferenceProfiles(inferenceProfilesData);
+        updateInferenceProfileCard(profileId);
     }
 }
 
@@ -3715,7 +3756,7 @@ async function runInstanceAction(profileId, instanceIndex, action, button) {
     setInferenceStatus(`${profileActionLabel(action)} queued for ${profileId}[${instanceIndex}]...`);
     pendingInferenceInstanceActions.set(key, action);
     if (button) button.disabled = true;
-    renderInferenceProfiles(inferenceProfilesData);
+    updateInferenceProfileCard(profileId);
     try {
         const operation = await api(
             'POST',
@@ -3728,7 +3769,7 @@ async function runInstanceAction(profileId, instanceIndex, action, button) {
         if (button) button.disabled = false;
         const surfaced = await surfaceActiveInferenceOperation(e, nodeId);
         if (!surfaced) setInferenceError(e.message);
-        renderInferenceProfiles(inferenceProfilesData);
+        updateInferenceProfileCard(profileId);
     }
 }
 

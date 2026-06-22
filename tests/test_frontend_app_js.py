@@ -60,6 +60,9 @@ def test_app_js_cloudflare_section_gating_by_role():
                     addEventListener() {},
                     querySelectorAll() { return []; },
                     querySelector() { return null; },
+                    replaceWith(next) {
+                        if (next && next.id) elements.set(next.id, next);
+                    },
                 };
             }
 
@@ -67,7 +70,21 @@ def test_app_js_cloudflare_section_gating_by_role():
             const document = {
                 cookie: '',
                 addEventListener() {},
-                createElement() {
+                createElement(tagName = '') {
+                    if (String(tagName).toLowerCase() === 'template') {
+                        return {
+                            _innerHTML: '',
+                            content: { firstElementChild: null },
+                            set innerHTML(value) {
+                                this._innerHTML = String(value ?? '');
+                                const match = this._innerHTML.match(/id="([^"]+)"/);
+                                const child = makeElement(match ? match[1] : 'template-child');
+                                child.innerHTML = this._innerHTML;
+                                this.content.firstElementChild = child;
+                            },
+                            get innerHTML() { return this._innerHTML; },
+                        };
+                    }
                     const el = makeElement('created');
                     Object.defineProperty(el, 'textContent', {
                         get() { return this._textContent || ''; },
@@ -897,8 +914,12 @@ def test_app_js_cloudflare_section_gating_by_role():
                         profileDetailModes.set('qwen', 'details');
                         refreshInferenceProfiles = async function() { calls.push(['refreshProfiles']); };
                         loadProfileDetails = async function(profileId) { calls.push(['loadDetails', profileId]); };
+                        const originalUpdateCard = updateInferenceProfileCard;
                         renderInferenceProfiles = function(profiles) {
                             calls.push(['renderProfiles', profiles[0].state, profiles[0].instances.map(item => item.state).join(',')]);
+                        };
+                        updateInferenceProfileCard = function(profileId) {
+                            calls.push(['updateCard', profileId]);
                         };
                         renderInferenceOperations = function(operations) {
                             calls.push(['renderOperations', operations[0] && operations[0].state]);
@@ -915,16 +936,63 @@ def test_app_js_cloudflare_section_gating_by_role():
                             },
                         });
                         await Promise.resolve();
+                        updateInferenceProfileCard = originalUpdateCard;
                         return { calls, profile: inferenceProfilesData[0] };
                     })()
                 `, context);
                 assert(
                     !terminalPatchResult.calls.some(call => call[0] === 'refreshProfiles') &&
-                    terminalPatchResult.calls.filter(call => call[0] === 'renderProfiles').length === 1 &&
+                    !terminalPatchResult.calls.some(call => call[0] === 'renderProfiles') &&
+                    terminalPatchResult.calls.some(call => call[0] === 'updateCard' && call[1] === 'qwen') &&
                     terminalPatchResult.calls.some(call => call[0] === 'loadDetails' && call[1] === 'qwen') &&
                     terminalPatchResult.profile.state === 'running' &&
                     terminalPatchResult.profile.instances.every(item => item.state === 'running'),
-                    'terminal inference operation events should patch profile state locally and refresh only open detail'
+                    'terminal inference operation events should patch profile state locally and refresh only the touched card/open detail'
+                );
+
+                const singleCardUpdateResult = vm.runInContext(`
+                    (() => {
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'profiles';
+                        inferenceProfilesData = [
+                            { id: 'qwen', display_name: 'Qwen', engine: 'vllm', engine_launcher_id: 'vllm-main', state: 'starting', model: { artifact_id: 'qwen', snapshot: 'main' }, instances: [] },
+                            { id: 'other', display_name: 'Other', engine: 'vllm', engine_launcher_id: 'vllm-main', state: 'stopped', model: { artifact_id: 'other', snapshot: 'main' }, instances: [] },
+                        ];
+                        inferenceOperationsData = [{
+                            id: 'op-live',
+                            kind: 'profile_start',
+                            state: 'running',
+                            profile_id: 'qwen',
+                            current_step: 'waiting_ready',
+                            progress: 72,
+                            runtime_status: { unit: 'infra-llm-qwen@0.service', host: '127.0.0.1', port: 10000, systemd_state: 'active', tcp_reachable: false },
+                        }];
+                        const list = document.getElementById('inference-profiles-list');
+                        list._inframatikHtml = 'full-list-cache';
+                        const qwenCard = document.getElementById('profile-card-qwen');
+                        qwenCard.innerHTML = 'old qwen card';
+                        qwenCard._inframatikHtml = 'old qwen card';
+                        const otherCard = document.getElementById('profile-card-other');
+                        otherCard.innerHTML = 'untouched other card';
+                        otherCard._inframatikHtml = 'untouched other card';
+                        profileDetailCache.set('qwen', '<div class="detail-marker">open detail</div>');
+                        document.getElementById('profile-detail-qwen').innerHTML = '';
+                        updateInferenceProfileCard('qwen');
+                        return {
+                            qwenHtml: document.getElementById('profile-card-qwen').innerHTML,
+                            otherHtml: document.getElementById('profile-card-other').innerHTML,
+                            detailHtml: document.getElementById('profile-detail-qwen').innerHTML,
+                            listCache: document.getElementById('inference-profiles-list')._inframatikHtml,
+                        };
+                    })()
+                `, context);
+                assert(
+                    singleCardUpdateResult.qwenHtml.includes('waiting ready') &&
+                    singleCardUpdateResult.qwenHtml.includes('infra-llm-qwen@0.service') &&
+                    singleCardUpdateResult.otherHtml === 'untouched other card' &&
+                    singleCardUpdateResult.detailHtml.includes('open detail') &&
+                    singleCardUpdateResult.listCache === null,
+                    'active operation updates should replace only the touched profile card and preserve open detail'
                 );
 
                 const deleteProfileResult = await vm.runInContext(`
@@ -1669,6 +1737,9 @@ def test_app_js_node_selection_starts_priority_refresh_immediately():
                     addEventListener() {},
                     querySelectorAll() { return []; },
                     querySelector() { return null; },
+                    replaceWith(next) {
+                        if (next && next.id) elements.set(next.id, next);
+                    },
                 };
             }
 
@@ -1676,7 +1747,21 @@ def test_app_js_node_selection_starts_priority_refresh_immediately():
             const document = {
                 cookie: '',
                 addEventListener() {},
-                createElement() {
+                createElement(tagName = '') {
+                    if (String(tagName).toLowerCase() === 'template') {
+                        return {
+                            _innerHTML: '',
+                            content: { firstElementChild: null },
+                            set innerHTML(value) {
+                                this._innerHTML = String(value ?? '');
+                                const match = this._innerHTML.match(/id="([^"]+)"/);
+                                const child = makeElement(match ? match[1] : 'template-child');
+                                child.innerHTML = this._innerHTML;
+                                this.content.firstElementChild = child;
+                            },
+                            get innerHTML() { return this._innerHTML; },
+                        };
+                    }
                     const el = makeElement('created');
                     Object.defineProperty(el, 'textContent', {
                         get() { return this._textContent || ''; },
@@ -2058,6 +2143,10 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
                     renderInferenceProfiles = function(profiles) {
                         calls.push(['renderProfiles', profiles[0] && profiles[0].state]);
                     };
+                    updateInferenceProfileCard = function(profileId) {
+                        const profile = profileById(profileId);
+                        calls.push(['updateCard', profileId, profile && profile.state]);
+                    };
                     renderInferenceOperations = function(operations) {
                         calls.push(['renderOperations', operations[0] && operations[0].state]);
                     };
@@ -2087,8 +2176,9 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
                         'fallback polling on Profiles should patch terminal operation state locally'
                     );
                     assert(
-                        calls.some(call => call[0] === 'renderProfiles' && call[1] === 'running'),
-                        'fallback polling on Profiles should re-render the patched profile cards'
+                        !calls.some(call => call[0] === 'renderProfiles') &&
+                        calls.some(call => call[0] === 'updateCard' && call[1] === 'qwen' && call[2] === 'running'),
+                        'fallback polling on Profiles should update only the patched profile card'
                     );
 
                     calls.length = 0;
@@ -2523,6 +2613,9 @@ def test_static_inference_model_ui_assets_present():
     assert "operationWithHydratedLogs" in app_js
     assert "operationRuntimeStatus" in app_js
     assert "patchProfileFromOperation" in app_js
+    assert "renderProfileCard" in app_js
+    assert "updateInferenceProfileCard" in app_js
+    assert "replaceWith(next)" in app_js
     assert "renderSystemdPreview" in app_js
     assert "renderCloudflarePreview" in app_js
     assert "renderCommandEnv" in app_js
