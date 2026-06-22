@@ -2200,7 +2200,26 @@ body {
 }
 
 .inference-operations-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     margin-bottom: 16px;
+}
+
+.inference-operation-row {
+    min-width: 0;
+}
+
+.inference-operation-context {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 2px;
+}
+
+.inference-operation-context + .profile-operation-panel {
+    margin-top: 6px;
 }
 
 .inference-jobs-header {

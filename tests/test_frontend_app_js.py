@@ -358,6 +358,41 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'active inference operation panel should show live startup readiness facts'
                 );
 
+                const startupOperationListHtml = vm.runInContext(`
+                    renderInferenceOperations([{
+                        id: 'op-start',
+                        kind: 'profile_start',
+                        state: 'running',
+                        profile_id: 'qwen',
+                        current_step: 'waiting_ready',
+                        progress: 72,
+                        steps: [{ name: 'waiting_ready', state: 'running' }],
+                        runtime_status: {
+                            phase: 'waiting_ready',
+                            instance_index: 0,
+                            unit: 'infra-llm-qwen.service',
+                            host: '127.0.0.1',
+                            port: 10000,
+                            systemd_state: 'active',
+                            tcp_reachable: false,
+                            restart_count: 1,
+                            elapsed_seconds: 42,
+                            timeout_seconds: 600,
+                            wait_position: 1,
+                            wait_total: 1,
+                        },
+                    }]);
+                    document.getElementById('inference-operations-list').innerHTML;
+                `, context);
+                assert(
+                    startupOperationListHtml.includes('profile-operation-panel') &&
+                    startupOperationListHtml.includes('infra-llm-qwen.service') &&
+                    startupOperationListHtml.includes('TCP') &&
+                    startupOperationListHtml.includes('waiting') &&
+                    startupOperationListHtml.includes('42s / 10m'),
+                    'operations tab should reuse the rich operation panel with live readiness facts'
+                );
+
                 const queuedOperationHtml = vm.runInContext(`
                     renderProfileOperationPanel({
                         id: 'op-cancel',
@@ -1595,6 +1630,8 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-operation-actions" in style_css
     assert ".profile-operation-steps" in style_css
     assert ".profile-operation-facts" in style_css
+    assert ".inference-operation-context" in style_css
+    assert "renderProfileOperationPanel(op)" in app_js
     assert ".profile-instance-row" in style_css
     assert ".profile-test-panel" in style_css
     assert ".profile-config-chips" in style_css

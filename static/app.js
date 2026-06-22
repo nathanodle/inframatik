@@ -3879,32 +3879,17 @@ function renderInferenceOperations(operations) {
         return;
     }
     setHtmlIfChanged(el, operations.slice(0, 20).map(op => {
-        const progress = Math.max(0, Math.min(100, Number(op.progress || 0)));
-        const color = op.state === 'succeeded' ? 'green' : ACTIVE_INFERENCE_OPERATION_STATES.has(op.state) ? 'yellow' : op.state === 'canceled' ? '' : 'red';
-        const failed = ['failed', 'failed_interrupted'].includes(op.state);
-        const detail = failed ? operationResultDetail(op) : operationRuntimeStatus(op);
-        const failureMessage = failed ? operationFailureMessage(op) : '';
-        const failureLogs = failed ? operationFailureLogs(op) : '';
-        const operationIdArg = jsArg(op.id);
+        const progress = Math.max(0, Math.min(100, Number(op.progress || 0))).toFixed(0);
         return `
-            <div class="model-job-row">
-                <div class="model-job-main">
+            <div class="inference-operation-row">
+                <div class="inference-operation-context">
                     <div>
                         <div class="model-job-title">${esc(op.profile_id || op.id)}</div>
-                        <div class="model-job-sub">${esc(op.kind || 'operation')} · ${esc(op.current_step || '--')}</div>
+                        <div class="model-job-sub">${esc(op.id || 'operation')}</div>
                     </div>
-                    <div><span class="model-badge ${color}">${esc(op.state || 'unknown')}</span></div>
-                    <div class="model-job-sub">${progress.toFixed(0)}%</div>
-                    <div class="model-actions">
-                        ${op.state === 'queued' ? `<button class="btn danger" type="button" onclick="cancelInferenceOperation(${operationIdArg})">Cancel</button>` : ''}
-                    </div>
+                    <div class="model-job-sub">${progress}%</div>
                 </div>
-                <div class="model-job-progress">
-                    <div class="progress-bar"><div class="progress-fill ${color}" style="width:${progress}%"></div></div>
-                    ${renderOperationFacts(detail)}
-                    ${failureMessage ? `<div class="model-job-error">${esc(failureMessage)}</div>` : ''}
-                    ${failureLogs ? `<details class="profile-diagnostic"><summary>Startup log excerpt</summary><pre class="profile-log-view profile-diagnostic-log">${esc(failureLogs)}</pre></details>` : ''}
-                </div>
+                ${renderProfileOperationPanel(op)}
             </div>
         `;
     }).join(''));
