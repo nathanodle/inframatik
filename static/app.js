@@ -4469,6 +4469,14 @@ function renderConnectionPosture(profileId, context) {
                 : 'Generate a client to receive a Client ID and one-time Client Secret.',
             action: `<button class="btn" onclick="generateProfileCfToken(${profileIdArg})" ${cfReady ? '' : 'disabled'}>Generate Client</button>`,
         });
+    } else {
+        items.push({
+            label: 'Cloudflare',
+            state: 'Available',
+            tone: '',
+            detail: 'Add a Cloudflare API endpoint from this Connect view without editing the profile first.',
+            action: `<button class="btn" onclick="focusProfileCloudflareHostname(${profileIdArg})">Add Cloudflare</button>`,
+        });
     }
     if (cleanupCount) {
         items.push({
@@ -4648,17 +4656,17 @@ function renderProfileConnect(profileId, data, secrets = {}) {
                 </div>
                 <button class="btn" onclick="rotateProfileApiKey(${profileIdArg})">${hasEngineKey ? 'Rotate' : 'Generate'} API Key</button>
             </section>
-            ${isCloudflare ? `<section>
+            <section>
                 <div class="connect-section-header">
                     <div>
                         <div class="launcher-card-title">Cloudflare Endpoint</div>
-                        <div class="launcher-card-meta">${esc(endpointHostname || 'No hostname configured')}</div>
+                        <div class="launcher-card-meta">${esc(endpointHostname || (isCloudflare ? 'No hostname configured' : 'Optional public API endpoint'))}</div>
                     </div>
-                    ${connectBadge(cfResourcesReady ? 'provisioned' : endpointHostname ? 'pending' : 'not configured', cfResourcesReady ? 'green' : endpointHostname ? 'yellow' : '')}
+                    ${connectBadge(cfResourcesReady ? 'provisioned' : endpointHostname ? 'pending' : isCloudflare ? 'not configured' : 'available', cfResourcesReady ? 'green' : endpointHostname || isCloudflare ? 'yellow' : '')}
                 </div>
                 <div class="connect-inline-form">
                     <input type="text" id="profile-cf-hostname-${esc(profileId)}" value="${esc(endpointHostname)}" placeholder="llm.example.com" autocomplete="off">
-                    <button class="btn" onclick="provisionProfileCloudflare(${profileIdArg})">${cfResourcesConfigured ? 'Reconcile' : 'Provision'}</button>
+                    <button class="btn" onclick="provisionProfileCloudflare(${profileIdArg})">${cfResourcesConfigured ? 'Reconcile' : isCloudflare ? 'Provision' : 'Use Cloudflare'}</button>
                 </div>
                 <div class="connect-mini-facts">
                     ${cloudflareFacts.map(([label, value]) => `<div><span>${esc(label)}</span><code>${esc(value)}</code></div>`).join('')}
@@ -4679,16 +4687,18 @@ function renderProfileConnect(profileId, data, secrets = {}) {
                 ` : ''}
                 <div class="model-job-error" id="profile-cf-hostname-error-${esc(profileId)}"></div>
             </section>
-            <section>
-                <div class="connect-section-header">
-                    <div>
-                        <div class="launcher-card-title">Cloudflare Clients</div>
-                        <div class="launcher-card-meta">Service-token credentials for callers</div>
+            ${isCloudflare ? `
+                <section>
+                    <div class="connect-section-header">
+                        <div>
+                            <div class="launcher-card-title">Cloudflare Clients</div>
+                            <div class="launcher-card-meta">Service-token credentials for callers</div>
+                        </div>
+                        ${connectBadge(canGenerateClient ? 'policy ready' : 'needs endpoint', canGenerateClient ? 'green' : 'yellow')}
                     </div>
-                    ${connectBadge(canGenerateClient ? 'policy ready' : 'needs endpoint', canGenerateClient ? 'green' : 'yellow')}
-                </div>
-                <button class="btn" onclick="generateProfileCfToken(${profileIdArg})" ${canGenerateClient ? '' : 'disabled'}>Generate New Client</button>
-            </section>` : ''}
+                    <button class="btn" onclick="generateProfileCfToken(${profileIdArg})" ${canGenerateClient ? '' : 'disabled'}>Generate New Client</button>
+                </section>
+            ` : ''}
         </div>
         ${renderClientBundle(bundle, secrets)}
         ${renderInstanceBundleOptions(instanceBundles)}
@@ -4701,6 +4711,13 @@ function renderProfileConnect(profileId, data, secrets = {}) {
         ` : ''}
     `;
     setProfileDetail(profileId, html, 'connect');
+}
+
+function focusProfileCloudflareHostname(profileId) {
+    const input = document.getElementById(`profile-cf-hostname-${profileId}`);
+    if (!input) return;
+    if (typeof input.focus === 'function') input.focus();
+    if (typeof input.select === 'function') input.select();
 }
 
 async function loadProfileConnect(profileId) {

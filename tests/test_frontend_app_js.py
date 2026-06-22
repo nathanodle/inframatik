@@ -1631,6 +1631,11 @@ def test_app_js_cloudflare_section_gating_by_role():
                     replicatedConnectHtml.includes('Security Posture') &&
                     replicatedConnectHtml.includes('Credential Chain') &&
                     replicatedConnectHtml.includes('Local only') &&
+                    replicatedConnectHtml.includes('Cloudflare Endpoint') &&
+                    replicatedConnectHtml.includes('Optional public API endpoint') &&
+                    replicatedConnectHtml.includes('Use Cloudflare') &&
+                    replicatedConnectHtml.includes('focusProfileCloudflareHostname(&quot;qwen-repl&quot;)') &&
+                    replicatedConnectHtml.includes('profile-cf-hostname-qwen-repl') &&
                     replicatedConnectHtml.includes('Cloudflare Access') &&
                     replicatedConnectHtml.includes('Not used') &&
                     replicatedConnectHtml.includes('2 instance endpoints') &&
@@ -1640,7 +1645,101 @@ def test_app_js_cloudflare_section_gating_by_role():
                     replicatedConnectHtml.includes('Instance 1') &&
                     replicatedConnectHtml.includes('data-copy="http://127.0.0.1:10000/v1"') &&
                     replicatedConnectHtml.includes('data-copy="http://127.0.0.1:10001/v1"'),
-                    'replicated Connect view should render copyable per-instance endpoint options'
+                    'replicated Connect view should render copyable per-instance endpoint options and a direct Cloudflare upgrade path'
+                );
+
+                const localCloudflareProvisionResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        isMaster = false;
+                        selectedNodeId = 'self-node';
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'profiles';
+                        inferenceProfilesData = [{
+                            id: 'qwen-local',
+                            display_name: 'Qwen Local',
+                            exposure: { mode: 'local' },
+                            cloudflare: {},
+                            secrets: {},
+                        }];
+                        renderProfileConnect('qwen-local', {
+                            default: {
+                                id: 'default',
+                                target: { type: 'profile' },
+                                exposure_mode: 'local',
+                                base_url: 'http://127.0.0.1:10000/v1',
+                                model: 'qwen-local',
+                                headers: {},
+                                secret_state: {},
+                                examples: {},
+                            },
+                        });
+                        document.getElementById('profile-cf-hostname-qwen-local').value = 'qwen.example.com';
+                        refreshInferenceProfiles = async function() { calls.push(['refreshProfiles']); };
+                        setInferenceStatus = function(message) { calls.push(['status', message]); };
+                        setInferenceError = function(message) { calls.push(['error', message]); };
+                        api = async function(method, path, body) {
+                            calls.push([method, path, body && body.hostname, body && body.render_bundle]);
+                            if (method === 'POST' && path === '/api/inference/profiles/qwen-local/cloudflare/exposure') {
+                                return {
+                                    status: 'provisioned',
+                                    client_secret: 'cf_once',
+                                    profile: {
+                                        id: 'qwen-local',
+                                        display_name: 'Qwen Local',
+                                        exposure: { mode: 'cloudflare', hostname: 'qwen.example.com' },
+                                        cloudflare: {
+                                            hostname: 'qwen.example.com',
+                                            access_app_id: 'app-1',
+                                            access_policy_id: 'pol-1',
+                                            service_tokens: [{
+                                                id: 'tok-1',
+                                                name: 'default client',
+                                                client_id: 'client.access',
+                                                state: 'active',
+                                                owned_by_inframatik: true,
+                                            }],
+                                        },
+                                    },
+                                    client_bundle: {
+                                        id: 'default',
+                                        target: { type: 'profile' },
+                                        exposure_mode: 'cloudflare',
+                                        base_url: 'https://qwen.example.com/v1',
+                                        model: 'qwen-local',
+                                        headers: {
+                                            'CF-Access-Client-Id': 'client.access',
+                                            'CF-Access-Client-Secret': '<shown_once>',
+                                        },
+                                        secret_state: {},
+                                        examples: { curl: 'curl https://qwen.example.com/v1/models' },
+                                    },
+                                };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        await provisionProfileCloudflare('qwen-local');
+                        return {
+                            calls,
+                            profile: inferenceProfilesData.find(item => item.id === 'qwen-local'),
+                            html: document.getElementById('profile-detail-qwen-local').innerHTML,
+                        };
+                    })()
+                `, context);
+                assert(
+                    localCloudflareProvisionResult.calls.some(call =>
+                        call[0] === 'POST' &&
+                        call[1] === '/api/inference/profiles/qwen-local/cloudflare/exposure' &&
+                        call[2] === 'qwen.example.com' &&
+                        call[3] === true
+                    ) &&
+                    !localCloudflareProvisionResult.calls.some(call => call[0] === 'refreshProfiles') &&
+                    localCloudflareProvisionResult.calls.some(call => call[0] === 'status' && String(call[1]).includes('Cloudflare endpoint ready')) &&
+                    localCloudflareProvisionResult.profile.exposure.mode === 'cloudflare' &&
+                    localCloudflareProvisionResult.html.includes('Cloudflare Service Tokens') &&
+                    localCloudflareProvisionResult.html.includes('client.access') &&
+                    localCloudflareProvisionResult.html.includes('data-copy="cf_once"'),
+                    'local profiles should provision Cloudflare directly from Connect and patch the local profile state'
                 );
 
                 const cleanupHtml = vm.runInContext(`
