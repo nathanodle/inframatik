@@ -3481,7 +3481,7 @@ function renderProfileOperationPanel(operation, pendingAction = '', options = {}
             </div>
             <div class="progress-bar"><div class="progress-fill ${color}" style="width:${progress}%"></div></div>
             ${narrative ? `<div class="profile-operation-narrative">${esc(narrative)}</div>` : ''}
-            ${!failed ? renderOperationReadiness(detail) : ''}
+            ${renderOperationReadiness(detail)}
             ${renderOperationSteps(operation)}
             ${renderOperationFacts(detail)}
             ${!failed ? renderOperationLiveLog(detail) : ''}

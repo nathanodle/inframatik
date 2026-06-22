@@ -28,6 +28,22 @@ STARTUP_RESTART_FAILURE_THRESHOLD = 3
 STARTUP_LOG_LINES = 80
 STARTUP_STATUS_LOG_LINES = 20
 STARTUP_STATUS_LOG_MAX_CHARS = 6000
+STARTUP_STATUS_DETAIL_KEYS = {
+    "phase",
+    "instance_index",
+    "unit",
+    "host",
+    "port",
+    "systemd_state",
+    "tcp_reachable",
+    "restart_count",
+    "elapsed_seconds",
+    "timeout_seconds",
+    "wait_position",
+    "wait_total",
+    "log_tail",
+    "log_tail_lines",
+}
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:secret|token|password|passwd|api[_-]?key|credential|auth|bearer)[A-Za-z0-9_]*|(?:secret|token|password|passwd|api[_-]?key|credential|auth|bearer))=([^\s]+)"
 )
@@ -469,8 +485,7 @@ async def wait_instance_ready(
             state = await unit_active_state(unit) if unit else "unknown"
             restart_count = await unit_restart_count(unit) if unit else None
             log_tail = await startup_log_tail(unit)
-            _publish_startup_status(
-                operation_id,
+            status = _startup_status_payload(
                 instance=instance,
                 host=host,
                 port=port,
@@ -483,14 +498,14 @@ async def wait_instance_ready(
                 wait_total=wait_total,
                 log_tail=log_tail,
             )
+            _publish_startup_status(operation_id, status)
             return True
 
         state = await unit_active_state(unit) if unit else "unknown"
         if state in {"failed", "inactive"}:
             restart_count = await unit_restart_count(unit) if unit else None
             log_tail = await startup_log_tail(unit)
-            _publish_startup_status(
-                operation_id,
+            status = _startup_status_payload(
                 instance=instance,
                 host=host,
                 port=port,
@@ -503,7 +518,15 @@ async def wait_instance_ready(
                 wait_total=wait_total,
                 log_tail=log_tail,
             )
-            raise await unit_startup_error(unit, f"Unit {unit} is {state}", host=host, port=port)
+            _publish_startup_status(operation_id, status)
+            raise await unit_startup_error(
+                unit,
+                f"Unit {unit} is {state}",
+                host=host,
+                port=port,
+                restart_count=restart_count,
+                runtime_status=status,
+            )
 
         restart_count = await unit_restart_count(unit) if unit else 0
         now = time.monotonic()
@@ -511,8 +534,7 @@ async def wait_instance_ready(
             elapsed = now - started_at
             progress = 65 + min(24, int(24 * min(elapsed, timeout) / max(timeout, 0.1)))
             log_tail = await startup_log_tail(unit)
-            _publish_startup_status(
-                operation_id,
+            status = _startup_status_payload(
                 instance=instance,
                 host=host,
                 port=port,
@@ -523,33 +545,66 @@ async def wait_instance_ready(
                 timeout_seconds=timeout,
                 wait_position=wait_position,
                 wait_total=wait_total,
-                progress=progress,
                 log_tail=log_tail,
             )
+            _publish_startup_status(operation_id, status, progress=progress)
             next_status_at = now + STARTUP_STATUS_INTERVAL_SECONDS
         if restart_count is not None and initial_restarts is not None:
             if restart_count - initial_restarts >= STARTUP_RESTART_FAILURE_THRESHOLD:
+                elapsed = now - started_at
+                log_tail = await startup_log_tail(unit)
+                status = _startup_status_payload(
+                    instance=instance,
+                    host=host,
+                    port=port,
+                    systemd_state=state,
+                    tcp_reachable=False,
+                    restart_count=restart_count,
+                    elapsed_seconds=elapsed,
+                    timeout_seconds=timeout,
+                    wait_position=wait_position,
+                    wait_total=wait_total,
+                    log_tail=log_tail,
+                )
+                _publish_startup_status(operation_id, status, progress=90)
                 raise await unit_startup_error(
                     unit,
                     f"Unit {unit} restarted {restart_count - initial_restarts} times before TCP readiness",
                     host=host,
                     port=port,
                     restart_count=restart_count,
+                    runtime_status=status,
                 )
 
         if now >= deadline:
+            elapsed = now - started_at
+            log_tail = await startup_log_tail(unit)
+            status = _startup_status_payload(
+                instance=instance,
+                host=host,
+                port=port,
+                systemd_state=state,
+                tcp_reachable=False,
+                restart_count=restart_count,
+                elapsed_seconds=elapsed,
+                timeout_seconds=timeout,
+                wait_position=wait_position,
+                wait_total=wait_total,
+                log_tail=log_tail,
+            )
+            _publish_startup_status(operation_id, status, progress=90)
             raise await unit_startup_error(
                 unit,
                 f"Timed out waiting for TCP readiness on {host}:{port}",
                 host=host,
                 port=port,
                 restart_count=restart_count,
+                runtime_status=status,
             )
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
-def _publish_startup_status(
-    operation_id: Optional[str],
+def _startup_status_payload(
     *,
     instance: dict,
     host: str,
@@ -561,11 +616,8 @@ def _publish_startup_status(
     timeout_seconds: float,
     wait_position: int,
     wait_total: int,
-    progress: Optional[int] = None,
     log_tail: str = "",
-):
-    if not operation_id:
-        return
+) -> dict:
     status = {
         "phase": "waiting_ready",
         "instance_index": instance.get("index"),
@@ -583,6 +635,12 @@ def _publish_startup_status(
     if log_tail:
         status["log_tail"] = log_tail
         status["log_tail_lines"] = len(log_tail.splitlines())
+    return status
+
+
+def _publish_startup_status(operation_id: Optional[str], status: dict, progress: Optional[int] = None):
+    if not operation_id:
+        return
     updates = {
         "current_step": "waiting_ready",
         "runtime_status": status,
@@ -630,7 +688,14 @@ async def unit_restart_count(unit: str) -> Optional[int]:
         return None
 
 
-async def unit_startup_error(unit: str, message: str, host: str, port: int, restart_count: Optional[int] = None) -> OperationError:
+async def unit_startup_error(
+    unit: str,
+    message: str,
+    host: str,
+    port: int,
+    restart_count: Optional[int] = None,
+    runtime_status: Optional[dict] = None,
+) -> OperationError:
     logs = ""
     if unit:
         logs = _redact_logs(await read_journal(unit, lines=STARTUP_LOG_LINES))
@@ -642,6 +707,11 @@ async def unit_startup_error(unit: str, message: str, host: str, port: int, rest
         "restart_count": restart_count,
         "logs": logs,
     }
+    if runtime_status:
+        detail["runtime_status"] = dict(runtime_status)
+        for key in STARTUP_STATUS_DETAIL_KEYS:
+            if key in runtime_status:
+                detail[key] = runtime_status[key]
     return OperationError(detail)
 
 

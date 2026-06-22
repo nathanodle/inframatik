@@ -322,6 +322,14 @@ def test_profile_start_rolls_back_when_tcp_never_ready(tmp_path: Path):
 
         assert done["state"] == "failed"
         assert "Start failed" in done["result"]["message"]
+        cause = done["result"]["cause"]
+        assert cause["systemd_state"] == "active"
+        assert cause["tcp_reachable"] is False
+        assert cause["timeout_seconds"] > 0
+        assert cause["elapsed_seconds"] >= cause["timeout_seconds"]
+        assert cause["runtime_status"]["unit"] == "infra-llm-qwen.service"
+        assert cause["runtime_status"]["log_tail"] == "TOKEN=<redacted>\nready"
+        assert done["runtime_status"]["elapsed_seconds"] == cause["elapsed_seconds"]
         assert profile["state"] == "failed"
         assert ("stop", "infra-llm-qwen.service") in actions
 
@@ -350,6 +358,10 @@ def test_profile_start_reports_restart_loop_logs(tmp_path: Path):
         assert done["state"] == "failed"
         cause = done["result"]["cause"]
         assert "restarted" in cause["message"]
+        assert cause["systemd_state"] == "active"
+        assert cause["tcp_reachable"] is False
+        assert cause["runtime_status"]["restart_count"] == cause["restart_count"]
+        assert "libcudart.so.12" in cause["runtime_status"]["log_tail"]
         assert "libcudart.so.12" in cause["logs"]
         assert "API_TOKEN=<redacted>" in cause["logs"]
 
@@ -372,6 +384,10 @@ def test_profile_start_reports_fast_exit_logs(tmp_path: Path):
         assert done["state"] == "failed"
         cause = done["result"]["cause"]
         assert "inactive" in cause["message"]
+        assert cause["systemd_state"] == "inactive"
+        assert cause["tcp_reachable"] is False
+        assert cause["runtime_status"]["systemd_state"] == "inactive"
+        assert cause["runtime_status"]["log_tail"] == "HF_TOKEN=<redacted>\nRuntimeError: CUDA_HOME is not set"
         assert "CUDA_HOME is not set" in cause["logs"]
         assert "HF_TOKEN=<redacted>" in cause["logs"]
 

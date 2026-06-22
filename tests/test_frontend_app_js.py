@@ -823,7 +823,13 @@ def test_app_js_cloudflare_section_gating_by_role():
                                 unit: 'infra-llm-qwen.service',
                                 host: '127.0.0.1',
                                 port: 10000,
+                                systemd_state: 'active',
+                                tcp_reachable: false,
                                 restart_count: 3,
+                                elapsed_seconds: 90,
+                                timeout_seconds: 600,
+                                wait_position: 1,
+                                wait_total: 1,
                                 logs: 'ImportError: libcudart.so.12: cannot open shared object file',
                             },
                             rollback: [{ index: 0, unit: 'infra-llm-qwen.service', ok: true }],
@@ -840,6 +846,13 @@ def test_app_js_cloudflare_section_gating_by_role():
                     failedStartupHtml.includes('Suggested Env') &&
                     failedStartupHtml.includes('openLauncherValidation(&quot;vllm-main&quot;, &quot;qwen&quot;)') &&
                     failedStartupHtml.includes('Validate launcher') &&
+                    failedStartupHtml.includes('profile-operation-readiness') &&
+                    failedStartupHtml.includes('Waiting for TCP') &&
+                    failedStartupHtml.includes('1m 30s / 10m') &&
+                    failedStartupHtml.includes('Systemd') &&
+                    failedStartupHtml.includes('active') &&
+                    failedStartupHtml.includes('TCP') &&
+                    failedStartupHtml.includes('waiting') &&
                     failedStartupHtml.includes('Rollback') &&
                     failedStartupHtml.includes('Rollback stopped 1 started instance') &&
                     failedStartupHtml.includes('ImportError: libcudart.so.12'),
