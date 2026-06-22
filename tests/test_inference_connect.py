@@ -209,6 +209,9 @@ def test_cloudflare_cleanup_records_can_be_retried_and_forgotten(tmp_path: Path)
 
         inference_connect._record_cleanup("qwen", "dns_record", "delete", {"hostname": "qwen.example.com"}, "manual")
         record_id = inference_connect.list_cleanup_records()["cleanup"][0]["id"]
+        bundles = inference_connect.list_client_bundles("qwen")
+        assert bundles["cleanup_records"][0]["id"] == record_id
+        assert bundles["cleanup_records"][0]["kind"] == "dns_record"
         forgotten = inference_connect.forget_cleanup_record(record_id)
         assert forgotten["status"] == "forgotten"
 

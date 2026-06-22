@@ -1941,6 +1941,30 @@ body {
     margin-bottom: 7px;
 }
 
+.cleanup-record-panel {
+    margin-top: 12px;
+    border-color: rgba(245, 158, 11, 0.24);
+    background: var(--yellow-glow);
+}
+
+.cleanup-record-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cleanup-record-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+    border: 1px solid rgba(245, 158, 11, 0.22);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.12);
+    padding: 10px;
+}
+
 .profile-token-list {
     display: flex;
     flex-direction: column;

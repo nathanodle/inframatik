@@ -430,6 +430,44 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'replicated Connect view should render copyable per-instance endpoint options'
                 );
 
+                const cleanupHtml = vm.runInContext(`
+                    inferenceProfilesData = [{
+                        id: 'qwen-cleanup',
+                        display_name: 'Qwen Cleanup',
+                        exposure: { mode: 'cloudflare' },
+                        cloudflare: { hostname: 'qwen.example.com', access_app_id: 'app-1', access_policy_id: 'pol-1' },
+                    }];
+                    renderProfileConnect('qwen-cleanup', {
+                        default: {
+                            id: 'default',
+                            name: 'Default',
+                            target: { type: 'profile' },
+                            exposure_mode: 'cloudflare',
+                            base_url: 'https://qwen.example.com/v1',
+                            model: 'qwen',
+                            headers: {},
+                            secret_state: {},
+                            examples: {},
+                        },
+                        cleanup_records: [{
+                            id: 'qwen-dns-record',
+                            kind: 'dns_record',
+                            payload: { hostname: 'qwen.example.com' },
+                            attempts: 2,
+                            error: 'route still exists',
+                        }],
+                    });
+                    document.getElementById('profile-detail-qwen-cleanup').innerHTML;
+                `, context);
+                assert(
+                    cleanupHtml.includes('Cloudflare Cleanup Pending') &&
+                    cleanupHtml.includes('dns_record') &&
+                    cleanupHtml.includes('qwen.example.com') &&
+                    cleanupHtml.includes('retryInferenceCleanup') &&
+                    cleanupHtml.includes('forgetInferenceCleanup'),
+                    'Connect view should show pending Cloudflare cleanup records with retry and forget actions'
+                );
+
                 const restartButtonDisplay = vm.runInContext(`
                     fillProfileForm({
                         id: 'qwen',
@@ -880,6 +918,10 @@ def test_static_inference_model_ui_assets_present():
     assert "mergeEngineConfig" in app_js
     assert "renderProfileEngineFields" in app_js
     assert "removeProfileCloudflare" in app_js
+    assert "renderCloudflareCleanupRecords" in app_js
+    assert "retryInferenceCleanup" in app_js
+    assert "forgetInferenceCleanup" in app_js
+    assert "/api/inference/cleanup/" in app_js
     assert "submitModelImport" in app_js
     assert "submitModelUrlDownload" in app_js
     assert "submitModelHfDownload" in app_js
@@ -919,6 +961,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".copy-btn" in style_css
     assert ".client-example-card" in style_css
     assert ".instance-bundle-row" in style_css
+    assert ".cleanup-record-row" in style_css
     assert ".profile-one-time-secret" in style_css
     assert ".profile-token-row" in style_css
 

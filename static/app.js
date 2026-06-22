@@ -3334,12 +3334,50 @@ function renderInstanceBundleOptions(bundles) {
     `;
 }
 
+function renderCloudflareCleanupRecords(profileId, records) {
+    const items = Array.isArray(records) ? records : [];
+    if (!items.length) return '';
+    const profileIdArg = jsArg(profileId);
+    return `
+        <div class="profile-connect-panel cleanup-record-panel">
+            <div class="connect-section-header compact">
+                <div>
+                    <div class="launcher-card-title">Cloudflare Cleanup Pending</div>
+                    <div class="launcher-card-meta">External resources need retry or local cleanup metadata can be forgotten.</div>
+                </div>
+                ${connectBadge(`${items.length} pending`, 'yellow')}
+            </div>
+            <div class="cleanup-record-list">
+                ${items.map(record => {
+                    const recordIdArg = jsArg(record.id);
+                    const payload = record.payload || {};
+                    const target = payload.hostname || payload.id || '--';
+                    return `
+                        <div class="cleanup-record-row">
+                            <div>
+                                <div class="launcher-card-title">${esc(record.kind || 'cloudflare')}</div>
+                                <div class="launcher-card-meta">${esc(target)} · attempts ${esc(record.attempts || 0)}</div>
+                                ${record.error ? `<div class="model-job-error">${esc(record.error)}</div>` : ''}
+                            </div>
+                            <div class="model-actions">
+                                <button class="btn" onclick="retryInferenceCleanup(${profileIdArg},${recordIdArg})">Retry</button>
+                                <button class="btn danger" onclick="forgetInferenceCleanup(${profileIdArg},${recordIdArg})">Forget</button>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+}
+
 function renderProfileConnect(profileId, data, secrets = {}) {
     const profile = inferenceProfilesData.find(item => item.id === profileId) || {};
     const exposure = profile.exposure || {};
     const cloudflare = profile.cloudflare || {};
     const bundle = data.default || data.client_bundle || data || {};
     const instanceBundles = Array.isArray(data.instance_bundles) ? data.instance_bundles : [];
+    const cleanupRecords = Array.isArray(data.cleanup_records) ? data.cleanup_records : [];
     const tokens = (cloudflare.service_tokens || []);
     const activeTokens = tokens.filter(token => (token.state || 'active') === 'active');
     const hasEngineKey = Boolean((bundle.secret_state || {}).engine_api_key_configured);
@@ -3427,6 +3465,7 @@ function renderProfileConnect(profileId, data, secrets = {}) {
         </div>
         ${renderClientBundle(bundle, secrets)}
         ${renderInstanceBundleOptions(instanceBundles)}
+        ${renderCloudflareCleanupRecords(profileId, cleanupRecords)}
         <div class="connect-section-header compact">
             <div class="launcher-card-title">Cloudflare Service Tokens</div>
         </div>
@@ -3490,6 +3529,28 @@ async function removeProfileCloudflare(profileId) {
         await loadProfileConnect(profileId);
         const warnings = data.warnings || [];
         setInferenceStatus(warnings.length ? `Removed Cloudflare exposure with ${warnings.length} cleanup warning(s).` : 'Removed Cloudflare exposure.');
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+async function retryInferenceCleanup(profileId, recordId) {
+    try {
+        await api('POST', modelNodePath(`/api/inference/cleanup/${encodeURIComponent(recordId)}/retry`));
+        setInferenceStatus('Cloudflare cleanup retry completed.');
+        await loadProfileConnect(profileId);
+    } catch (e) {
+        setInferenceError(e.message);
+        await loadProfileConnect(profileId);
+    }
+}
+
+async function forgetInferenceCleanup(profileId, recordId) {
+    if (!confirm('Forget this local cleanup record without calling Cloudflare?')) return;
+    try {
+        await api('DELETE', modelNodePath(`/api/inference/cleanup/${encodeURIComponent(recordId)}`));
+        setInferenceStatus('Forgot Cloudflare cleanup record.');
+        await loadProfileConnect(profileId);
     } catch (e) {
         setInferenceError(e.message);
     }

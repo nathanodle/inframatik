@@ -446,6 +446,11 @@ def list_client_bundles(profile_id: str) -> dict:
     bundles = list(_bundle_registry(profile).values())
     bundles.sort(key=lambda item: item.get("name") or item.get("id") or "")
     instance_bundles = _instance_bundle_options(profile_id, profile)
+    cleanup_records = [
+        record
+        for record in list_cleanup_records().get("cleanup", [])
+        if record.get("profile_id") == profile_id
+    ]
     try:
         default = render_client_bundle(profile_id, {})
     except InferenceConnectConflict as e:
@@ -460,6 +465,7 @@ def list_client_bundles(profile_id: str) -> dict:
         "bundles": bundles,
         "default": default,
         "instance_bundles": instance_bundles,
+        "cleanup_records": cleanup_records,
     }
 
 
