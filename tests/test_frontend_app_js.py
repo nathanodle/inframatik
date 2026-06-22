@@ -297,6 +297,30 @@ def test_app_js_cloudflare_section_gating_by_role():
                     serviceTokenHtml.includes('inactive'),
                     'service token settings should show every service, not only existing tokens'
                 );
+
+                const cleanedJobHtml = vm.runInContext(`
+                    renderModelJobs([{
+                        id: 'mdl-cleaned',
+                        kind: 'download',
+                        artifact_id: 'cleaned-model',
+                        snapshot: 'v1',
+                        source: { type: 'url', url: 'https://example.invalid/model.gguf' },
+                        state: 'failed',
+                        progress: 40,
+                        staging_path: '/tmp/inframatik/staging/mdl-cleaned',
+                        cleanup: {
+                            staging_removed: true,
+                            staging_removed_at: 1710000000,
+                            staging_removed_reason: 'manual',
+                        },
+                    }]);
+                    document.getElementById('model-jobs-list').innerHTML;
+                `, context);
+                assert(
+                    cleanedJobHtml.includes('Staging cleaned') &&
+                    !cleanedJobHtml.includes('Clean staging'),
+                    'cleaned model jobs should show cleanup state without a stale cleanup action'
+                );
             })().catch((error) => {
                 console.error(error.stack || error.message);
                 process.exit(1);
@@ -686,6 +710,8 @@ def test_static_inference_model_ui_assets_present():
     assert "validate?runtime=true" in app_js
     assert "renderLauncherValidation" in app_js
     assert "cleanModelJobStaging" in app_js
+    assert "modelJobStagingCleaned" in app_js
+    assert ".model-job-badges" in style_css
     assert "force_stopped_references=true" in app_js
     assert "path.startsWith('/api/models')" in app_js
     assert "path.startsWith('/api/inference')" in app_js

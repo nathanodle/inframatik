@@ -183,6 +183,36 @@ def _staging_root(root: Optional[Path] = None) -> Path:
     return (root or get_model_store_root()) / "staging"
 
 
+def _staging_path_for_cleanup(job: dict) -> Path:
+    raw = job.get("staging_path")
+    if not raw:
+        raise ModelStorageError("Job has no staging path")
+    staging_path = Path(raw)
+    root = _staging_root(get_model_store_root())
+    if not _path_is_relative_to(staging_path, root):
+        recorded_root = staging_path.parent
+        if recorded_root.name != "staging":
+            raise ModelStorageError("Refusing to delete staging path outside an inframatik staging directory")
+    return staging_path
+
+
+def _remove_job_staging_files(job: dict, reason: str) -> tuple[dict, Path, bool]:
+    staging_path = _staging_path_for_cleanup(job)
+    existed = staging_path.exists()
+    if existed:
+        shutil.rmtree(staging_path)
+    cleanup = dict(job.get("cleanup") or {})
+    cleanup.update(
+        {
+            "staging_removed_at": _now(),
+            "staging_removed_reason": reason,
+            "staging_removed": True,
+            "staging_existed": existed,
+        }
+    )
+    return cleanup, staging_path, existed
+
+
 def _artifact_dir(root: Path, artifact_id: str) -> Path:
     return root / "artifacts" / artifact_id
 
@@ -580,19 +610,10 @@ async def clean_job_staging(job_id: str) -> dict:
     job = _get_job(job_id)
     if job.get("state") in ACTIVE_JOB_STATES:
         raise ModelConflictError("Cannot clean staging for an active model job")
-    staging_path = Path(job.get("staging_path") or "")
-    if not staging_path:
-        raise ModelStorageError("Job has no staging path")
-    root = _staging_root(get_model_store_root())
-    if not _path_is_relative_to(staging_path, root):
-        recorded_root = Path(job.get("staging_path", "")).parent
-        if recorded_root.name != "staging":
-            raise ModelStorageError("Refusing to delete staging path outside an inframatik staging directory")
-    if staging_path.exists():
-        shutil.rmtree(staging_path)
-    job.setdefault("cleanup", {})["staging_removed_at"] = _now()
+    cleanup, staging_path, removed = _remove_job_staging_files(job, "manual")
+    job["cleanup"] = cleanup
     _put_job(job)
-    return {"job_id": job_id, "staging_path": str(staging_path), "removed": True}
+    return {"job_id": job_id, "staging_path": str(staging_path), "removed": removed}
 
 
 def _check_canceled(cancel_event: asyncio.Event):
@@ -1043,6 +1064,13 @@ async def _hash_and_commit_payload(
     await asyncio.to_thread(_commit_payload, payload, final_snapshot, artifact_path, manifest)
     manifest_path = final_snapshot / MANIFEST_FILENAME
     runtime_path = _runtime_path_from_manifest(final_snapshot, manifest)
+    cleanup = None
+    cleanup_error = None
+    try:
+        job = _get_job(job_id)
+        cleanup, _staging_path, _removed = _remove_job_staging_files(job, "completed")
+    except Exception as e:
+        cleanup_error = str(e)
     with _json_lock:
         registry = _load_registry()
         artifacts = registry.setdefault("artifacts", {})
@@ -1084,6 +1112,8 @@ async def _hash_and_commit_payload(
         finished_at=_now(),
         error=None,
         manifest_path=str(manifest_path),
+        cleanup=cleanup,
+        cleanup_error=cleanup_error,
     )
 
 

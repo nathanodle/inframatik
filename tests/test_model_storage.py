@@ -217,7 +217,9 @@ def test_direct_url_download_uses_staging_then_ready_artifact(tmp_path: Path):
                 manifest = model_storage.get_manifest("remote-gguf", "v1")
                 assert manifest["source"]["url"].startswith("http://127.0.0.1")
                 assert manifest["files"][0]["path"] == "remote.gguf"
-                assert Path(finished["staging_path"]).exists()
+                assert not Path(finished["staging_path"]).exists()
+                assert finished["cleanup"]["staging_removed"] is True
+                assert finished["cleanup"]["staging_removed_reason"] == "completed"
                 final_path = Path(finished["manifest_path"]).parent / "remote.gguf"
                 assert final_path.read_bytes() == b"remote gguf bytes"
 
@@ -225,6 +227,40 @@ def test_direct_url_download_uses_staging_then_ready_artifact(tmp_path: Path):
         finally:
             server.shutdown()
             thread.join(timeout=2)
+
+
+def test_clean_job_staging_records_cleanup_marker(tmp_path: Path):
+    with _temp_storage(tmp_path):
+        staging = tmp_path / "models" / "staging" / "mdl_failed"
+        staging.mkdir(parents=True)
+        (staging / "partial.bin").write_bytes(b"partial")
+        model_storage._put_job(
+            {
+                "id": "mdl_failed",
+                "kind": "download",
+                "artifact_id": "failed-model",
+                "snapshot": "v1",
+                "source": {"type": "url", "url": "https://example.invalid/model.gguf"},
+                "state": "failed",
+                "progress": 12.0,
+                "staging_path": str(staging),
+                "created_at": 1,
+                "error": "download failed",
+            }
+        )
+
+        async def scenario():
+            result = await model_storage.clean_job_staging("mdl_failed")
+            assert result["removed"] is True
+            assert not staging.exists()
+            job = await model_storage.get_job_status("mdl_failed")
+            assert job["cleanup"]["staging_removed"] is True
+            assert job["cleanup"]["staging_removed_reason"] == "manual"
+
+            second = await model_storage.clean_job_staging("mdl_failed")
+            assert second["removed"] is False
+
+        _run(scenario())
 
 
 def test_model_storage_http_api_import_verify_and_delete(tmp_path: Path):

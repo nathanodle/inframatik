@@ -3850,6 +3850,25 @@ function modelJobProgressClass(job, progress) {
     return progressColor(progress);
 }
 
+function modelJobCleanup(job) {
+    return (job && job.cleanup && typeof job.cleanup === 'object') ? job.cleanup : {};
+}
+
+function modelJobStagingCleaned(job) {
+    const cleanup = modelJobCleanup(job);
+    return !!cleanup.staging_removed_at || cleanup.staging_removed === true;
+}
+
+function modelJobActivityLabel(job) {
+    if (!job) return '';
+    if (job.current_file) return job.current_file;
+    if (job.cleanup_error) return `Cleanup issue: ${job.cleanup_error}`;
+    if (modelJobStagingCleaned(job)) return 'Staging cleaned';
+    if (job.state === 'ready') return 'Artifact committed';
+    if (job.state === 'failed_interrupted') return 'Interrupted by restart';
+    return job.state || '';
+}
+
 function renderModelJobs(jobs) {
     const el = document.getElementById('model-jobs-list');
     if (!jobs.length) {
@@ -3863,11 +3882,14 @@ function renderModelJobs(jobs) {
         const done = Number(isHashing ? (job.hashed_bytes || 0) : (job.downloaded_bytes || 0));
         const barClass = modelJobProgressClass(job, progress);
         const active = ACTIVE_MODEL_JOB_STATES.has(job.state);
-        const canClean = ['failed', 'failed_interrupted', 'canceled'].includes(job.state) && job.staging_path;
+        const stagingCleaned = modelJobStagingCleaned(job);
+        const canClean = ['failed', 'failed_interrupted', 'canceled'].includes(job.state) && job.staging_path && !stagingCleaned;
         const actions = [
             active ? `<button class="btn" onclick="cancelModelJob('${esc(job.id)}')">Cancel</button>` : '',
             canClean ? `<button class="btn danger" onclick="cleanModelJobStaging('${esc(job.id)}','${esc(job.staging_path)}')">Clean staging</button>` : '',
         ].filter(Boolean).join('');
+        const cleanupBadge = stagingCleaned ? '<span class="model-badge green">Staging cleaned</span>' : '';
+        const activityLabel = modelJobActivityLabel(job);
         return `
             <div class="model-job-row">
                 <div class="model-job-main">
@@ -3875,13 +3897,13 @@ function renderModelJobs(jobs) {
                         <div class="model-job-title">${esc(job.artifact_id || job.id)}</div>
                         <div class="model-job-sub">${esc(job.kind || 'model')} · ${esc(job.snapshot || '--')} · ${esc(modelSourceLabel(job.source))}</div>
                     </div>
-                    <div>${modelJobStateBadge(job.state)}</div>
+                    <div class="model-job-badges">${modelJobStateBadge(job.state)}${cleanupBadge}</div>
                     <div class="model-job-sub">${bytes ? `${formatBytes(done)} / ${formatBytes(bytes)}` : `${progress.toFixed(0)}%`}</div>
                     <div class="model-actions">${actions}</div>
                 </div>
                 <div class="model-job-progress">
                     <div class="progress-bar"><div class="progress-fill ${barClass}" style="width:${progress}%"></div></div>
-                    <div class="model-job-sub">${job.current_file ? esc(job.current_file) : esc(job.state || '')}</div>
+                    <div class="model-job-sub">${esc(activityLabel)}</div>
                 </div>
                 ${job.error ? `<div class="model-job-error">${esc(job.error)}</div>` : ''}
             </div>`;
