@@ -30,6 +30,7 @@ from inference_routes import inference_router
 from mcp_routes import mcp_router
 from model_routes import model_router
 from model_storage import mark_interrupted_jobs
+from inference_profiles import initialize_profile_registries
 from ws_routes import ws_router
 from nodes import stale_checker_loop, heartbeat_sender_loop
 from node_snapshots import snapshot_collector_loop
@@ -41,6 +42,7 @@ logger = logging.getLogger("inframatik.main")
 async def lifespan(app: FastAPI):
     config = get_node_config()
     mark_interrupted_jobs()
+    initialize_profile_registries()
     tasks = []
     if config:
         if config.get("role") == "master":

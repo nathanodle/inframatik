@@ -289,6 +289,32 @@ async def _handle_local_inference(method: str, route_path: str, query: dict[str,
 
         return inference_planner.preview_profile(body or {})
 
+    if route_path == "/api/inference/profiles":
+        import inference_profiles
+
+        if method == "GET":
+            return inference_profiles.list_profiles()
+        if method == "POST":
+            return inference_profiles.create_profile(body or {})
+        return _NO_MATCH
+
+    if route_path.startswith("/api/inference/profiles/"):
+        import inference_profiles
+
+        tail = route_path[len("/api/inference/profiles/"):]
+        parts = tail.split("/")
+        profile_id = parts[0]
+        suffix = "/" + "/".join(parts[1:]) if len(parts) > 1 else ""
+        if method == "GET" and suffix == "":
+            return inference_profiles.get_profile(profile_id)
+        if method == "PUT" and suffix == "":
+            return inference_profiles.update_profile(profile_id, body or {})
+        if method == "DELETE" and suffix == "":
+            return inference_profiles.delete_profile(profile_id, force=_query_bool(query, "force"))
+        if method == "POST" and suffix == "/render":
+            return inference_profiles.render_profile(profile_id)
+        return _NO_MATCH
+
     if not route_path.startswith("/api/inference/launchers"):
         return _NO_MATCH
 

@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import cloudflared
 import inference_launchers
 import inference_planner
+import inference_profiles
 import proxy
 import services
 import system
@@ -325,6 +326,52 @@ def test_handle_local_inference_launchers_dispatch():
     assert deleted == {"deleted": "vllm-main"}
     assert calls[0] == ("preview", {"id": "draft"})
     assert calls[-1] == ("delete", "vllm-main", True)
+
+
+def test_handle_local_inference_profiles_dispatch():
+    original_list = inference_profiles.list_profiles
+    original_create = inference_profiles.create_profile
+    original_get = inference_profiles.get_profile
+    original_update = inference_profiles.update_profile
+    original_delete = inference_profiles.delete_profile
+    original_render = inference_profiles.render_profile
+    calls = []
+
+    inference_profiles.list_profiles = lambda: calls.append(("list",)) or {"profiles": []}
+    inference_profiles.create_profile = lambda body: calls.append(("create", body)) or {"profile": {"id": body["id"]}}
+    inference_profiles.get_profile = lambda profile_id: calls.append(("get", profile_id)) or {"id": profile_id}
+    inference_profiles.update_profile = lambda profile_id, body: calls.append(("update", profile_id, body)) or {"id": profile_id}
+    inference_profiles.delete_profile = lambda profile_id, force=False: calls.append(("delete", profile_id, force)) or {"deleted": profile_id}
+    inference_profiles.render_profile = lambda profile_id: calls.append(("render", profile_id)) or {"valid_for_save": True}
+    try:
+        listed = _run(proxy._handle_local_inference("GET", "/api/inference/profiles", {}))
+        created = _run(proxy._handle_local_inference("POST", "/api/inference/profiles", {}, {"id": "qwen"}))
+        detail = _run(proxy._handle_local_inference("GET", "/api/inference/profiles/qwen", {}))
+        updated = _run(proxy._handle_local_inference("PUT", "/api/inference/profiles/qwen", {}, {"display_name": "Qwen"}))
+        rendered = _run(proxy._handle_local_inference("POST", "/api/inference/profiles/qwen/render", {}))
+        deleted = _run(proxy._handle_local_inference("DELETE", "/api/inference/profiles/qwen", {"force": ["true"]}))
+    finally:
+        inference_profiles.list_profiles = original_list
+        inference_profiles.create_profile = original_create
+        inference_profiles.get_profile = original_get
+        inference_profiles.update_profile = original_update
+        inference_profiles.delete_profile = original_delete
+        inference_profiles.render_profile = original_render
+
+    assert listed == {"profiles": []}
+    assert created == {"profile": {"id": "qwen"}}
+    assert detail == {"id": "qwen"}
+    assert updated == {"id": "qwen"}
+    assert rendered == {"valid_for_save": True}
+    assert deleted == {"deleted": "qwen"}
+    assert calls == [
+        ("list",),
+        ("create", {"id": "qwen"}),
+        ("get", "qwen"),
+        ("update", "qwen", {"display_name": "Qwen"}),
+        ("render", "qwen"),
+        ("delete", "qwen", True),
+    ]
 
 
 def test_handle_local_system_dispatch():

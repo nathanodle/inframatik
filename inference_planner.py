@@ -24,7 +24,7 @@ _TEXT_CONTROL_RE = re.compile(r"[\x00\r\n]")
 _RUNNING_STATES = {"running", "starting", "restarting", "active"}
 
 
-def preview_profile(body: dict, existing_profile_id: Optional[str] = None) -> dict:
+def preview_profile(body: dict, existing_profile_id: Optional[str] = None, include_raw: bool = False) -> dict:
     """Validate and render an inference profile draft without side effects."""
     blockers = []
     warnings = []
@@ -80,6 +80,7 @@ def preview_profile(body: dict, existing_profile_id: Optional[str] = None) -> di
                 instance=instance,
                 blockers=blockers,
                 warnings=warnings,
+                include_raw=include_raw,
             )
             command_items.append(command)
             units.append({
@@ -325,6 +326,7 @@ def _plan_ports(
     policy = deployment.get("port_policy") if isinstance(deployment.get("port_policy"), dict) else {}
     start, end = _port_range()
     used = _used_ports(existing_profile_id, profiles)
+    owned_ports = _owned_ports(existing_profile_id, profiles)
     mode = str(policy.get("mode") or ("explicit" if common.get("port") is not None or policy.get("ports") else "auto")).lower()
     allocated = []
     collisions = []
@@ -346,7 +348,13 @@ def _plan_ports(
             blockers.append(_blocker("deployment.port_policy.ports", f"Explicit port count must match replicas ({replicas})"))
     elif mode in {"auto", "contiguous"}:
         contiguous = bool(policy.get("prefer_contiguous")) or mode == "contiguous"
-        allocated = _allocate_ports(replicas, used, host, start, end, contiguous)
+        preserved = _preserved_ports(existing_profile_id, profiles, replicas)
+        if preserved:
+            extra_used = set(used) | set(preserved)
+            extra = _allocate_ports(replicas - len(preserved), extra_used, host, start, end, contiguous)
+            allocated = preserved + extra
+        else:
+            allocated = _allocate_ports(replicas, used, host, start, end, contiguous)
         if len(allocated) != replicas:
             blockers.append(_blocker("deployment.port_policy", "Could not allocate requested inference ports"))
     else:
@@ -358,7 +366,7 @@ def _plan_ports(
         if port in used:
             collisions.append({"port": port, "reason": "already allocated"})
             blockers.append(_blocker("deployment.port_policy", f"Port {port} is already allocated"))
-        elif not _port_is_bindable(host, port):
+        elif port not in owned_ports and not _port_is_bindable(host, port):
             collisions.append({"port": port, "reason": "already bound"})
             blockers.append(_blocker("deployment.port_policy", f"Port {port} is already bound on {host}"))
 
@@ -371,6 +379,42 @@ def _plan_ports(
         "collisions": collisions,
         "persisted": False,
     }, allocated
+
+
+def _preserved_ports(existing_profile_id: Optional[str], profiles: dict, replicas: int) -> list[int]:
+    if not existing_profile_id:
+        return []
+    profile = profiles.get(existing_profile_id)
+    if not isinstance(profile, dict):
+        return []
+    instances = sorted(
+        [item for item in profile.get("instances") or [] if isinstance(item, dict)],
+        key=lambda item: item.get("index", 0),
+    )
+    preserved = []
+    for instance in instances[:replicas]:
+        try:
+            preserved.append(int(instance["port"]))
+        except (KeyError, TypeError, ValueError):
+            return []
+    return preserved
+
+
+def _owned_ports(existing_profile_id: Optional[str], profiles: dict) -> set[int]:
+    if not existing_profile_id:
+        return set()
+    profile = profiles.get(existing_profile_id)
+    if not isinstance(profile, dict):
+        return set()
+    ports = set()
+    for instance in profile.get("instances") or []:
+        if not isinstance(instance, dict):
+            continue
+        try:
+            ports.add(int(instance["port"]))
+        except (KeyError, TypeError, ValueError):
+            pass
+    return ports
 
 
 def _replicas(deployment: dict, blockers: list) -> int:
@@ -435,6 +479,8 @@ def _used_ports(existing_profile_id: Optional[str], profiles: dict) -> set[int]:
 
 
 def _allocate_ports(count: int, used: set[int], host: str, start: int, end: int, contiguous: bool) -> list[int]:
+    if count <= 0:
+        return []
     if contiguous:
         run = []
         for port in range(start, end + 1):
@@ -486,21 +532,26 @@ def _plan_gpus(
     assignments = []
 
     if mode == "profile":
-        gpu_ids = requested or []
+        gpu_ids = requested or _preserved_gpu_ids(existing_profile_id, profiles, replicas, first_only=True) or []
         assignments = [{"index": index, "gpu_ids": list(gpu_ids)} for index in range(replicas)]
     elif mode == "one_per_instance":
-        candidates = requested or available
+        preserved = _preserved_gpu_ids(existing_profile_id, profiles, replicas, first_only=False)
+        candidates = requested or preserved + [gpu_id for gpu_id in available if gpu_id not in preserved]
         if len(candidates) < replicas:
             blockers.append(_blocker("deployment.gpu_policy", "one_per_instance requires at least one GPU per replica"))
         assignments = [{"index": index, "gpu_ids": [candidates[index]] if index < len(candidates) else []} for index in range(replicas)]
     elif mode == "contiguous_groups":
         group_size = _positive_int(policy.get("group_size") or common.get("tensor_parallel") or 1, "deployment.gpu_policy.group_size", blockers)
-        candidates = requested or available
-        if group_size < 1 or len(candidates) < replicas * group_size:
+        preserved_instances = _preserved_gpu_assignments(existing_profile_id, profiles, replicas)
+        candidates = requested or [gpu_id for gpu_id in available if gpu_id not in {g for item in preserved_instances for g in item}]
+        if group_size < 1 or len(preserved_instances) * group_size + len(candidates) < replicas * group_size:
             blockers.append(_blocker("deployment.gpu_policy", "contiguous_groups cannot resolve the requested replica/GPU layout"))
         for index in range(replicas):
-            start = index * max(group_size, 1)
-            assignments.append({"index": index, "gpu_ids": candidates[start:start + max(group_size, 1)]})
+            if index < len(preserved_instances):
+                assignments.append({"index": index, "gpu_ids": preserved_instances[index]})
+            else:
+                start = (index - len(preserved_instances)) * max(group_size, 1)
+                assignments.append({"index": index, "gpu_ids": candidates[start:start + max(group_size, 1)]})
     elif mode == "explicit":
         raw_instances = policy.get("instances") or policy.get("instance_gpu_ids") or []
         if not isinstance(raw_instances, list) or len(raw_instances) != replicas:
@@ -536,6 +587,38 @@ def _plan_gpus(
         ],
         "assignments": assignments,
     }, assignments
+
+
+def _preserved_gpu_assignments(existing_profile_id: Optional[str], profiles: dict, replicas: int) -> list[list[int]]:
+    if not existing_profile_id:
+        return []
+    profile = profiles.get(existing_profile_id)
+    if not isinstance(profile, dict):
+        return []
+    result = []
+    instances = sorted(
+        [item for item in profile.get("instances") or [] if isinstance(item, dict)],
+        key=lambda item: item.get("index", 0),
+    )
+    for instance in instances[:replicas]:
+        try:
+            result.append([int(gpu_id) for gpu_id in instance.get("gpu_ids") or []])
+        except (TypeError, ValueError):
+            return []
+    return result
+
+
+def _preserved_gpu_ids(existing_profile_id: Optional[str], profiles: dict, replicas: int, first_only: bool) -> list[int]:
+    assignments = _preserved_gpu_assignments(existing_profile_id, profiles, replicas)
+    if not assignments:
+        return []
+    if first_only:
+        return assignments[0]
+    result = []
+    for item in assignments:
+        if len(item) == 1:
+            result.append(item[0])
+    return result
 
 
 def _available_gpus() -> dict[int, dict]:
@@ -692,6 +775,7 @@ def _render_command(
     instance: dict,
     blockers: list,
     warnings: list,
+    include_raw: bool,
 ) -> dict:
     argv = [launcher["executable"], *(launcher.get("base_args") or [])]
     model_path = model["runtime_path"]
@@ -716,13 +800,16 @@ def _render_command(
             env["CUDA_VISIBLE_DEVICES"] = generated
 
     redacted = _redact_env(env)
-    return {
+    command = {
         "index": instance["index"],
         "argv": argv,
         "env": redacted["env"],
         "redacted_env_keys": redacted["redacted_env_keys"],
         "working_dir": launcher.get("working_dir"),
     }
+    if include_raw:
+        command["_env_raw"] = dict(env)
+    return command
 
 
 def _engine_block(engine_config: dict, engine: str) -> dict:
@@ -951,7 +1038,8 @@ def _render_unit(profile_id: str, instance: dict, command: dict) -> str:
     argv = command.get("argv") or []
     working_dir = command.get("working_dir") or str(Path.home())
     env_lines = []
-    for key, value in sorted((command.get("env") or {}).items()):
+    unit_env = command.get("_env_raw") or command.get("env") or {}
+    for key, value in sorted(unit_env.items()):
         env_lines.append(f'Environment="{_systemd_escape(key)}={_systemd_escape(str(value))}"')
     env_block = "\n".join(env_lines)
     if env_block:

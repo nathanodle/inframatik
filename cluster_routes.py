@@ -1428,6 +1428,61 @@ async def proxy_preview_inference_profile(node_id: str, body: dict):
         raise HTTPException(502, str(e))
 
 
+@cluster_router.get("/api/nodes/{node_id}/inference/profiles")
+async def proxy_inference_profiles(node_id: str):
+    try:
+        return await proxy_to_node(node_id, "GET", "/api/inference/profiles")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles")
+async def proxy_create_inference_profile(node_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "POST", "/api/inference/profiles", body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/inference/profiles/{profile_id}")
+async def proxy_get_inference_profile(node_id: str, profile_id: str):
+    try:
+        return await proxy_to_node(node_id, "GET", f"/api/inference/profiles/{profile_id}")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.put("/api/nodes/{node_id}/inference/profiles/{profile_id}")
+async def proxy_update_inference_profile(node_id: str, profile_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "PUT", f"/api/inference/profiles/{profile_id}", body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.delete("/api/nodes/{node_id}/inference/profiles/{profile_id}")
+async def proxy_delete_inference_profile(node_id: str, profile_id: str, force: bool = False):
+    path = f"/api/inference/profiles/{profile_id}"
+    if force:
+        path = f"{path}?{urlencode({'force': 'true'})}"
+    try:
+        return await proxy_to_node(node_id, "DELETE", path)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles/{profile_id}/render")
+async def proxy_render_inference_profile(node_id: str, profile_id: str):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/profiles/{profile_id}/render")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
 @cluster_router.post("/api/nodes/{node_id}/inference/launchers/{launcher_id}/validate")
 async def proxy_validate_inference_launcher(node_id: str, launcher_id: str):
     try:
