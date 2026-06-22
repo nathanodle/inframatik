@@ -1289,7 +1289,7 @@ def test_app_js_profile_editor_sections_toggle():
 
             function makeElement(id, dataset = {}) {
                 const classes = new Set();
-                return {
+                const element = {
                     id,
                     dataset,
                     style: {},
@@ -1297,6 +1297,9 @@ def test_app_js_profile_editor_sections_toggle():
                     textContent: '',
                     innerHTML: '',
                     attributes: {},
+                    children: [],
+                    parentNode: null,
+                    className: '',
                     classList: {
                         add(name) { classes.add(name); },
                         remove(name) { classes.delete(name); },
@@ -1309,9 +1312,25 @@ def test_app_js_profile_editor_sections_toggle():
                     setAttribute(name, value) { this.attributes[name] = String(value); },
                     getAttribute(name) { return this.attributes[name]; },
                     addEventListener() {},
+                    appendChild(child) {
+                        child.parentNode = this;
+                        this.children.push(child);
+                        return child;
+                    },
+                    removeChild(child) {
+                        this.children = this.children.filter(item => item !== child);
+                        child.parentNode = null;
+                        return child;
+                    },
                     querySelectorAll() { return []; },
-                    querySelector() { return null; },
+                    querySelector(selector) {
+                        if (selector === '.profile-editor-issue-badge') {
+                            return this.children.find(child => String(child.className || '').includes('profile-editor-issue-badge')) || null;
+                        }
+                        return null;
+                    },
                 };
+                return element;
             }
 
             const sections = ['basics', 'runtime', 'placement', 'exposure', 'engine', 'advanced'];
@@ -1370,6 +1389,27 @@ def test_app_js_profile_editor_sections_toggle():
                 setProfileEditorSection('nope');
                 assert(document.getElementById('tab-basics').classList.contains('active'), 'invalid section should fall back to basics tab');
                 assert(document.getElementById('panel-basics').classList.contains('active'), 'invalid section should fall back to basics panel');
+
+                updateProfileEditorIssueBadges({
+                    blockers: [
+                        { field: 'engine_launcher_id', message: 'Launcher missing' },
+                        { field: 'deployment.gpu_policy', message: 'GPU layout invalid' },
+                    ],
+                    warnings: [
+                        { field: 'common.api_key', message: 'API key recommended' },
+                        { field: 'advanced.env.CUDA_VISIBLE_DEVICES', message: 'GPU placement overridden' },
+                    ],
+                });
+                assert(document.getElementById('tab-basics').classList.contains('has-blockers'), 'basics tab should show blockers');
+                assert(document.getElementById('tab-placement').classList.contains('has-blockers'), 'placement tab should show blockers');
+                assert(document.getElementById('tab-exposure').classList.contains('has-warnings'), 'exposure tab should show warnings');
+                assert(document.getElementById('tab-advanced').classList.contains('has-warnings'), 'advanced tab should show warnings');
+                assert(document.getElementById('tab-placement').querySelector('.profile-editor-issue-badge').textContent === '1', 'placement badge should show blocker count');
+
+                clearProfileEditorIssueBadges();
+                assert(!document.getElementById('tab-basics').classList.contains('has-blockers'), 'clear should remove blocker class');
+                assert(!document.getElementById('tab-exposure').classList.contains('has-warnings'), 'clear should remove warning class');
+                assert(document.getElementById('tab-advanced').querySelector('.profile-editor-issue-badge') === null, 'clear should remove badges');
             `, context);
             """
         )
@@ -1422,6 +1462,8 @@ def test_static_inference_model_ui_assets_present():
     assert 'data-profile-editor-panel="engine"' in index_html
     assert 'class="profile-engine-details" open' in index_html
     assert "setProfileEditorSection" in app_js
+    assert "profileIssueSection" in app_js
+    assert "updateProfileEditorIssueBadges" in app_js
     assert 'id="profile-gpu-hints"' in index_html
     assert 'id="profile-kv-cache-dtype"' in index_html
     assert 'id="profile-gpu-memory-utilization"' in index_html
@@ -1543,6 +1585,8 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-card" in style_css
     assert ".profile-editor-nav" in style_css
     assert ".profile-editor-tab.active" in style_css
+    assert ".profile-editor-tab.has-blockers" in style_css
+    assert ".profile-editor-issue-badge" in style_css
     assert ".profile-editor-section.active" in style_css
     assert ".profile-detail-panel" in style_css
     assert ".profile-operation-panel" in style_css

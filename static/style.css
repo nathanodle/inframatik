@@ -1258,6 +1258,10 @@ body {
 }
 
 .profile-editor-tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     min-width: 0;
     min-height: 30px;
     padding: 6px 8px;
@@ -1271,6 +1275,41 @@ body {
     cursor: pointer;
 }
 
+.profile-editor-tab.has-blockers {
+    color: #fecaca;
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.profile-editor-tab.has-warnings {
+    color: var(--yellow);
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+.profile-editor-issue-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 10px;
+    line-height: 1;
+}
+
+.profile-editor-issue-badge.red {
+    color: #fecaca;
+    border: 1px solid rgba(239, 68, 68, 0.45);
+    background: rgba(239, 68, 68, 0.16);
+}
+
+.profile-editor-issue-badge.yellow {
+    color: var(--yellow);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.12);
+}
+
 .profile-editor-tab:hover {
     color: var(--text-primary);
     background: rgba(255, 255, 255, 0.04);
@@ -1280,6 +1319,16 @@ body {
     color: var(--text-primary);
     background: var(--bg-input);
     border-color: var(--border);
+}
+
+.profile-editor-tab.active.has-blockers {
+    color: #fecaca;
+    border-color: rgba(239, 68, 68, 0.45);
+}
+
+.profile-editor-tab.active.has-warnings {
+    color: var(--yellow);
+    border-color: rgba(245, 158, 11, 0.4);
 }
 
 .profile-editor-section {

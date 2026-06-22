@@ -1505,6 +1505,8 @@ async function submitNewService() {
 
 // ---- Inference models ----
 
+const PROFILE_EDITOR_SECTIONS = ['basics', 'runtime', 'placement', 'exposure', 'engine', 'advanced'];
+
 function modelNodePath(path) {
     return nodePathFor(selectedNodeId, path);
 }
@@ -1521,7 +1523,7 @@ function setInferenceTab(tab) {
 }
 
 function setProfileEditorSection(section) {
-    const active = ['basics', 'runtime', 'placement', 'exposure', 'engine', 'advanced'].includes(section) ? section : 'basics';
+    const active = PROFILE_EDITOR_SECTIONS.includes(section) ? section : 'basics';
     document.querySelectorAll('[data-profile-editor-section]').forEach(tab => {
         const selected = tab.dataset.profileEditorSection === active;
         tab.classList.toggle('active', selected);
@@ -1530,6 +1532,65 @@ function setProfileEditorSection(section) {
     document.querySelectorAll('[data-profile-editor-panel]').forEach(panel => {
         if (panel.dataset.profileEditorPanel === active) panel.classList.add('active');
         else panel.classList.remove('active');
+    });
+}
+
+function profileIssueSection(field) {
+    const fieldText = String(field || '');
+    const key = fieldText.split('.')[0];
+    if (['id', 'display_name', 'engine', 'engine_launcher_id', 'launcher_id', 'model', 'model_ref'].includes(key)) return 'basics';
+    if (key === 'deployment') return 'placement';
+    if (key === 'exposure') return 'exposure';
+    if (key === 'engine_config') return 'engine';
+    if (key === 'advanced') return 'advanced';
+    if (key === 'raw_args' || key === 'env') return 'advanced';
+    if (key === 'common') {
+        if (fieldText.includes('host') || fieldText.includes('api_key')) return 'exposure';
+        return 'runtime';
+    }
+    return 'basics';
+}
+
+function clearProfileEditorIssueBadges() {
+    document.querySelectorAll('[data-profile-editor-section]').forEach(tab => {
+        tab.classList.remove('has-blockers');
+        tab.classList.remove('has-warnings');
+        const badge = tab.querySelector('.profile-editor-issue-badge');
+        if (!badge) return;
+        if (badge.parentNode && typeof badge.parentNode.removeChild === 'function') {
+            badge.parentNode.removeChild(badge);
+        } else if (typeof badge.remove === 'function') {
+            badge.remove();
+        }
+    });
+}
+
+function updateProfileEditorIssueBadges(plan) {
+    plan = plan || {};
+    clearProfileEditorIssueBadges();
+    const counts = new Map(PROFILE_EDITOR_SECTIONS.map(section => [section, { blockers: 0, warnings: 0 }]));
+    (plan.blockers || []).forEach(issue => {
+        const section = profileIssueSection(issue && issue.field);
+        counts.get(section).blockers += 1;
+    });
+    (plan.warnings || []).forEach(issue => {
+        const section = profileIssueSection(issue && issue.field);
+        counts.get(section).warnings += 1;
+    });
+    document.querySelectorAll('[data-profile-editor-section]').forEach(tab => {
+        const section = tab.dataset.profileEditorSection;
+        const count = counts.get(section) || { blockers: 0, warnings: 0 };
+        const total = count.blockers + count.warnings;
+        if (!total) return;
+        const hasBlockers = count.blockers > 0;
+        const badge = document.createElement('span');
+        badge.className = `profile-editor-issue-badge ${hasBlockers ? 'red' : 'yellow'}`;
+        badge.textContent = String(hasBlockers ? count.blockers : count.warnings);
+        badge.title = hasBlockers
+            ? `${count.blockers} blocker${count.blockers === 1 ? '' : 's'}`
+            : `${count.warnings} warning${count.warnings === 1 ? '' : 's'}`;
+        tab.classList.add(hasBlockers ? 'has-blockers' : 'has-warnings');
+        tab.appendChild(badge);
     });
 }
 
@@ -2224,6 +2285,7 @@ function resetProfileForm() {
     renderProfileSelects();
     renderProfileEngineFields();
     setProfileEditorSection('basics');
+    clearProfileEditorIssueBadges();
     syncProfileSaveRestartButton(null);
     setElementHtml('profile-preview-panel', '<div class="empty-state">No preview yet.</div>');
 }
@@ -2455,6 +2517,7 @@ async function saveInferenceProfile(options = {}) {
 }
 
 function renderProfilePreview(plan) {
+    updateProfileEditorIssueBadges(plan);
     const blockers = plan.blockers || [];
     const warnings = plan.warnings || [];
     const instances = plan.resolved_instances || [];
