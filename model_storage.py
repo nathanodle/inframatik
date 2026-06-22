@@ -613,7 +613,7 @@ async def clean_job_staging(job_id: str) -> dict:
     cleanup, staging_path, removed = _remove_job_staging_files(job, "manual")
     job["cleanup"] = cleanup
     _put_job(job)
-    return {"job_id": job_id, "staging_path": str(staging_path), "removed": removed}
+    return {"job_id": job_id, "staging_path": str(staging_path), "removed": removed, "job": job}
 
 
 def _check_canceled(cancel_event: asyncio.Event):

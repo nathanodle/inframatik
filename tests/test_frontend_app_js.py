@@ -460,6 +460,96 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'ready model job events should patch inventory locally without refreshing the active tab'
                 );
 
+                const modelActionPatchResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        isMaster = false;
+                        selfNodeId = 'self-node';
+                        selectedNodeId = 'self-node';
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'models';
+                        inferenceStorageData = {};
+                        inferenceModelData = {
+                            artifacts: [{
+                                id: 'qwen-local',
+                                display_name: 'Qwen Local',
+                                manifest_display_name: 'Qwen Local',
+                                format: 'gguf',
+                                active_snapshot: 'v1',
+                                active_snapshot_state: 'ready',
+                                snapshots: { v1: { state: 'ready' } },
+                                files_count: 1,
+                                size_bytes: 1024,
+                                source: { type: 'local', path: '/models/qwen.gguf' },
+                                current_root: true,
+                                path_exists: true,
+                            }],
+                            jobs: [{
+                                id: 'mdl-failed',
+                                kind: 'download',
+                                artifact_id: 'qwen-local',
+                                snapshot: 'v1',
+                                source: { type: 'url', url: 'https://example.invalid/model.gguf' },
+                                state: 'failed',
+                                progress: 50,
+                                staging_path: '/tmp/inframatik/staging/mdl-failed',
+                            }, {
+                                id: 'mdl-running',
+                                kind: 'download',
+                                artifact_id: 'qwen-local',
+                                snapshot: 'v2',
+                                source: { type: 'url', url: 'https://example.invalid/model2.gguf' },
+                                state: 'running',
+                                progress: 10,
+                            }],
+                        };
+                        refreshInferenceModels = async function() { calls.push(['refreshInferenceModels']); };
+                        confirm = function(message) { calls.push(['confirm', message]); return true; };
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'POST' && path === '/api/models/qwen-local/verify?snapshot=v1') {
+                                return { artifact_id: 'qwen-local', snapshot: 'v1', valid: false, checked: [], missing: ['model.gguf'], changed: [], extra: [] };
+                            }
+                            if (method === 'POST' && path === '/api/models/jobs/mdl-running/cancel') {
+                                return { id: 'mdl-running', kind: 'download', artifact_id: 'qwen-local', snapshot: 'v2', state: 'canceled', progress: 10, source: { type: 'url', url: 'https://example.invalid/model2.gguf' } };
+                            }
+                            if (method === 'DELETE' && path === '/api/models/jobs/mdl-failed/staging') {
+                                return { job_id: 'mdl-failed', removed: true, staging_path: '/tmp/inframatik/staging/mdl-failed', job: { id: 'mdl-failed', kind: 'download', artifact_id: 'qwen-local', snapshot: 'v1', state: 'failed', progress: 50, staging_path: '/tmp/inframatik/staging/mdl-failed', cleanup: { staging_removed: true, staging_removed_reason: 'manual' }, source: { type: 'url', url: 'https://example.invalid/model.gguf' } } };
+                            }
+                            if (method === 'DELETE' && path === '/api/models/qwen-local') {
+                                return { deleted: 'qwen-local', snapshot: null, paths: [], references: { running: [], stopped: [] } };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        await verifyModelArtifact('qwen-local', 'v1');
+                        const afterVerifyHtml = document.getElementById('models-list').innerHTML;
+                        await cancelModelJob('mdl-running');
+                        await cleanModelJobStaging('mdl-failed', '/tmp/inframatik/staging/mdl-failed');
+                        const afterJobHtml = document.getElementById('model-jobs-list').innerHTML;
+                        await deleteModelArtifact('qwen-local', 'Qwen Local');
+                        return {
+                            calls,
+                            artifacts: inferenceModelData.artifacts.map(item => item.id),
+                            jobs: inferenceModelData.jobs.map(item => [item.id, item.state, item.cleanup && item.cleanup.staging_removed]),
+                            afterVerifyHtml,
+                            afterJobHtml,
+                            inventoryHtml: document.getElementById('models-list').innerHTML,
+                            modelOptions: document.getElementById('profile-model').innerHTML,
+                        };
+                    })()
+                `, context);
+                assert(
+                    !modelActionPatchResult.calls.some(call => call[0] === 'refreshInferenceModels') &&
+                    modelActionPatchResult.afterVerifyHtml.includes('degraded') &&
+                    modelActionPatchResult.jobs.some(item => item[0] === 'mdl-running' && item[1] === 'canceled') &&
+                    modelActionPatchResult.jobs.some(item => item[0] === 'mdl-failed' && item[2] === true) &&
+                    modelActionPatchResult.afterJobHtml.includes('Staging cleaned') &&
+                    modelActionPatchResult.artifacts.length === 0 &&
+                    modelActionPatchResult.inventoryHtml.includes('No managed models yet.') &&
+                    !modelActionPatchResult.modelOptions.includes('qwen-local@v1'),
+                    'model verify/delete/cancel/clean actions should patch local state without refreshing models'
+                );
+
                 const profileDetailResult = await vm.runInContext(`
                     (async () => {
                         const localCalls = [];
@@ -2267,6 +2357,8 @@ def test_static_inference_model_ui_assets_present():
     assert "handleModelJobEvent" in app_js
     assert "handleModelJobEvent(msg.job, msg)" in app_js
     assert "mergeModelArtifactFromJob" in app_js
+    assert "removeModelArtifactLocal" in app_js
+    assert "patchModelVerification" in app_js
     assert "profileJsonValue" in app_js
     assert "renderInferenceGpuHints" in app_js
     assert "profileConfigChips" in app_js

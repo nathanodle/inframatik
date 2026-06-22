@@ -3424,6 +3424,53 @@ function mergeModelArtifactFromJob(job) {
     return true;
 }
 
+function renderModelInventoryState() {
+    renderProfileSelects();
+    if (currentAppView !== 'inference') return;
+    if (['models', 'storage'].includes(activeInferenceTab)) {
+        renderInferenceSummary(inferenceModelData || { artifacts: [], jobs: [] }, inferenceStorageData || {});
+        renderModelInventory((inferenceModelData && inferenceModelData.artifacts) || []);
+    }
+}
+
+function removeModelArtifactLocal(artifactId) {
+    if (!artifactId || !inferenceModelData) return false;
+    const before = (inferenceModelData.artifacts || []).length;
+    inferenceModelData = {
+        ...inferenceModelData,
+        artifacts: (inferenceModelData.artifacts || []).filter(item => item.id !== artifactId),
+    };
+    renderModelInventoryState();
+    return (inferenceModelData.artifacts || []).length !== before;
+}
+
+function patchModelVerification(result) {
+    if (!result || !result.artifact_id || !inferenceModelData) return false;
+    const snapshotId = result.snapshot;
+    const state = result.valid ? 'ready' : 'degraded';
+    let changed = false;
+    inferenceModelData = {
+        ...inferenceModelData,
+        artifacts: (inferenceModelData.artifacts || []).map(artifact => {
+            if (artifact.id !== result.artifact_id) return artifact;
+            changed = true;
+            const snapshots = { ...(artifact.snapshots || {}) };
+            if (snapshotId) {
+                snapshots[snapshotId] = {
+                    ...(snapshots[snapshotId] || {}),
+                    state,
+                    last_verified_at: Math.floor(Date.now() / 1000),
+                };
+            }
+            const next = { ...artifact, snapshots };
+            if (!snapshotId || artifact.active_snapshot === snapshotId) next.active_snapshot_state = state;
+            return next;
+        }),
+    };
+    if (changed) renderModelInventoryState();
+    return changed;
+}
+
 function mergeModelJob(job) {
     if (!job || !job.id) return;
     if (!inferenceModelData) inferenceModelData = { artifacts: [], jobs: [] };
@@ -4837,7 +4884,7 @@ async function verifyModelArtifact(artifactId, snapshot) {
         const query = snapshot && snapshot !== '--' ? `?snapshot=${encodeURIComponent(snapshot)}` : '';
         const result = await api('POST', modelNodePath(`/api/models/${artifactId}/verify${query}`));
         setInferenceStatus(result.valid ? `${artifactId} verified.` : `${artifactId} has verification issues.`);
-        await refreshInferenceModels();
+        patchModelVerification(result);
     } catch (e) {
         setInferenceError(e.message);
         setInferenceStatus('');
@@ -4849,17 +4896,17 @@ async function deleteModelArtifact(artifactId, displayName) {
     setInferenceError('');
     setInferenceStatus('');
     try {
-        await api('DELETE', modelNodePath(`/api/models/${artifactId}`));
+        const result = await api('DELETE', modelNodePath(`/api/models/${artifactId}`));
+        removeModelArtifactLocal((result && result.deleted) || artifactId);
         setInferenceStatus(`${artifactId} deleted.`);
-        await refreshInferenceModels();
     } catch (e) {
         const detail = e.detail;
         if (detail && detail.requires_force) {
             const refs = (detail.references || []).map(ref => ref.name || ref.profile_id).join(', ');
             if (confirm(`Stopped profiles reference this model: ${refs}. Delete anyway?`)) {
-                await api('DELETE', modelNodePath(`/api/models/${artifactId}?force_stopped_references=true`));
+                const result = await api('DELETE', modelNodePath(`/api/models/${artifactId}?force_stopped_references=true`));
+                removeModelArtifactLocal((result && result.deleted) || artifactId);
                 setInferenceStatus(`${artifactId} deleted.`);
-                await refreshInferenceModels();
                 return;
             }
         }
@@ -4869,8 +4916,8 @@ async function deleteModelArtifact(artifactId, displayName) {
 
 async function cancelModelJob(jobId) {
     try {
-        await api('POST', modelNodePath(`/api/models/jobs/${jobId}/cancel`));
-        await refreshInferenceModels();
+        const job = await api('POST', modelNodePath(`/api/models/jobs/${jobId}/cancel`));
+        mergeModelJob(job);
     } catch (e) {
         setInferenceError(e.message);
     }
@@ -4879,9 +4926,9 @@ async function cancelModelJob(jobId) {
 async function cleanModelJobStaging(jobId, stagingPath) {
     if (!confirm(`Delete staging files for ${jobId}?\n\n${stagingPath}`)) return;
     try {
-        await api('DELETE', modelNodePath(`/api/models/jobs/${jobId}/staging`));
+        const result = await api('DELETE', modelNodePath(`/api/models/jobs/${jobId}/staging`));
         setInferenceStatus(`Cleaned staging for ${jobId}.`);
-        await refreshInferenceModels();
+        if (result && result.job) mergeModelJob(result.job);
     } catch (e) {
         setInferenceError(e.message);
     }

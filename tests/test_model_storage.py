@@ -256,6 +256,9 @@ def test_clean_job_staging_records_cleanup_marker(tmp_path: Path):
         async def scenario():
             result = await model_storage.clean_job_staging("mdl_failed")
             assert result["removed"] is True
+            assert result["job"]["id"] == "mdl_failed"
+            assert result["job"]["cleanup"]["staging_removed"] is True
+            assert result["job"]["cleanup"]["staging_removed_reason"] == "manual"
             assert not staging.exists()
             job = await model_storage.get_job_status("mdl_failed")
             assert job["cleanup"]["staging_removed"] is True
@@ -263,6 +266,7 @@ def test_clean_job_staging_records_cleanup_marker(tmp_path: Path):
 
             second = await model_storage.clean_job_staging("mdl_failed")
             assert second["removed"] is False
+            assert second["job"]["id"] == "mdl_failed"
 
         _run(scenario())
 
