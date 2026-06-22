@@ -224,6 +224,50 @@ def test_self_auth_internal_cf_path_requires_x_api_key():
     assert resp.json()["detail"] == "API key required"
 
 
+def test_worker_event_path_bypasses_session_and_validates_worker_key():
+    auth_calls = []
+    broadcasts = []
+
+    async def check_auth_spy(_request):
+        auth_calls.append(True)
+        return False
+
+    def fake_worker_by_key(api_key):
+        return ("cfg-worker", {"name": "worker"}) if api_key == "worker-key" else None
+
+    def fake_broadcast(config_node_id, real_node_id, event):
+        broadcasts.append((config_node_id, real_node_id, event))
+
+    resp = _request(
+        "POST",
+        "/api/nodes/events",
+        json_body={
+            "node_id": "real-worker",
+            "event": {
+                "type": "inference_operation",
+                "operation": {"id": "op-1", "profile_id": "qwen"},
+            },
+        },
+        headers={"X-Api-Key": "worker-key"},
+        patches=(
+            (auth, "check_auth", check_auth_spy),
+            (cluster_routes, "get_worker_by_api_key", fake_worker_by_key),
+            (cluster_routes, "validate_heartbeat_key", lambda node_id, key: node_id == "real-worker" and key == "worker-key"),
+            (cluster_routes, "heartbeat_node", lambda node_id: node_id == "real-worker"),
+            (cluster_routes, "_broadcast_worker_event", fake_broadcast),
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert auth_calls == []
+    assert broadcasts == [(
+        "cfg-worker",
+        "real-worker",
+        {"type": "inference_operation", "operation": {"id": "op-1", "profile_id": "qwen"}},
+    )]
+
+
 def test_mcp_requires_service_token_even_when_auth_true():
     resp = _request(
         "POST",

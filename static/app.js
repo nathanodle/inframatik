@@ -22,9 +22,9 @@ function connectWs() {
             if (msg.type === 'progress' && wsProgressCallbacks[msg.task]) {
                 wsProgressCallbacks[msg.task](msg);
             } else if (msg.type === 'inference_operation') {
-                handleInferenceOperationEvent(msg.operation);
+                handleInferenceOperationEvent(msg.operation, msg);
             } else if (msg.type === 'model_job') {
-                handleModelJobEvent(msg.job);
+                handleModelJobEvent(msg.job, msg);
             }
         } catch (e) {}
     };
@@ -2743,8 +2743,27 @@ function isLocalInferenceNode(nodeId) {
     return !isMaster || !nodeId || nodeId === selfNodeId;
 }
 
+function selectedInferenceNodeIds() {
+    const ids = new Set();
+    if (selectedNodeId) ids.add(String(selectedNodeId));
+    if (isLocalInferenceNode(selectedNodeId) && selfNodeId) ids.add(String(selfNodeId));
+    const node = nodes.find(item => item.node_id === selectedNodeId || item.config_node_id === selectedNodeId);
+    if (node) {
+        if (node.node_id) ids.add(String(node.node_id));
+        if (node.config_node_id) ids.add(String(node.config_node_id));
+    }
+    return ids;
+}
+
+function websocketEventMatchesSelectedNode(event) {
+    const eventIds = [event && event.node_id, event && event.real_node_id].filter(Boolean).map(String);
+    if (!eventIds.length) return isLocalInferenceNode(selectedNodeId);
+    const selectedIds = selectedInferenceNodeIds();
+    return eventIds.some(id => selectedIds.has(id));
+}
+
 function shouldUseInferenceOperationWs(nodeId) {
-    return wsConnected && isLocalInferenceNode(nodeId);
+    return wsConnected;
 }
 
 function mergeInferenceOperation(operation) {
@@ -2771,7 +2790,8 @@ function mergeInferenceOperation(operation) {
     updateInferencePolling();
 }
 
-function handleInferenceOperationEvent(operation) {
+function handleInferenceOperationEvent(operation, event = {}) {
+    if (!websocketEventMatchesSelectedNode(event)) return;
     mergeInferenceOperation(operation);
     if (isTerminalInferenceOperation(operation) && currentAppView === 'inference') {
         refreshInferenceProfiles().then(() => {
@@ -2807,7 +2827,8 @@ function mergeModelJob(job) {
     updateInferencePolling();
 }
 
-function handleModelJobEvent(job) {
+function handleModelJobEvent(job, event = {}) {
+    if (!websocketEventMatchesSelectedNode(event)) return;
     mergeModelJob(job);
 }
 

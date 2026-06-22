@@ -28,6 +28,7 @@ from node_config import (
     set_dashboard_hostname,
     save_cf_config,
     generate_api_key,
+    get_worker_by_api_key,
     create_service_token,
     rotate_service_token,
     revoke_service_token,
@@ -1156,6 +1157,11 @@ class HeartbeatBody(BaseModel):
     tunnel_id: Optional[str] = None
 
 
+class WorkerEventBody(BaseModel):
+    node_id: str
+    event: dict
+
+
 @cluster_router.post("/api/nodes/heartbeat")
 async def heartbeat(body: HeartbeatBody, request: Request):
     api_key = request.headers.get("X-Api-Key")
@@ -1171,6 +1177,38 @@ async def heartbeat(body: HeartbeatBody, request: Request):
             set_worker_tunnel_id_for_api_key(api_key, body.tunnel_id)
         except ValueError as e:
             logger.warning("Failed to record worker tunnel during heartbeat: %s", e)
+    return {"status": "ok"}
+
+
+def _broadcast_worker_event(config_node_id: str, real_node_id: str, event: dict):
+    from ws_routes import publish
+
+    publish({
+        **event,
+        "node_id": config_node_id,
+        "real_node_id": real_node_id,
+        "source": "worker",
+    })
+
+
+@cluster_router.post("/api/nodes/events")
+async def worker_event(body: WorkerEventBody, request: Request):
+    api_key = request.headers.get("X-Api-Key")
+    if not api_key:
+        raise HTTPException(401, "API key required")
+    match = get_worker_by_api_key(api_key)
+    if not match:
+        raise HTTPException(401, "Unknown API key")
+    if not validate_heartbeat_key(body.node_id, api_key):
+        raise HTTPException(401, "Invalid API key for node")
+    if not heartbeat_node(body.node_id):
+        raise HTTPException(404, "Node not registered — re-register required")
+
+    event = dict(body.event or {})
+    if event.get("type") not in {"inference_operation", "model_job"}:
+        return {"status": "ignored"}
+    config_node_id, _worker = match
+    _broadcast_worker_event(config_node_id, body.node_id, event)
     return {"status": "ok"}
 
 

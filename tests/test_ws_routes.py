@@ -75,6 +75,27 @@ def test_websocket_rejects_invalid_session_cookie():
     assert ws.closed == (4001, "Authentication required")
 
 
+def test_worker_event_payload_forwards_only_inference_events():
+    config = {
+        "role": "worker",
+        "master_url": "http://master:9000/",
+        "api_key": "worker-key",
+        "node_id": "worker-real",
+    }
+
+    payload = ws_routes._worker_event_payload(
+        {"type": "inference_operation", "operation": {"id": "op-1"}},
+        config=config,
+    )
+
+    assert payload["master_url"] == "http://master:9000"
+    assert payload["api_key"] == "worker-key"
+    assert payload["payload"]["node_id"] == "worker-real"
+    assert payload["payload"]["event"]["type"] == "inference_operation"
+    assert ws_routes._worker_event_payload({"type": "progress"}, config=config) is None
+    assert ws_routes._worker_event_payload({"type": "model_job"}, config={"role": "master"}) is None
+
+
 def run_tests():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     passed = 0
