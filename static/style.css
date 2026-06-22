@@ -937,6 +937,65 @@ body {
     font-size: 12px;
 }
 
+.profile-engine-guide {
+    display: grid;
+    gap: 8px;
+    min-height: 122px;
+    margin: 6px 0 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.08), rgba(59, 130, 246, 0.06));
+}
+
+.profile-engine-guide-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.profile-engine-guide-head > div:first-child {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.profile-engine-guide-head span,
+.profile-engine-guide small {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.profile-engine-guide strong {
+    color: var(--text-primary);
+    font-size: 16px;
+}
+
+.profile-engine-guide p {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.profile-engine-guide-chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.profile-engine-guide-chips span {
+    padding: 4px 7px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    background: rgba(15, 23, 42, 0.35);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
 .profile-engine-details {
     margin: 12px 0;
     padding: 10px 12px;
@@ -3640,6 +3699,14 @@ body {
 
     .profile-editor-nav {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .profile-engine-guide-head {
+        flex-direction: column;
+    }
+
+    .profile-engine-guide-chips {
+        justify-content: flex-start;
     }
 
     .model-form-grid {

@@ -2241,6 +2241,65 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'profile editor should round-trip vLLM context-parallel fields without duplicating them into raw engine JSON'
                 );
 
+                const engineGuideResult = vm.runInContext(`
+                    (() => {
+                        const originalQuerySelectorAll = document.querySelectorAll;
+                        const sections = {
+                            vllm: { style: {}, classList: { contains(cls) { return cls === 'engine-field-vllm'; } } },
+                            sglang: { style: {}, classList: { contains(cls) { return cls === 'engine-field-sglang'; } } },
+                            llama: { style: {}, classList: { contains(cls) { return cls === 'engine-field-llama'; } } },
+                        };
+                        document.querySelectorAll = function(selector) {
+                            if (selector === '.engine-field') return [sections.vllm, sections.sglang, sections.llama];
+                            return originalQuerySelectorAll.call(document, selector);
+                        };
+                        try {
+                            document.getElementById('profile-engine').value = 'vllm';
+                            renderProfileEngineFields();
+                            const vllmHtml = document.getElementById('profile-engine-guide').innerHTML;
+                            const vllmDisplays = {
+                                vllm: sections.vllm.style.display || '',
+                                sglang: sections.sglang.style.display,
+                                llama: sections.llama.style.display,
+                            };
+                            document.getElementById('profile-engine').value = 'sglang';
+                            renderProfileEngineFields();
+                            const sglangHtml = document.getElementById('profile-engine-guide').innerHTML;
+                            const sglangDisplays = {
+                                vllm: sections.vllm.style.display,
+                                sglang: sections.sglang.style.display || '',
+                                llama: sections.llama.style.display,
+                            };
+                            document.getElementById('profile-engine').value = 'llama.cpp';
+                            renderProfileEngineFields();
+                            const llamaHtml = document.getElementById('profile-engine-guide').innerHTML;
+                            const llamaDisplays = {
+                                vllm: sections.vllm.style.display,
+                                sglang: sections.sglang.style.display,
+                                llama: sections.llama.style.display || '',
+                            };
+                            return { vllmHtml, sglangHtml, llamaHtml, vllmDisplays, sglangDisplays, llamaDisplays };
+                        } finally {
+                            document.querySelectorAll = originalQuerySelectorAll;
+                        }
+                    })()
+                `, context);
+                assert(
+                    engineGuideResult.vllmHtml.includes('Throughput server') &&
+                    engineGuideResult.vllmHtml.includes('Expert parallel') &&
+                    engineGuideResult.sglangHtml.includes('Structured generation') &&
+                    engineGuideResult.sglangHtml.includes('DSA prefill CP') &&
+                    engineGuideResult.llamaHtml.includes('GGUF local server') &&
+                    engineGuideResult.llamaHtml.includes('Tensor split') &&
+                    engineGuideResult.vllmDisplays.vllm === '' &&
+                    engineGuideResult.vllmDisplays.sglang === 'none' &&
+                    engineGuideResult.sglangDisplays.sglang === '' &&
+                    engineGuideResult.sglangDisplays.vllm === 'none' &&
+                    engineGuideResult.llamaDisplays.llama === '' &&
+                    engineGuideResult.llamaDisplays.vllm === 'none',
+                    'engine tab should show a selected-engine guide and hide non-selected engine fields'
+                );
+
                 const saveRestartCalls = await vm.runInContext(`
                     (async () => {
                         const calls = [];
@@ -3746,7 +3805,9 @@ def test_static_inference_model_ui_assets_present():
     assert 'data-profile-editor-section="engine"' in index_html
     assert 'data-profile-editor-section="advanced"' in index_html
     assert 'data-profile-editor-panel="engine"' in index_html
+    assert 'id="profile-engine-guide"' in index_html
     assert 'class="profile-engine-details" open' in index_html
+    assert "PROFILE_ENGINE_GUIDES" in app_js
     assert "setProfileEditorSection" in app_js
     assert "profileIssueSection" in app_js
     assert "updateProfileEditorIssueBadges" in app_js
@@ -3979,6 +4040,8 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-test-panel" in style_css
     assert ".profile-config-chips" in style_css
     assert ".profile-gpu-chip" in style_css
+    assert ".profile-engine-guide" in style_css
+    assert ".profile-engine-guide-chips" in style_css
     assert ".profile-engine-details" in style_css
     assert ".form-check-grid" in style_css
     assert ".profile-preview-panel" in style_css

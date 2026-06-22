@@ -366,7 +366,6 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', (e) => {
     if (e.target && e.target.id === 'profile-engine') {
         renderProfileSelects();
-        renderProfileEngineFields();
     }
     if (e.target && e.target.id === 'profile-port-policy') {
         syncProfilePortPolicyFields();
@@ -2187,6 +2186,30 @@ const STRUCTURED_ENGINE_KEYS = {
     ],
 };
 
+const PROFILE_ENGINE_GUIDES = {
+    vllm: {
+        title: 'vLLM',
+        badge: 'Throughput server',
+        summary: 'HF snapshots, OpenAI-compatible serving, batching, MoE routing, distributed parallelism, and long-context KV tuning.',
+        chips: ['TP / PP / DP', 'Expert parallel', 'KV offload', 'Parser plugins'],
+        focus: 'Runtime covers portable capacity knobs. Engine tuning covers DP shape, context parallelism, MoE backends, and compile/attention config.',
+    },
+    sglang: {
+        title: 'SGLang',
+        badge: 'Structured generation',
+        summary: 'HF snapshots, structured outputs, radix/cache-heavy workloads, MoE serving, DSA context parallelism, and CUDA graph tuning.',
+        chips: ['EP / DP attention', 'DSA prefill CP', 'HiCache', 'Grammar backend'],
+        focus: 'Runtime covers context, memory, queues, and parsers. Engine tuning covers page size, MoE backends, cache, and CUDA graph behavior.',
+    },
+    'llama.cpp': {
+        title: 'llama.cpp',
+        badge: 'GGUF local server',
+        summary: 'GGUF models, CPU or mixed CPU/GPU serving, thread and batch control, GPU layer offload, and explicit tensor split.',
+        chips: ['GPU layers', 'Tensor split', 'Threads', 'KV cache type'],
+        focus: 'Runtime covers context and serving behavior. Engine tuning covers GPU split, CPU threads, batch sizing, and KV cache types.',
+    },
+};
+
 function profileModelOptions() {
     const artifacts = (inferenceModelData && inferenceModelData.artifacts) || [];
     if (!artifacts.length) return '<option value="">No models</option>';
@@ -2260,6 +2283,24 @@ function renderProfileEngineFields() {
     document.querySelectorAll('.engine-field').forEach(section => {
         section.style.display = section.classList.contains(`engine-field-${wanted}`) ? '' : 'none';
     });
+    renderProfileEngineGuide(engine);
+}
+
+function renderProfileEngineGuide(engine) {
+    const guide = PROFILE_ENGINE_GUIDES[engine] || PROFILE_ENGINE_GUIDES.vllm;
+    setElementHtml('profile-engine-guide', `
+        <div class="profile-engine-guide-head">
+            <div>
+                <span>${esc(guide.badge)}</span>
+                <strong>${esc(guide.title)}</strong>
+            </div>
+            <div class="profile-engine-guide-chips">
+                ${guide.chips.map(chip => `<span>${esc(chip)}</span>`).join('')}
+            </div>
+        </div>
+        <p>${esc(guide.summary)}</p>
+        <small>${esc(guide.focus)}</small>
+    `);
 }
 
 function parseProfileModelValue(value) {
@@ -2696,7 +2737,6 @@ function resetProfileForm() {
     const exposureEl = document.getElementById('profile-exposure-mode');
     if (exposureEl) exposureEl.value = 'local';
     renderProfileSelects();
-    renderProfileEngineFields();
     setProfileEditorSection('basics');
     clearProfileEditorIssueBadges();
     syncProfileSaveRestartButton(null);
