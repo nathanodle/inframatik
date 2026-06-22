@@ -689,9 +689,62 @@ def test_app_js_cloudflare_section_gating_by_role():
                 `, context);
                 assert(
                     cancelCalls.calls.some(call => call[0] === 'POST' && call[1] === '/api/inference/operations/op-cancel/cancel') &&
-                    cancelCalls.calls.some(call => call[0] === 'refreshProfiles') &&
+                    !cancelCalls.calls.some(call => call[0] === 'refreshProfiles') &&
                     cancelCalls.state === 'canceled',
-                    'cancel operation should call the cancel endpoint, merge the canceled operation, and refresh profiles'
+                    'cancel operation should call the cancel endpoint and merge the canceled operation without a broad profile refresh'
+                );
+
+                const terminalPatchResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        selectedNodeId = 'self-node';
+                        selfNodeId = 'self-node';
+                        isMaster = false;
+                        wsConnected = true;
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'profiles';
+                        inferenceProfilesData = [{
+                            id: 'qwen',
+                            display_name: 'Qwen',
+                            state: 'starting',
+                            instances: [
+                                { index: 0, state: 'starting' },
+                                { index: 1, state: 'starting' },
+                            ],
+                        }];
+                        inferenceOperationsData = [];
+                        profileDetailModes.clear();
+                        profileDetailModes.set('qwen', 'details');
+                        refreshInferenceProfiles = async function() { calls.push(['refreshProfiles']); };
+                        loadProfileDetails = async function(profileId) { calls.push(['loadDetails', profileId]); };
+                        renderInferenceProfiles = function(profiles) {
+                            calls.push(['renderProfiles', profiles[0].state, profiles[0].instances.map(item => item.state).join(',')]);
+                        };
+                        renderInferenceOperations = function(operations) {
+                            calls.push(['renderOperations', operations[0] && operations[0].state]);
+                        };
+                        handleInferenceOperationEvent({
+                            id: 'op-done',
+                            kind: 'profile_start',
+                            state: 'succeeded',
+                            profile_id: 'qwen',
+                            progress: 100,
+                            result: {
+                                state: 'running',
+                                instances: [{ index: 0 }, { index: 1 }],
+                            },
+                        });
+                        await Promise.resolve();
+                        return { calls, profile: inferenceProfilesData[0] };
+                    })()
+                `, context);
+                assert(
+                    !terminalPatchResult.calls.some(call => call[0] === 'refreshProfiles') &&
+                    terminalPatchResult.calls.filter(call => call[0] === 'renderProfiles').length === 1 &&
+                    terminalPatchResult.calls.some(call => call[0] === 'loadDetails' && call[1] === 'qwen') &&
+                    terminalPatchResult.profile.state === 'running' &&
+                    terminalPatchResult.profile.instances.every(item => item.state === 'running'),
+                    'terminal inference operation events should patch profile state locally and refresh only open detail'
                 );
 
                 const conflictResult = await vm.runInContext(`
@@ -2007,6 +2060,7 @@ def test_static_inference_model_ui_assets_present():
     assert "hydrateVisibleInferenceFailures" in app_js
     assert "operationWithHydratedLogs" in app_js
     assert "operationRuntimeStatus" in app_js
+    assert "patchProfileFromOperation" in app_js
     assert "renderSystemdPreview" in app_js
     assert "renderCloudflarePreview" in app_js
     assert "renderCommandEnv" in app_js

@@ -3288,7 +3288,7 @@ function mergeInferenceOperation(operation, options = {}) {
             }
         }
     }
-    if (currentAppView === 'inference' && activeInferenceTab === 'profiles') {
+    if (currentAppView === 'inference' && activeInferenceTab === 'profiles' && !options.suppressProfileRender) {
         renderInferenceProfiles(inferenceProfilesData);
     }
     renderInferenceOperations(inferenceOperationsData);
@@ -3298,15 +3298,77 @@ function mergeInferenceOperation(operation, options = {}) {
     updateInferencePolling();
 }
 
+function operationProfileState(operation) {
+    const result = operation && operation.result && typeof operation.result === 'object' ? operation.result : {};
+    if (result.state) return result.state;
+    const kind = String(operation && operation.kind || '');
+    if (!operation || operation.state !== 'succeeded') {
+        return operation && operation.state === 'failed' && (kind.includes('start') || kind.includes('restart')) ? 'failed' : null;
+    }
+    if (kind.includes('stop')) return 'stopped';
+    if (kind.includes('start') || kind.includes('restart')) return 'running';
+    return null;
+}
+
+function operationInstanceState(operation) {
+    if (!operation || operation.state === 'canceled') return null;
+    const kind = String(operation.kind || '');
+    if (operation.state === 'failed' && (kind.includes('start') || kind.includes('restart'))) return 'failed';
+    if (operation.state !== 'succeeded') return null;
+    if (kind.includes('stop')) return 'stopped';
+    if (kind.includes('start') || kind.includes('restart')) return 'running';
+    return null;
+}
+
+function operationInstanceIndexes(operation) {
+    if (!operation) return [];
+    if (operation.instance_index !== null && operation.instance_index !== undefined) {
+        return [Number(operation.instance_index)].filter(Number.isInteger);
+    }
+    const result = operation.result && typeof operation.result === 'object' ? operation.result : {};
+    return (result.instances || [])
+        .map(item => Number(item && item.index))
+        .filter(Number.isInteger);
+}
+
+function patchProfileFromOperation(operation) {
+    if (!operation || !operation.profile_id || !isTerminalInferenceOperation(operation)) return false;
+    const profileState = operationProfileState(operation);
+    const instanceState = operationInstanceState(operation);
+    if (!profileState && !instanceState) return false;
+    let changed = false;
+    const indexes = new Set(operationInstanceIndexes(operation));
+    inferenceProfilesData = (inferenceProfilesData || []).map(profile => {
+        if (profile.id !== operation.profile_id) return profile;
+        changed = true;
+        const next = { ...profile };
+        if (profileState) next.state = profileState;
+        if (instanceState && Array.isArray(profile.instances)) {
+            const shouldUpdateAll = !indexes.size && !String(operation.kind || '').startsWith('instance_');
+            next.instances = profile.instances.map(instance => {
+                const index = Number(instance && instance.index);
+                if (!shouldUpdateAll && !indexes.has(index)) return instance;
+                return { ...instance, state: instanceState };
+            });
+        }
+        return next;
+    });
+    if (changed && currentAppView === 'inference' && activeInferenceTab === 'profiles') {
+        renderInferenceProfiles(inferenceProfilesData);
+    }
+    return changed;
+}
+
 function handleInferenceOperationEvent(operation, event = {}) {
     if (!websocketEventMatchesSelectedNode(event)) return;
-    mergeInferenceOperation(operation);
-    if (isTerminalInferenceOperation(operation) && currentAppView === 'inference') {
-        refreshInferenceProfiles().then(() => {
-            if (operation.profile_id && profileDetailModes.get(operation.profile_id) === 'details') {
-                loadProfileDetails(operation.profile_id);
-            }
-        });
+    const terminal = isTerminalInferenceOperation(operation);
+    mergeInferenceOperation(operation, { suppressProfileRender: terminal });
+    if (terminal && currentAppView === 'inference') {
+        const patched = patchProfileFromOperation(operation);
+        if (!patched && activeInferenceTab === 'profiles') renderInferenceProfiles(inferenceProfilesData);
+        if (operation.profile_id && profileDetailModes.get(operation.profile_id) === 'details') {
+            loadProfileDetails(operation.profile_id);
+        }
     }
 }
 
@@ -3415,9 +3477,6 @@ async function cancelInferenceOperation(operationId) {
         const operation = await api('POST', modelNodePath(`/api/inference/operations/${encodeURIComponent(operationId)}/cancel`));
         mergeInferenceOperation(operation);
         setInferenceStatus(`Canceled operation ${operationId}.`);
-        if (currentAppView === 'inference') {
-            await refreshInferenceProfiles();
-        }
     } catch (e) {
         setInferenceError(e.message);
     }
