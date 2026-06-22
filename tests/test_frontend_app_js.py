@@ -602,6 +602,12 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="model-import-path"' in index_html
     assert 'id="model-url-url"' in index_html
     assert 'id="model-hf-repo"' in index_html
+    assert 'data-inference-tab="profiles"' in index_html
+    assert 'id="profile-id"' in index_html
+    assert 'id="profile-launcher"' in index_html
+    assert 'id="profile-model"' in index_html
+    assert 'id="inference-profiles-list"' in index_html
+    assert 'id="inference-operations-list"' in index_html
     assert 'data-inference-tab="launchers"' in index_html
     assert 'id="launcher-executable"' in index_html
     assert 'id="launcher-arg-rows"' in index_html
@@ -609,7 +615,11 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="model-jobs-list"' in index_html
     assert 'id="model-store-root-input"' in index_html
     assert "/api/models" in app_js
+    assert "/api/inference/profiles" in app_js
     assert "/api/inference/launchers" in app_js
+    assert "/api/inference/operations" in app_js
+    assert "activeInferenceTab = 'profiles'" in app_js
+    assert "refreshInferenceProfiles" in app_js
     assert "submitModelImport" in app_js
     assert "submitModelUrlDownload" in app_js
     assert "submitModelHfDownload" in app_js
@@ -622,6 +632,8 @@ def test_static_inference_model_ui_assets_present():
     assert ".model-table-row" in style_css
     assert ".model-job-row" in style_css
     assert ".launcher-card" in style_css
+    assert ".profile-card" in style_css
+    assert ".profile-preview-panel" in style_css
 
 
 def test_worker_enrollment_ui_uses_same_origin_backend_endpoint():

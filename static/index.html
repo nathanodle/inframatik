@@ -315,9 +315,10 @@
         </div>
 
         <div class="section-header inference-section-header">
-            <h2>Models</h2>
+            <h2>Profiles</h2>
             <div class="tabs">
-                <button class="inference-tab active" data-inference-tab="models">Models</button>
+                <button class="inference-tab active" data-inference-tab="profiles">Profiles</button>
+                <button class="inference-tab" data-inference-tab="models">Models</button>
                 <button class="inference-tab" data-inference-tab="launchers">Launchers</button>
                 <button class="inference-tab" data-inference-tab="jobs">Jobs</button>
                 <button class="inference-tab" data-inference-tab="storage">Storage</button>
@@ -327,7 +328,143 @@
         <div class="form-error" id="inference-error"></div>
         <div class="form-success" id="inference-status"></div>
 
-        <section class="inference-tab-content active" id="inference-tab-models">
+        <section class="inference-tab-content active" id="inference-tab-profiles">
+            <div class="profile-layout">
+                <section class="settings-panel profile-form-panel">
+                    <div class="settings-subsection-header">Profile</div>
+                    <input type="hidden" id="profile-edit-id">
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Profile ID</label>
+                            <input type="text" id="profile-id" placeholder="qwen-main" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Engine</label>
+                            <select id="profile-engine">
+                                <option value="vllm">vLLM</option>
+                                <option value="sglang">SGLang</option>
+                                <option value="llama.cpp">llama.cpp</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Display Name</label>
+                        <input type="text" id="profile-display-name" placeholder="Qwen Main" autocomplete="off">
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Launcher</label>
+                            <select id="profile-launcher"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Model</label>
+                            <select id="profile-model"></select>
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Served Name</label>
+                            <input type="text" id="profile-served-name" placeholder="qwen-main" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Context</label>
+                            <input type="number" id="profile-context" placeholder="65536" min="1" step="1" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Dtype</label>
+                            <input type="text" id="profile-dtype" placeholder="auto" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Tensor Parallel</label>
+                            <input type="number" id="profile-tensor-parallel" placeholder="1" min="1" step="1" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Mode</label>
+                            <select id="profile-deployment-mode">
+                                <option value="single">Single</option>
+                                <option value="replicated">Replicated</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Replicas</label>
+                            <input type="number" id="profile-replicas" value="1" min="1" step="1" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Port</label>
+                            <input type="number" id="profile-port" placeholder="auto" min="1" max="65535" step="1" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>GPU IDs</label>
+                            <input type="text" id="profile-gpus" placeholder="0,1" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>GPU Policy</label>
+                            <select id="profile-gpu-policy">
+                                <option value="profile">Profile</option>
+                                <option value="one_per_instance">One Per Instance</option>
+                                <option value="contiguous_groups">Contiguous Groups</option>
+                                <option value="explicit">Explicit</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Claim</label>
+                            <select id="profile-gpu-claim">
+                                <option value="exclusive">Exclusive</option>
+                                <option value="shared">Shared</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Exposure</label>
+                            <select id="profile-exposure-mode">
+                                <option value="local">Local</option>
+                                <option value="lan">LAN</option>
+                                <option value="cloudflare">Cloudflare</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Hostname</label>
+                            <input type="text" id="profile-hostname" placeholder="llm.example.com" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Raw Args</label>
+                            <textarea id="profile-raw-args" rows="4" placeholder="--max-num-seqs&#10;64"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Env</label>
+                            <textarea id="profile-env" rows="4" placeholder="KEY=value"></textarea>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn" onclick="resetProfileForm()">Reset</button>
+                        <button class="btn" onclick="previewInferenceProfile()">Preview</button>
+                        <button class="btn primary" onclick="saveInferenceProfile()">Save Profile</button>
+                    </div>
+                </section>
+
+                <section class="profile-list-panel">
+                    <div id="inference-profiles-list">
+                        <div class="empty-state">Loading profiles...</div>
+                    </div>
+                    <div class="profile-preview-panel" id="profile-preview-panel">
+                        <div class="empty-state">No preview yet.</div>
+                    </div>
+                </section>
+            </div>
+        </section>
+
+        <section class="inference-tab-content" id="inference-tab-models">
             <div class="metrics-grid inference-summary-grid" id="model-storage-summary"></div>
 
             <div class="model-add-grid">
@@ -487,6 +624,11 @@
         </section>
 
         <section class="inference-tab-content" id="inference-tab-jobs">
+            <div class="settings-subsection-header">Operations</div>
+            <div class="model-jobs-list inference-operations-list" id="inference-operations-list">
+                <div class="empty-state">Loading operations...</div>
+            </div>
+            <div class="settings-subsection-header inference-jobs-header">Model Jobs</div>
             <div class="model-jobs-list" id="model-jobs-list">
                 <div class="empty-state">Loading jobs...</div>
             </div>

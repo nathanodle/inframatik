@@ -58,9 +58,12 @@ let priorityRefreshes = 0;
 let inferenceModelData = null;
 let inferenceStorageData = null;
 let inferenceLaunchersData = [];
+let inferenceProfilesData = [];
+let inferenceOperationsData = [];
 let inferenceJobsTimer = null;
-let activeInferenceTab = 'models';
+let activeInferenceTab = 'profiles';
 const ACTIVE_MODEL_JOB_STATES = new Set(['queued', 'running', 'hashing', 'verifying']);
+const ACTIVE_INFERENCE_OPERATION_STATES = new Set(['queued', 'running']);
 
 // ---- Helpers ----
 
@@ -269,6 +272,12 @@ document.addEventListener('click', (e) => {
     if (e.target.classList.contains('inference-tab')) {
         setInferenceTab(e.target.dataset.inferenceTab || 'models');
         if (currentAppView === 'inference') refreshActiveInferenceTab();
+    }
+});
+
+document.addEventListener('change', (e) => {
+    if (e.target && e.target.id === 'profile-engine') {
+        renderProfileSelects();
     }
 });
 
@@ -1332,6 +1341,10 @@ function esc(s) {
     return d.innerHTML;
 }
 
+function jsArg(value) {
+    return esc(JSON.stringify(String(value || '')));
+}
+
 async function svcAction(name, action) {
     try {
         await api('POST', nodePath(`/api/services/${name}/${action}`));
@@ -1424,7 +1437,7 @@ function modelNodePath(path) {
 }
 
 function setInferenceTab(tab) {
-    activeInferenceTab = ['models', 'launchers', 'jobs', 'storage'].includes(tab) ? tab : 'models';
+    activeInferenceTab = ['profiles', 'models', 'launchers', 'jobs', 'storage'].includes(tab) ? tab : 'profiles';
     document.querySelectorAll('.inference-tab').forEach(t => {
         if (t.dataset.inferenceTab === activeInferenceTab) t.classList.add('active');
         else t.classList.remove('active');
@@ -1475,6 +1488,8 @@ function showInferencePendingState() {
     setElementHtml('models-list', '<div class="empty-state">Loading models...</div>');
     setElementHtml('model-jobs-list', '<div class="empty-state">Loading jobs...</div>');
     setElementHtml('launchers-list', '<div class="empty-state">Loading launchers...</div>');
+    setElementHtml('inference-profiles-list', '<div class="empty-state">Loading profiles...</div>');
+    setElementHtml('inference-operations-list', '<div class="empty-state">Loading operations...</div>');
 }
 
 async function loadInferenceView() {
@@ -1489,11 +1504,441 @@ async function loadInferenceView() {
 }
 
 async function refreshActiveInferenceTab() {
-    if (activeInferenceTab === 'launchers') {
+    if (activeInferenceTab === 'profiles') {
+        await refreshInferenceProfiles();
+    } else if (activeInferenceTab === 'launchers') {
         await refreshInferenceLaunchers();
+    } else if (activeInferenceTab === 'jobs') {
+        await refreshInferenceJobs();
     } else {
         await refreshInferenceModels();
     }
+}
+
+async function refreshInferenceProfiles() {
+    const nodeId = selectedNodeId;
+    if (!nodeId) return;
+    setInferenceError('');
+    try {
+        const [profiles, models, launchers, operations] = await Promise.all([
+            api('GET', modelNodePath('/api/inference/profiles')),
+            api('GET', modelNodePath('/api/models')),
+            api('GET', modelNodePath('/api/inference/launchers')),
+            api('GET', modelNodePath('/api/inference/operations')),
+        ]);
+        if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        inferenceProfilesData = profiles.profiles || [];
+        inferenceModelData = models;
+        inferenceLaunchersData = launchers.launchers || [];
+        inferenceOperationsData = operations.operations || [];
+        renderProfileSelects();
+        renderInferenceProfiles(inferenceProfilesData);
+        renderInferenceOperations(inferenceOperationsData);
+        updateInferencePolling();
+    } catch (e) {
+        setInferenceError(e.message);
+        stopInferencePolling();
+    }
+}
+
+async function refreshInferenceJobs() {
+    const nodeId = selectedNodeId;
+    if (!nodeId) return;
+    setInferenceError('');
+    try {
+        const [models, operations] = await Promise.all([
+            api('GET', modelNodePath('/api/models')),
+            api('GET', modelNodePath('/api/inference/operations')),
+        ]);
+        if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        inferenceModelData = models;
+        inferenceOperationsData = operations.operations || [];
+        renderInferenceOperations(inferenceOperationsData);
+        renderModelJobs(models.jobs || []);
+        updateInferencePolling();
+    } catch (e) {
+        setInferenceError(e.message);
+        stopInferencePolling();
+    }
+}
+
+function profileStateBadge(state) {
+    const value = state || 'stopped';
+    let color = '';
+    if (['running', 'healthy'].includes(value)) color = 'green';
+    else if (['starting', 'queued', 'restarting', 'degraded'].includes(value)) color = 'yellow';
+    else if (['failed', 'unhealthy'].includes(value)) color = 'red';
+    return `<span class="model-badge ${color}">${esc(value)}</span>`;
+}
+
+function profileModelOptions() {
+    const artifacts = (inferenceModelData && inferenceModelData.artifacts) || [];
+    if (!artifacts.length) return '<option value="">No models</option>';
+    return '<option value="">Select model</option>' + artifacts.map(model => {
+        const snapshot = model.active_snapshot || '';
+        const value = `${model.id}@${snapshot}`;
+        const label = `${model.display_name || model.manifest_display_name || model.id}${snapshot ? ` @ ${snapshot}` : ''}`;
+        return `<option value="${esc(value)}">${esc(label)}</option>`;
+    }).join('');
+}
+
+function profileLauncherOptions(engine = '') {
+    const launchers = inferenceLaunchersData || [];
+    const filtered = engine ? launchers.filter(item => item.engine === engine) : launchers;
+    if (!filtered.length) return '<option value="">No launchers</option>';
+    return '<option value="">Select launcher</option>' + filtered.map(launcher => (
+        `<option value="${esc(launcher.id)}">${esc(launcher.display_name || launcher.id)} · ${esc(launcher.engine)}</option>`
+    )).join('');
+}
+
+function renderProfileSelects() {
+    const engineEl = document.getElementById('profile-engine');
+    const launcherEl = document.getElementById('profile-launcher');
+    const modelEl = document.getElementById('profile-model');
+    if (launcherEl) {
+        const current = launcherEl.value;
+        launcherEl.innerHTML = profileLauncherOptions(engineEl ? engineEl.value : '');
+        if (current) launcherEl.value = current;
+    }
+    if (modelEl) {
+        const current = modelEl.value;
+        modelEl.innerHTML = profileModelOptions();
+        if (current) modelEl.value = current;
+    }
+}
+
+function parseProfileModelValue(value) {
+    const [artifactId, snapshot] = String(value || '').split('@');
+    return artifactId ? { artifact_id: artifactId, snapshot: snapshot || null } : null;
+}
+
+function parseProfileGpuIds() {
+    const raw = modelOptionalValue('profile-gpus');
+    if (!raw) return [];
+    return raw.split(',').map(part => part.trim()).filter(Boolean).map(part => Number(part)).filter(Number.isInteger);
+}
+
+function profileTextAreaLines(id) {
+    const el = document.getElementById(id);
+    if (!el) return [];
+    return el.value.split('\n').map(line => line.trim()).filter(Boolean);
+}
+
+function profileEnvFromTextArea() {
+    const env = {};
+    profileTextAreaLines('profile-env').forEach(line => {
+        const idx = line.indexOf('=');
+        if (idx > 0) env[line.slice(0, idx).trim()] = line.slice(idx + 1);
+    });
+    return env;
+}
+
+function buildProfileDraft() {
+    const id = modelOptionalValue('profile-id');
+    const displayName = modelOptionalValue('profile-display-name');
+    const engine = document.getElementById('profile-engine').value;
+    const launcherId = document.getElementById('profile-launcher').value;
+    const model = parseProfileModelValue(document.getElementById('profile-model').value);
+    const deploymentMode = document.getElementById('profile-deployment-mode').value || 'single';
+    const replicas = Number(document.getElementById('profile-replicas').value || 1);
+    const port = Number(document.getElementById('profile-port').value || 0);
+    const gpuIds = parseProfileGpuIds();
+    const common = {
+        served_model_name: modelOptionalValue('profile-served-name'),
+        context_length: Number(document.getElementById('profile-context').value || 0) || null,
+        dtype: modelOptionalValue('profile-dtype'),
+        tensor_parallel: Number(document.getElementById('profile-tensor-parallel').value || 0) || null,
+        gpu_ids: gpuIds.length ? gpuIds : null,
+    };
+    Object.keys(common).forEach(key => common[key] === null && delete common[key]);
+    const deployment = {
+        mode: deploymentMode,
+        replicas: deploymentMode === 'replicated' ? Math.max(1, replicas || 1) : 1,
+        gpu_policy: {
+            mode: document.getElementById('profile-gpu-policy').value || 'profile',
+            claim_mode: document.getElementById('profile-gpu-claim').value || 'exclusive',
+            gpu_ids: gpuIds,
+        },
+        port_policy: port
+            ? { mode: 'explicit', ports: [port] }
+            : { mode: deploymentMode === 'replicated' ? 'contiguous' : 'auto' },
+    };
+    const exposure = {
+        mode: document.getElementById('profile-exposure-mode').value || 'local',
+        hostname: modelOptionalValue('profile-hostname'),
+    };
+    const advanced = {
+        args: profileTextAreaLines('profile-raw-args'),
+        env: profileEnvFromTextArea(),
+    };
+    return {
+        id,
+        display_name: displayName,
+        engine,
+        engine_launcher_id: launcherId,
+        model,
+        common,
+        deployment,
+        exposure,
+        advanced,
+    };
+}
+
+function resetProfileForm() {
+    ['profile-edit-id', 'profile-id', 'profile-display-name', 'profile-served-name', 'profile-context',
+        'profile-dtype', 'profile-tensor-parallel', 'profile-port', 'profile-gpus', 'profile-hostname',
+        'profile-raw-args', 'profile-env'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const idEl = document.getElementById('profile-id');
+    if (idEl) idEl.disabled = false;
+    const engineEl = document.getElementById('profile-engine');
+    if (engineEl) engineEl.value = 'vllm';
+    const replicasEl = document.getElementById('profile-replicas');
+    if (replicasEl) replicasEl.value = '1';
+    const deploymentEl = document.getElementById('profile-deployment-mode');
+    if (deploymentEl) deploymentEl.value = 'single';
+    const gpuPolicyEl = document.getElementById('profile-gpu-policy');
+    if (gpuPolicyEl) gpuPolicyEl.value = 'profile';
+    const claimEl = document.getElementById('profile-gpu-claim');
+    if (claimEl) claimEl.value = 'exclusive';
+    const exposureEl = document.getElementById('profile-exposure-mode');
+    if (exposureEl) exposureEl.value = 'local';
+    renderProfileSelects();
+    setElementHtml('profile-preview-panel', '<div class="empty-state">No preview yet.</div>');
+}
+
+function fillProfileForm(profile) {
+    resetProfileForm();
+    document.getElementById('profile-edit-id').value = profile.id || '';
+    document.getElementById('profile-id').value = profile.id || '';
+    document.getElementById('profile-id').disabled = true;
+    document.getElementById('profile-display-name').value = profile.display_name || '';
+    document.getElementById('profile-engine').value = profile.engine || 'vllm';
+    renderProfileSelects();
+    document.getElementById('profile-launcher').value = profile.engine_launcher_id || '';
+    const snapshot = profile.model && profile.model.snapshot ? `@${profile.model.snapshot}` : '@';
+    document.getElementById('profile-model').value = profile.model && profile.model.artifact_id ? `${profile.model.artifact_id}${snapshot}` : '';
+    const common = profile.common || {};
+    document.getElementById('profile-served-name').value = common.served_model_name || '';
+    document.getElementById('profile-context').value = common.context_length || '';
+    document.getElementById('profile-dtype').value = common.dtype || '';
+    document.getElementById('profile-tensor-parallel').value = common.tensor_parallel || '';
+    document.getElementById('profile-port').value = profile.instances && profile.instances[0] ? profile.instances[0].port || '' : '';
+    const deployment = profile.deployment || {};
+    const gpuPolicy = deployment.gpu_policy || {};
+    document.getElementById('profile-gpus').value = (gpuPolicy.gpu_ids || common.gpu_ids || []).join(',');
+    document.getElementById('profile-deployment-mode').value = deployment.mode || 'single';
+    document.getElementById('profile-replicas').value = deployment.replicas || (profile.instances || []).length || 1;
+    document.getElementById('profile-gpu-policy').value = gpuPolicy.mode || 'profile';
+    document.getElementById('profile-gpu-claim').value = gpuPolicy.claim_mode || 'exclusive';
+    const exposure = profile.exposure || {};
+    document.getElementById('profile-exposure-mode').value = exposure.mode || 'local';
+    document.getElementById('profile-hostname').value = exposure.hostname || '';
+    const advanced = profile.advanced || {};
+    document.getElementById('profile-raw-args').value = (advanced.args || []).join('\n');
+    document.getElementById('profile-env').value = Object.entries(advanced.env || {}).map(([key, value]) => `${key}=${value}`).join('\n');
+}
+
+async function previewInferenceProfile() {
+    const draft = buildProfileDraft();
+    if (!draft.engine_launcher_id || !draft.model) {
+        setInferenceError('Launcher and model are required.');
+        return;
+    }
+    setInferenceError('');
+    try {
+        const editId = modelOptionalValue('profile-edit-id');
+        const body = editId ? { ...draft, existing_profile_id: editId } : draft;
+        const preview = await api('POST', modelNodePath('/api/inference/profiles/preview'), body);
+        renderProfilePreview(preview);
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+async function saveInferenceProfile() {
+    const draft = buildProfileDraft();
+    if (!draft.engine_launcher_id || !draft.model) {
+        setInferenceError('Launcher and model are required.');
+        return;
+    }
+    setInferenceError('');
+    try {
+        const editId = modelOptionalValue('profile-edit-id');
+        const result = editId
+            ? await api('PUT', modelNodePath(`/api/inference/profiles/${encodeURIComponent(editId)}`), draft)
+            : await api('POST', modelNodePath('/api/inference/profiles'), draft);
+        setInferenceStatus(editId ? `Updated profile ${editId}.` : 'Profile saved.');
+        resetProfileForm();
+        await refreshInferenceProfiles();
+        renderProfilePreview(result.plan || {});
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+function renderProfilePreview(plan) {
+    const blockers = plan.blockers || [];
+    const warnings = plan.warnings || [];
+    const instances = plan.resolved_instances || [];
+    const commands = plan.command_preview || [];
+    setElementHtml('profile-preview-panel', `
+        <div class="profile-preview-title">Preview ${plan.valid_for_save ? '<span class="model-badge green">Valid</span>' : '<span class="model-badge red">Blocked</span>'}</div>
+        ${blockers.length ? `<div class="profile-issue-list">${blockers.map(item => `<div class="model-job-error">${esc(item.message || item)}</div>`).join('')}</div>` : ''}
+        ${warnings.length ? `<div class="profile-issue-list">${warnings.map(item => `<div class="profile-warning">${esc(item.message || item)}</div>`).join('')}</div>` : ''}
+        <div class="profile-preview-grid">
+            ${instances.map(instance => `
+                <div class="profile-instance-pill">
+                    <span>${esc(instance.unit || `instance ${instance.index}`)}</span>
+                    <code>${esc(instance.host)}:${esc(instance.port)}</code>
+                    <span>GPU ${(instance.gpu_ids || []).join(',') || 'none'}</span>
+                </div>
+            `).join('') || '<div class="empty-state">No instances resolved.</div>'}
+        </div>
+        <div class="launcher-command-preview">${esc(commands.map(cmd => (cmd.argv || []).join(' ')).join('\n') || 'No command rendered.')}</div>
+    `);
+}
+
+function renderInferenceProfiles(profiles) {
+    const el = document.getElementById('inference-profiles-list');
+    if (!el) return;
+    if (!profiles.length) {
+        setHtmlIfChanged(el, '<div class="empty-state">No inference profiles yet.</div>');
+        return;
+    }
+    setHtmlIfChanged(el, profiles.map(profile => {
+        const instances = profile.instances || [];
+        const instanceText = instances.map(item => `${item.host}:${item.port}${item.gpu_ids && item.gpu_ids.length ? ` · GPU ${item.gpu_ids.join(',')}` : ''}`).join(' / ') || 'no instances';
+        const op = inferenceOperationsData.find(item => item.profile_id === profile.id && ACTIVE_INFERENCE_OPERATION_STATES.has(item.state));
+        const profileIdArg = jsArg(profile.id);
+        const labelArg = jsArg(profile.display_name || profile.id);
+        return `
+            <div class="profile-card" id="profile-card-${esc(profile.id)}">
+                <div class="launcher-card-header">
+                    <div>
+                        <div class="launcher-card-title">${esc(profile.display_name || profile.id)}</div>
+                        <div class="launcher-card-meta">${esc(profile.id)} · ${esc(profile.engine)} · ${esc(profile.engine_launcher_id || '--')}</div>
+                    </div>
+                    <div>${profileStateBadge(op ? op.state : profile.state)}</div>
+                </div>
+                <div class="profile-card-line">${esc(profile.model ? `${profile.model.artifact_id}@${profile.model.snapshot || ''}` : '--')}</div>
+                <div class="profile-card-line">${esc(instanceText)}</div>
+                ${profile.restart_required ? '<div class="profile-warning">Restart required for saved changes.</div>' : ''}
+                ${op ? `<div class="profile-operation-inline">${esc(op.kind)} · ${esc(op.current_step || op.state)} · ${Number(op.progress || 0)}%</div>` : ''}
+                <div class="model-actions profile-actions">
+                    <button class="btn" onclick="editInferenceProfile(${profileIdArg})">Edit</button>
+                    <button class="btn primary" onclick="runProfileAction(${profileIdArg},'start')">Start</button>
+                    <button class="btn" onclick="runProfileAction(${profileIdArg},'stop')">Stop</button>
+                    <button class="btn" onclick="runProfileAction(${profileIdArg},'restart')">Restart</button>
+                    <button class="btn" onclick="loadProfileHealth(${profileIdArg})">Health</button>
+                    <button class="btn" onclick="loadProfileLogs(${profileIdArg})">Logs</button>
+                    <button class="btn danger" onclick="deleteInferenceProfile(${profileIdArg},${labelArg})">Delete</button>
+                </div>
+                <div class="profile-card-detail" id="profile-detail-${esc(profile.id)}"></div>
+            </div>
+        `;
+    }).join(''));
+}
+
+function editInferenceProfile(profileId) {
+    const profile = inferenceProfilesData.find(item => item.id === profileId);
+    if (!profile) return;
+    fillProfileForm(profile);
+    setInferenceStatus(`Editing ${profile.id}.`);
+}
+
+async function deleteInferenceProfile(profileId, label) {
+    if (!confirm(`Delete inference profile "${label}"?`)) return;
+    setInferenceError('');
+    try {
+        await api('DELETE', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}`));
+        setInferenceStatus(`Deleted profile ${profileId}.`);
+        await refreshInferenceProfiles();
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+async function runProfileAction(profileId, action) {
+    setInferenceError('');
+    try {
+        await api('POST', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/${action}`));
+        setInferenceStatus(`${action} queued for ${profileId}.`);
+        await refreshInferenceProfiles();
+    } catch (e) {
+        setInferenceError(e.message);
+    }
+}
+
+async function pollInferenceOperation(operationId) {
+    if (!operationId) return null;
+    for (let i = 0; i < 30; i++) {
+        const op = await api('GET', modelNodePath(`/api/inference/operations/${encodeURIComponent(operationId)}`));
+        if (!ACTIVE_INFERENCE_OPERATION_STATES.has(op.state)) return op;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    return null;
+}
+
+async function loadProfileLogs(profileId) {
+    const detail = document.getElementById(`profile-detail-${profileId}`);
+    if (detail) detail.textContent = 'Loading logs...';
+    try {
+        const data = await api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/logs?lines=120`));
+        if (detail) detail.innerHTML = `<pre class="profile-log-view">${esc(data.logs || 'No logs.')}</pre>`;
+    } catch (e) {
+        if (detail) detail.innerHTML = `<div class="model-job-error">${esc(e.message)}</div>`;
+    }
+}
+
+async function loadProfileHealth(profileId) {
+    const detail = document.getElementById(`profile-detail-${profileId}`);
+    if (detail) detail.textContent = 'Checking health...';
+    try {
+        const data = await api('GET', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}/health`));
+        if (detail) {
+            detail.innerHTML = `
+                <div class="profile-health-summary">${profileStateBadge(data.health)}</div>
+                ${(data.instances || []).map(item => `
+                    <div class="profile-card-line">${esc(item.unit)} · ${esc(item.systemd_state)} · TCP ${item.tcp_reachable ? 'yes' : 'no'}</div>
+                `).join('')}
+            `;
+        }
+    } catch (e) {
+        if (detail) detail.innerHTML = `<div class="model-job-error">${esc(e.message)}</div>`;
+    }
+}
+
+function renderInferenceOperations(operations) {
+    const el = document.getElementById('inference-operations-list');
+    if (!el) return;
+    if (!operations.length) {
+        setHtmlIfChanged(el, '<div class="empty-state">No inference operations yet.</div>');
+        return;
+    }
+    setHtmlIfChanged(el, operations.slice(0, 20).map(op => {
+        const progress = Math.max(0, Math.min(100, Number(op.progress || 0)));
+        const color = op.state === 'succeeded' ? 'green' : ACTIVE_INFERENCE_OPERATION_STATES.has(op.state) ? 'yellow' : op.state === 'canceled' ? '' : 'red';
+        return `
+            <div class="model-job-row">
+                <div class="model-job-main">
+                    <div>
+                        <div class="model-job-title">${esc(op.profile_id || op.id)}</div>
+                        <div class="model-job-sub">${esc(op.kind || 'operation')} · ${esc(op.current_step || '--')}</div>
+                    </div>
+                    <div><span class="model-badge ${color}">${esc(op.state || 'unknown')}</span></div>
+                    <div class="model-job-sub">${progress.toFixed(0)}%</div>
+                    <div class="model-actions"></div>
+                </div>
+                <div class="model-job-progress">
+                    <div class="progress-bar"><div class="progress-fill ${color}" style="width:${progress}%"></div></div>
+                    ${op.error ? `<div class="model-job-error">${esc(op.error)}</div>` : ''}
+                </div>
+            </div>
+        `;
+    }).join(''));
 }
 
 async function refreshInferenceLaunchers() {
@@ -1705,12 +2150,15 @@ function stopInferencePolling() {
 }
 
 function updateInferencePolling() {
-    const hasActive = inferenceModelData
+    const hasActiveModelJob = inferenceModelData
         && Array.isArray(inferenceModelData.jobs)
         && inferenceModelData.jobs.some(job => ACTIVE_MODEL_JOB_STATES.has(job.state));
-    if (currentAppView === 'inference' && hasActive && !inferenceJobsTimer) {
-        inferenceJobsTimer = setInterval(refreshInferenceModels, 2500);
-    } else if ((!hasActive || currentAppView !== 'inference') && inferenceJobsTimer) {
+    const hasActiveOperation = Array.isArray(inferenceOperationsData)
+        && inferenceOperationsData.some(op => ACTIVE_INFERENCE_OPERATION_STATES.has(op.state));
+    const shouldPoll = currentAppView === 'inference' && (hasActiveModelJob || hasActiveOperation);
+    if (shouldPoll && !inferenceJobsTimer) {
+        inferenceJobsTimer = setInterval(refreshActiveInferenceTab, 2500);
+    } else if (!shouldPoll && inferenceJobsTimer) {
         stopInferencePolling();
     }
 }

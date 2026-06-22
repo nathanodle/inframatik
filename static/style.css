@@ -626,7 +626,8 @@ body {
 }
 
 .form-group input,
-.form-group select {
+.form-group select,
+.form-group textarea {
     width: 100%;
     padding: 10px 12px;
     background: var(--bg-input);
@@ -639,8 +640,15 @@ body {
     transition: border-color var(--transition);
 }
 
+.form-group textarea {
+    resize: vertical;
+    min-height: 96px;
+    line-height: 1.45;
+}
+
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
     border-color: var(--accent);
 }
 
@@ -681,7 +689,8 @@ body {
     font-family: 'JetBrains Mono', monospace;
 }
 
-.form-group input::placeholder {
+.form-group input::placeholder,
+.form-group textarea::placeholder {
     color: var(--text-muted);
 }
 
@@ -1084,6 +1093,135 @@ body {
     font-size: 12px;
     color: var(--text-secondary);
     overflow-wrap: anywhere;
+}
+
+.profile-layout {
+    display: grid;
+    grid-template-columns: minmax(380px, 0.92fr) minmax(0, 1.35fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.profile-form-panel,
+.profile-list-panel {
+    min-width: 0;
+}
+
+.profile-list-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.profile-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    margin-bottom: 10px;
+}
+
+.profile-card-line {
+    margin-top: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.profile-card-detail {
+    margin-top: 10px;
+}
+
+.profile-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.profile-preview-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+}
+
+.profile-preview-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--text-primary);
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+.profile-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.profile-instance-pill {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    padding: 9px 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    min-width: 0;
+}
+
+.profile-instance-pill code {
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    overflow-wrap: anywhere;
+}
+
+.profile-issue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 8px 0;
+}
+
+.profile-warning {
+    color: var(--yellow);
+    background: var(--yellow-glow);
+    border: 1px solid rgba(245, 158, 11, 0.24);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    font-size: 12px;
+    margin-top: 8px;
+}
+
+.profile-operation-inline {
+    color: var(--yellow);
+    font-size: 12px;
+    margin-top: 8px;
+}
+
+.profile-log-view {
+    max-height: 280px;
+    overflow: auto;
+    white-space: pre-wrap;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.profile-health-summary {
+    margin-bottom: 8px;
+}
+
+.inference-operations-list {
+    margin-bottom: 16px;
+}
+
+.inference-jobs-header {
+    margin-top: 4px;
 }
 
 /* ---- Settings page ---- */
@@ -1939,6 +2077,10 @@ body {
     }
 
     .launcher-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .profile-layout {
         grid-template-columns: 1fr;
     }
 
