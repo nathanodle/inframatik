@@ -142,6 +142,7 @@ def _put_job(job: dict):
         jobs = _load_jobs_registry()
         jobs["jobs"][job["id"]] = job
         _save_jobs_registry(jobs)
+    _publish_job(job)
 
 
 def _patch_job(job_id: str, **updates) -> dict:
@@ -153,7 +154,18 @@ def _patch_job(job_id: str, **updates) -> dict:
         job.update(updates)
         jobs["jobs"][job_id] = job
         _save_jobs_registry(jobs)
-        return job
+        updated = dict(job)
+    _publish_job(updated)
+    return updated
+
+
+def _publish_job(job: dict):
+    try:
+        from ws_routes import publish
+
+        publish({"type": "model_job", "job": dict(job)})
+    except Exception:
+        pass
 
 
 def _node_config() -> dict:

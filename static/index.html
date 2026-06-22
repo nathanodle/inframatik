@@ -402,6 +402,7 @@
                         <div class="form-group">
                             <label>GPU IDs</label>
                             <input type="text" id="profile-gpus" placeholder="0,1" autocomplete="off">
+                            <div class="profile-gpu-hints" id="profile-gpu-hints"></div>
                         </div>
                     </div>
                     <div class="model-form-grid">
@@ -444,6 +445,16 @@
                         <div class="form-group">
                             <label>Env</label>
                             <textarea id="profile-env" rows="4" placeholder="KEY=value"></textarea>
+                        </div>
+                    </div>
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Common JSON</label>
+                            <textarea id="profile-common-json" rows="7" placeholder='{"kv_cache_dtype":"fp8","max_concurrent_requests":16}'></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Engine JSON</label>
+                            <textarea id="profile-engine-json" rows="7" placeholder='{"enable_expert_parallel":true,"all2all_backend":"deepep_high_throughput"}'></textarea>
                         </div>
                     </div>
                     <div class="form-actions">

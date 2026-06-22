@@ -6,6 +6,7 @@ Designed for future expansion to replace polling for metrics and status.
 """
 
 import logging
+import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from auth import validate_session
 
@@ -15,6 +16,7 @@ ws_router = APIRouter()
 
 # Active authenticated connections
 _connections: set[WebSocket] = set()
+_loop: asyncio.AbstractEventLoop | None = None
 
 
 async def broadcast(message: dict):
@@ -29,6 +31,20 @@ async def broadcast(message: dict):
             dead.add(ws)
     for ws in dead:
         _connections.discard(ws)
+
+
+def publish(message: dict):
+    """Best-effort broadcast from async code or worker threads."""
+    if not _connections:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = _loop
+        if loop and loop.is_running():
+            asyncio.run_coroutine_threadsafe(broadcast(message), loop)
+        return
+    loop.create_task(broadcast(message))
 
 
 async def send_progress(task: str, step: str, message: str, done: bool = False, error: bool = False):
@@ -64,6 +80,8 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=4001, reason="Authentication required")
         return
 
+    global _loop
+    _loop = asyncio.get_running_loop()
     await websocket.accept()
     _connections.add(websocket)
     logger.debug("WebSocket connected (%d total)", len(_connections))

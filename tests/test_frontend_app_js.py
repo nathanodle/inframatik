@@ -606,6 +606,9 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-id"' in index_html
     assert 'id="profile-launcher"' in index_html
     assert 'id="profile-model"' in index_html
+    assert 'id="profile-common-json"' in index_html
+    assert 'id="profile-engine-json"' in index_html
+    assert 'id="profile-gpu-hints"' in index_html
     assert 'id="inference-profiles-list"' in index_html
     assert 'id="inference-operations-list"' in index_html
     assert 'data-inference-tab="launchers"' in index_html
@@ -625,6 +628,14 @@ def test_static_inference_model_ui_assets_present():
     assert "loadProfileConnect" in app_js
     assert "activeInferenceTab = 'profiles'" in app_js
     assert "refreshInferenceProfiles" in app_js
+    assert "inference_operation" in app_js
+    assert "handleInferenceOperationEvent" in app_js
+    assert "model_job" in app_js
+    assert "handleModelJobEvent" in app_js
+    assert "profileJsonValue" in app_js
+    assert "renderInferenceGpuHints" in app_js
+    assert "profileConfigChips" in app_js
+    assert "removeProfileCloudflare" in app_js
     assert "submitModelImport" in app_js
     assert "submitModelUrlDownload" in app_js
     assert "submitModelHfDownload" in app_js
@@ -638,8 +649,12 @@ def test_static_inference_model_ui_assets_present():
     assert ".model-job-row" in style_css
     assert ".launcher-card" in style_css
     assert ".profile-card" in style_css
+    assert ".profile-config-chips" in style_css
+    assert ".profile-gpu-chip" in style_css
     assert ".profile-preview-panel" in style_css
     assert ".profile-connect-panel" in style_css
+    assert ".connect-action-grid" in style_css
+    assert ".profile-one-time-secret" in style_css
     assert ".profile-token-row" in style_css
 
 

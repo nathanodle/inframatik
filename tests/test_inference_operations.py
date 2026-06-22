@@ -180,7 +180,7 @@ def _setup_profile(tmp_path: Path, port: int):
 
 
 @contextmanager
-def _fake_runtime(tcp_ok=True, journal_text="TOKEN=secret\nready"):
+def _fake_runtime(tcp_ok=True, journal_text="TOKEN=secret\nready", restart_count=None):
     actions = []
 
     async def fake_systemctl(action, unit):
@@ -196,11 +196,17 @@ def _fake_runtime(tcp_ok=True, journal_text="TOKEN=secret\nready"):
     async def fake_journal(_unit, lines=300):
         return journal_text
 
+    async def fake_restart_count(_unit):
+        if callable(restart_count):
+            return restart_count()
+        return restart_count if restart_count is not None else 0
+
     patches = [
         (inference_operations, "systemctl_user", fake_systemctl),
         (inference_operations, "unit_active_state", fake_state),
         (inference_operations, "tcp_ready", fake_tcp),
         (inference_operations, "read_journal", fake_journal),
+        (inference_operations, "unit_restart_count", fake_restart_count),
     ]
     with _Patch(patches):
         yield actions
@@ -244,6 +250,34 @@ def test_profile_start_rolls_back_when_tcp_never_ready(tmp_path: Path):
         assert "Start failed" in done["result"]["message"]
         assert profile["state"] == "failed"
         assert ("stop", "infra-llm-qwen.service") in actions
+
+
+def test_profile_start_reports_restart_loop_logs(tmp_path: Path):
+    port = _free_port()
+    with _temp_inference(tmp_path, port=port):
+        _setup_profile(tmp_path, port)
+        restarts = {"count": -1}
+
+        def next_restart_count():
+            restarts["count"] += 1
+            return restarts["count"]
+
+        with _fake_runtime(
+            tcp_ok=False,
+            journal_text="API_TOKEN=secret\nImportError: libcudart.so.12: cannot open shared object file",
+            restart_count=next_restart_count,
+        ):
+            async def scenario():
+                op = await inference_operations.start_profile("qwen")
+                return await inference_operations.wait_for_operation(op["id"], timeout=1.0)
+
+            done = _run(scenario())
+
+        assert done["state"] == "failed"
+        cause = done["result"]["cause"]
+        assert "restarted" in cause["message"]
+        assert "libcudart.so.12" in cause["logs"]
+        assert "API_TOKEN=<redacted>" in cause["logs"]
 
 
 def test_active_operation_conflict_and_interrupted_reconciliation(tmp_path: Path):

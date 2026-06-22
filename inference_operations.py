@@ -22,6 +22,8 @@ ACTIVE_STATES = {"queued", "running"}
 DEFAULT_STARTUP_GRACE_SECONDS = 600
 POLL_INTERVAL_SECONDS = 0.5
 MAX_OPERATION_RECORDS = 100
+STARTUP_RESTART_FAILURE_THRESHOLD = 3
+STARTUP_LOG_LINES = 80
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:secret|token|password|passwd|api[_-]?key|credential|auth|bearer)[A-Za-z0-9_]*)=([^\s]+)"
 )
@@ -114,6 +116,8 @@ def mark_interrupted_operations() -> dict:
                 interrupted.append(operation["id"])
         if interrupted:
             _save_registry(registry)
+            for operation_id in interrupted:
+                _publish_operation(registry["operations"][operation_id])
         return {"interrupted": interrupted}
 
 
@@ -156,6 +160,7 @@ def cancel_operation(operation_id: str) -> dict:
         operation.update({"state": "canceled", "finished_at": now, "updated_at": now, "current_step": "canceled"})
         registry["operations"][operation_id] = operation
         _save_registry(registry)
+        _publish_operation(operation)
         return dict(operation)
 
 
@@ -226,6 +231,7 @@ def _create_operation(kind: str, profile_id: str, instance_index: Optional[int] 
         }
         registry.setdefault("operations", {})[operation_id] = operation
         _save_registry(registry)
+        _publish_operation(operation)
         return dict(operation)
 
 
@@ -265,7 +271,7 @@ async def _run_operation(operation_id: str):
             raise OperationError(f"Unsupported operation kind: {kind}")
         _finish_operation(operation_id, "succeeded", result=result, progress=100)
     except Exception as e:
-        _finish_operation(operation_id, "failed", error=str(e), result=_error_result(e), progress=100)
+        _finish_operation(operation_id, "failed", error=_operation_error_message(e), result=_error_result(e), progress=100)
     finally:
         _tasks.pop(operation_id, None)
 
@@ -294,15 +300,21 @@ async def _run_start(operation_id: str, profile_id: str, instance_index: Optiona
         grace = _startup_grace(profile)
         for instance in started:
             await wait_unit_active(instance["unit"], timeout=grace)
-            await wait_tcp_ready(instance, timeout=grace)
+            await wait_instance_ready(instance, timeout=grace)
         _set_step(operation_id, "waiting_ready", "succeeded", progress=90)
-    except Exception:
+    except Exception as e:
+        cause = _error_result(e)
         if rollback_on_failure and started:
             rollback = []
             for instance in started:
                 rollback.append({"index": instance["index"], "unit": instance["unit"], **await systemctl_user("stop", instance["unit"])})
             inference_profiles.update_profile_runtime_state(profile_id, "failed", _instance_state_updates(started, "failed"))
-            raise OperationError({"message": "Start failed; started instances were stopped", "results": results, "rollback": rollback})
+            raise OperationError({
+                "message": "Start failed; started instances were stopped",
+                "cause": cause,
+                "results": results,
+                "rollback": rollback,
+            })
         inference_profiles.update_profile_runtime_state(profile_id, "failed", _instance_state_updates(instances, "failed"))
         raise
     state = "running"
@@ -404,6 +416,42 @@ async def wait_tcp_ready(instance: dict, timeout: float):
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
+async def wait_instance_ready(instance: dict, timeout: float):
+    deadline = time.monotonic() + timeout
+    host = instance.get("host") or "127.0.0.1"
+    port = int(instance.get("port"))
+    unit = instance.get("unit")
+    initial_restarts = await unit_restart_count(unit) if unit else 0
+    while True:
+        if await tcp_ready(host, port):
+            return True
+
+        state = await unit_active_state(unit) if unit else "unknown"
+        if state in {"failed", "inactive"}:
+            raise await unit_startup_error(unit, f"Unit {unit} is {state}", host=host, port=port)
+
+        restart_count = await unit_restart_count(unit) if unit else 0
+        if restart_count is not None and initial_restarts is not None:
+            if restart_count - initial_restarts >= STARTUP_RESTART_FAILURE_THRESHOLD:
+                raise await unit_startup_error(
+                    unit,
+                    f"Unit {unit} restarted {restart_count - initial_restarts} times before TCP readiness",
+                    host=host,
+                    port=port,
+                    restart_count=restart_count,
+                )
+
+        if time.monotonic() >= deadline:
+            raise await unit_startup_error(
+                unit,
+                f"Timed out waiting for TCP readiness on {host}:{port}",
+                host=host,
+                port=port,
+                restart_count=restart_count,
+            )
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+
 async def systemctl_user(action: str, unit: str) -> dict:
     code, output = await _run(["systemctl", "--user", action, unit])
     ok = code == 0 or (action == "stop" and "not loaded" in output.lower())
@@ -416,6 +464,33 @@ async def unit_active_state(unit: str) -> str:
     if code == 0 and not state:
         return "active"
     return state or "unknown"
+
+
+async def unit_restart_count(unit: str) -> Optional[int]:
+    if not unit:
+        return None
+    code, output = await _run(["systemctl", "--user", "show", unit, "-p", "NRestarts", "--value"])
+    if code != 0:
+        return None
+    try:
+        return int((output or "").strip().splitlines()[-1])
+    except (IndexError, TypeError, ValueError):
+        return None
+
+
+async def unit_startup_error(unit: str, message: str, host: str, port: int, restart_count: Optional[int] = None) -> OperationError:
+    logs = ""
+    if unit:
+        logs = _redact_logs(await read_journal(unit, lines=STARTUP_LOG_LINES))
+    detail = {
+        "message": message,
+        "unit": unit,
+        "host": host,
+        "port": port,
+        "restart_count": restart_count,
+        "logs": logs,
+    }
+    return OperationError(detail)
 
 
 async def read_journal(unit: str, lines: int = 300) -> str:
@@ -599,6 +674,7 @@ def _patch_operation(operation_id: str, **updates) -> dict:
         operation["updated_at"] = _now()
         registry["operations"][operation_id] = operation
         _save_registry(registry)
+        _publish_operation(operation)
         return dict(operation)
 
 
@@ -629,6 +705,7 @@ def _set_step(operation_id: str, name: str, state: str, progress: int):
         operation["updated_at"] = _now()
         registry["operations"][operation_id] = operation
         _save_registry(registry)
+        _publish_operation(operation)
 
 
 def _error_result(exc: Exception) -> dict:
@@ -636,6 +713,22 @@ def _error_result(exc: Exception) -> dict:
     if isinstance(detail, dict):
         return detail
     return {"message": str(detail)}
+
+
+def _operation_error_message(exc: Exception) -> str:
+    detail = exc.detail if isinstance(exc, OperationError) else str(exc)
+    if isinstance(detail, dict):
+        return str(detail.get("message") or detail)
+    return str(detail)
+
+
+def _publish_operation(operation: dict):
+    try:
+        from ws_routes import publish
+
+        publish({"type": "inference_operation", "operation": dict(operation)})
+    except Exception:
+        pass
 
 
 def _prune_registry(data: dict):
