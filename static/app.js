@@ -3376,6 +3376,19 @@ function modelJobIsTerminal(job) {
     return job && ['ready', 'failed', 'failed_interrupted', 'canceled'].includes(job.state);
 }
 
+function mergeModelArtifactFromJob(job) {
+    const artifact = job && job.artifact && typeof job.artifact === 'object' ? job.artifact : null;
+    if (!artifact || !artifact.id) return false;
+    if (!inferenceModelData) inferenceModelData = { artifacts: [], jobs: [] };
+    const artifacts = [
+        artifact,
+        ...((inferenceModelData.artifacts || []).filter(item => item.id !== artifact.id)),
+    ].sort((a, b) => String(a.id || '').localeCompare(String(b.id || '')));
+    inferenceModelData = { ...inferenceModelData, artifacts };
+    renderProfileSelects();
+    return true;
+}
+
 function mergeModelJob(job) {
     if (!job || !job.id) return;
     if (!inferenceModelData) inferenceModelData = { artifacts: [], jobs: [] };
@@ -3384,14 +3397,16 @@ function mergeModelJob(job) {
         ...((inferenceModelData.jobs || []).filter(item => item.id !== job.id)),
     ];
     inferenceModelData = { ...inferenceModelData, jobs };
+    const artifactChanged = mergeModelArtifactFromJob(job);
     if (currentAppView === 'inference') {
         if (activeInferenceTab === 'jobs') renderModelJobs(jobs);
         if (['models', 'storage'].includes(activeInferenceTab)) {
             renderInferenceSummary(inferenceModelData, inferenceStorageData || {});
+            if (artifactChanged) renderModelInventory(inferenceModelData.artifacts || []);
             renderModelJobs(jobs);
         }
     }
-    if (modelJobIsTerminal(job) && currentAppView === 'inference') {
+    if (job.state === 'ready' && !artifactChanged && currentAppView === 'inference') {
         refreshActiveInferenceTab();
     }
     updateInferencePolling();

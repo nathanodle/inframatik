@@ -405,6 +405,61 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'Profiles tab should load selected worker inference state through one overview request'
                 );
 
+                const readyModelJobResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        selectedNodeId = 'self-node';
+                        selfNodeId = 'self-node';
+                        isMaster = false;
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'models';
+                        inferenceModelData = { artifacts: [], jobs: [] };
+                        inferenceStorageData = {};
+                        refreshActiveInferenceTab = async function() { calls.push(['refreshActiveInferenceTab']); };
+                        handleModelJobEvent({
+                            id: 'mdl-ready',
+                            kind: 'import',
+                            artifact_id: 'qwen-ready',
+                            snapshot: 'v1',
+                            source: { type: 'local', path: '/models/qwen.gguf' },
+                            state: 'ready',
+                            progress: 100,
+                            artifact: {
+                                id: 'qwen-ready',
+                                display_name: 'Qwen Ready',
+                                manifest_display_name: 'Qwen Ready',
+                                kind: 'gguf',
+                                format: 'gguf',
+                                active_snapshot: 'v1',
+                                active_snapshot_state: 'ready',
+                                size_bytes: 4096,
+                                files_count: 1,
+                                source: { type: 'local', path: '/models/qwen.gguf' },
+                                snapshots: { v1: { state: 'ready' } },
+                                current_root: true,
+                                path_exists: true,
+                            },
+                        });
+                        return {
+                            calls,
+                            artifacts: inferenceModelData.artifacts.map(item => item.id),
+                            jobs: inferenceModelData.jobs.map(item => item.id),
+                            inventoryHtml: document.getElementById('models-list').innerHTML,
+                            summaryHtml: document.getElementById('model-storage-summary').innerHTML,
+                            modelOptions: document.getElementById('profile-model').innerHTML,
+                        };
+                    })()
+                `, context);
+                assert(
+                    !readyModelJobResult.calls.some(call => call[0] === 'refreshActiveInferenceTab') &&
+                    readyModelJobResult.artifacts.includes('qwen-ready') &&
+                    readyModelJobResult.jobs.includes('mdl-ready') &&
+                    readyModelJobResult.inventoryHtml.includes('Qwen Ready') &&
+                    readyModelJobResult.summaryHtml.includes('Models') &&
+                    readyModelJobResult.modelOptions.includes('qwen-ready@v1'),
+                    'ready model job events should patch inventory locally without refreshing the active tab'
+                );
+
                 const profileDetailResult = await vm.runInContext(`
                     (async () => {
                         const localCalls = [];
@@ -2072,6 +2127,7 @@ def test_static_inference_model_ui_assets_present():
     assert "model_job" in app_js
     assert "handleModelJobEvent" in app_js
     assert "handleModelJobEvent(msg.job, msg)" in app_js
+    assert "mergeModelArtifactFromJob" in app_js
     assert "profileJsonValue" in app_js
     assert "renderInferenceGpuHints" in app_js
     assert "profileConfigChips" in app_js

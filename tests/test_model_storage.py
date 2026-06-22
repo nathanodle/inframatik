@@ -127,6 +127,10 @@ def test_local_import_copies_gguf_and_writes_manifest(tmp_path: Path):
             )
             finished = await _wait_for_job(job["id"])
             assert finished["state"] == "ready"
+            assert finished["artifact"]["id"] == "tiny-gguf"
+            assert finished["artifact"]["active_snapshot"] == "v1"
+            assert finished["artifact"]["active_snapshot_state"] == "ready"
+            assert finished["artifact"]["files_count"] == 1
             manifest = model_storage.get_manifest("tiny-gguf", "v1")
             assert manifest["schema_version"] == 1
             assert manifest["kind"] == "gguf"

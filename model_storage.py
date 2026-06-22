@@ -1102,6 +1102,7 @@ async def _hash_and_commit_payload(
         }
         artifacts[artifact_id] = artifact
         _save_registry(registry)
+        artifact_summary = next((item for item in _artifact_list(registry) if item.get("id") == artifact_id), dict(artifact))
     _patch_job(
         job_id,
         state="ready",
@@ -1112,6 +1113,7 @@ async def _hash_and_commit_payload(
         finished_at=_now(),
         error=None,
         manifest_path=str(manifest_path),
+        artifact=artifact_summary,
         cleanup=cleanup,
         cleanup_error=cleanup_error,
     )
