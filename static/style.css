@@ -1306,6 +1306,33 @@ body {
     font-weight: 700;
 }
 
+.launcher-validation-suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid rgba(59, 130, 246, 0.22);
+    border-radius: var(--radius-sm);
+    background: rgba(59, 130, 246, 0.07);
+}
+
+.launcher-validation-suggestion-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.launcher-validation-suggestion-row code {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
 .launcher-validation-output {
     max-height: 220px;
     margin-top: 10px;

@@ -22,6 +22,10 @@ _SECRET_KEY_RE = re.compile(r"(secret|token|password|passwd|api[_-]?key|credenti
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:secret|token|password|passwd|api[_-]?key|credential|auth|bearer)[A-Za-z0-9_]*)=([^\s]+)"
 )
+_MISSING_SHARED_LIBRARY_RE = re.compile(
+    r"(?P<library>[A-Za-z0-9_.+-]+\.so(?:\.\d+)*)[:\s]+cannot open shared object file",
+    re.IGNORECASE,
+)
 RUNTIME_PROBE_TIMEOUT_SECONDS = 12
 _lock = threading.RLock()
 
@@ -354,6 +358,35 @@ def _redact_output(text: str) -> str:
     return _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", text or "")
 
 
+def _launcher_venv_root(launcher: dict) -> Optional[Path]:
+    executable = Path(launcher.get("executable") or "").expanduser()
+    return executable.parent.parent if executable.parent.name == "bin" else None
+
+
+def _runtime_env_suggestions(launcher: dict, output: str) -> dict[str, str]:
+    venv_root = _launcher_venv_root(launcher)
+    if not venv_root or not venv_root.exists():
+        return {}
+    library_dirs: list[str] = []
+    for match in _MISSING_SHARED_LIBRARY_RE.finditer(output or ""):
+        library = match.group("library")
+        matches = sorted(venv_root.glob(f"lib/python*/site-packages/nvidia/**/{library}"))
+        for path in matches:
+            if not path.is_file():
+                continue
+            directory = str(path.parent)
+            if directory not in library_dirs:
+                library_dirs.append(directory)
+    if not library_dirs:
+        return {}
+    existing = str((launcher.get("env") or {}).get("LD_LIBRARY_PATH") or "")
+    existing_parts = [part for part in existing.split(":") if part]
+    next_parts = [part for part in library_dirs if part not in existing_parts]
+    if not next_parts:
+        return {}
+    return {"LD_LIBRARY_PATH": ":".join([*next_parts, *existing_parts])}
+
+
 async def validate_launcher_runtime(launcher_id: str, timeout: float = RUNTIME_PROBE_TIMEOUT_SECONDS) -> dict:
     launcher = get_launcher(launcher_id, include_secret_env=True)
     path_result = validate_launcher_path(launcher_id)
@@ -368,6 +401,7 @@ async def validate_launcher_runtime(launcher_id: str, timeout: float = RUNTIME_P
         "timed_out": False,
         "elapsed_ms": None,
         "output": "",
+        "suggested_env": {},
     }
     result["runtime"] = runtime
     if not path_result.get("valid"):
@@ -398,6 +432,7 @@ async def validate_launcher_runtime(launcher_id: str, timeout: float = RUNTIME_P
         runtime["code"] = proc.returncode
         output = stdout.decode(errors="replace").strip()
         runtime["output"] = _redact_output(output[-8000:])
+        runtime["suggested_env"] = _runtime_env_suggestions(launcher, runtime["output"])
     except OSError as e:
         runtime["output"] = str(e)
         errors.append(f"Runtime probe could not start: {e}")
@@ -405,6 +440,8 @@ async def validate_launcher_runtime(launcher_id: str, timeout: float = RUNTIME_P
     runtime["elapsed_ms"] = int((time.monotonic() - started) * 1000)
     if runtime["code"] not in (0, None) and not runtime["timed_out"]:
         errors.append(f"Runtime probe exited with code {runtime['code']}")
+    if runtime["suggested_env"]:
+        errors.append("Runtime dependency was found inside the venv; add the suggested launcher env and validate again.")
     runtime["valid"] = not errors
     result["errors"] = errors
     result["valid"] = not errors

@@ -4916,6 +4916,24 @@ function launcherValidationBadge(label, ok) {
     return `<span class="model-badge ${ok ? 'green' : 'red'}">${esc(label)}</span>`;
 }
 
+function renderLauncherValidationSuggestions(runtime) {
+    const suggestions = runtime.suggested_env || {};
+    const rows = Object.entries(suggestions);
+    if (!rows.length) return '';
+    return `
+        <div class="launcher-validation-suggestions">
+            <div class="launcher-card-title">Suggested Env</div>
+            <div class="launcher-card-meta">Add these launcher env values, save, then validate again.</div>
+            ${rows.map(([key, value]) => `
+                <div class="launcher-validation-suggestion-row">
+                    <code>${esc(key)}=${esc(value)}</code>
+                    ${copyButton(`${key}=${value}`, 'Copy')}
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
 function renderLauncherValidation(result) {
     const runtime = result.runtime || {};
     const executable = result.executable || {};
@@ -4943,6 +4961,7 @@ function renderLauncherValidation(result) {
             </div>
             ${command ? `<div class="launcher-command-preview">${esc(command)}</div>` : ''}
             ${errors.length ? `<div class="launcher-validation-errors">${errors.map(error => `<div>${esc(error)}</div>`).join('')}</div>` : ''}
+            ${renderLauncherValidationSuggestions(runtime)}
             ${runtime.output ? `<pre class="launcher-validation-output">${esc(runtime.output)}</pre>` : ''}
         </div>
     `;

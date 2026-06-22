@@ -1712,6 +1712,32 @@ def test_app_js_cloudflare_section_gating_by_role():
                     !launcherPatchResult.afterDeleteOptions.includes('vllm-main'),
                     'launcher save/update/delete should patch local launcher state without reloading the launcher registry'
                 );
+
+                const launcherValidationSuggestionHtml = vm.runInContext(`
+                    renderLauncherValidation({
+                        valid: false,
+                        errors: ['Runtime dependency was found inside the venv; add the suggested launcher env and validate again.'],
+                        executable: { path: '/home/aiml/vllm/venv/bin/vllm', exists: true, is_file: true, executable: true },
+                        working_dir: null,
+                        runtime: {
+                            checked: true,
+                            valid: false,
+                            code: 7,
+                            elapsed_ms: 123,
+                            command_preview: ['/home/aiml/vllm/venv/bin/vllm', '--help'],
+                            suggested_env: { LD_LIBRARY_PATH: '/home/aiml/vllm/venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib' },
+                            output: 'ImportError: libcudart.so.12',
+                        },
+                    });
+                `, context);
+                assert(
+                    launcherValidationSuggestionHtml.includes('Suggested Env') &&
+                    launcherValidationSuggestionHtml.includes('LD_LIBRARY_PATH') &&
+                    launcherValidationSuggestionHtml.includes('nvidia/cuda_runtime/lib') &&
+                    launcherValidationSuggestionHtml.includes('data-copy=') &&
+                    launcherValidationSuggestionHtml.includes('copyText(this.dataset.copy, this)'),
+                    'launcher validation should render suggested env values with copy controls'
+                );
             })().catch((error) => {
                 console.error(error.stack || error.message);
                 process.exit(1);
@@ -2864,6 +2890,7 @@ def test_static_inference_model_ui_assets_present():
     assert "validateLauncher" in app_js
     assert "validate?runtime=true" in app_js
     assert "renderLauncherValidation" in app_js
+    assert "renderLauncherValidationSuggestions" in app_js
     assert "cleanModelJobStaging" in app_js
     assert "modelJobStagingCleaned" in app_js
     assert "showStartedModelJob" in app_js
@@ -2878,6 +2905,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".launcher-preset-row" in style_css
     assert ".launcher-validation-panel" in style_css
     assert ".launcher-validation-output" in style_css
+    assert ".launcher-validation-suggestions" in style_css
     assert ".profile-card" in style_css
     assert ".inference-live-status" in style_css
     assert ".inference-header-controls" in style_css

@@ -142,6 +142,31 @@ def test_launcher_runtime_validation_reports_probe_failure(tmp_path: Path):
         assert "HF_TOKEN=<redacted>" in result["runtime"]["output"]
 
 
+def test_launcher_runtime_validation_suggests_venv_library_path(tmp_path: Path):
+    with _temp_launchers(tmp_path):
+        venv = tmp_path / "venv"
+        exe = venv / "bin" / "vllm"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("#!/bin/sh\necho 'ImportError: libcudart.so.12: cannot open shared object file' >&2\nexit 7\n")
+        exe.chmod(exe.stat().st_mode | 0o111)
+        cuda_lib = venv / "lib" / "python3.12" / "site-packages" / "nvidia" / "cuda_runtime" / "lib"
+        cuda_lib.mkdir(parents=True)
+        (cuda_lib / "libcudart.so.12").write_text("")
+        inference_launchers.create_launcher(
+            launcher_id="vllm-main",
+            display_name="vllm",
+            engine="vllm",
+            executable=str(exe),
+            base_args=["serve"],
+        )
+
+        result = _run(inference_launchers.validate_launcher_runtime("vllm-main", timeout=2))
+
+        assert result["valid"] is False
+        assert result["runtime"]["suggested_env"]["LD_LIBRARY_PATH"] == str(cuda_lib)
+        assert any("suggested launcher env" in error for error in result["errors"])
+
+
 def test_launcher_update_and_delete_reference_checks(tmp_path: Path):
     with _temp_launchers(tmp_path) as config_dir:
         exe = tmp_path / "llama-server"
