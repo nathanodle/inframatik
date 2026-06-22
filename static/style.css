@@ -1575,10 +1575,51 @@ body {
     margin-top: 10px;
 }
 
-.profile-actions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
+.profile-action-bar {
+    display: grid;
+    grid-template-columns: minmax(210px, 0.95fr) minmax(280px, 1.35fr) minmax(210px, 0.9fr);
+    gap: 10px;
     margin-top: 12px;
+    align-items: stretch;
+}
+
+.profile-action-group {
+    min-width: 0;
+    padding: 9px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.profile-action-group > span {
+    display: block;
+    margin-bottom: 7px;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.profile-action-group.operate {
+    border-color: rgba(59, 130, 246, 0.18);
+    background: rgba(59, 130, 246, 0.055);
+}
+
+.profile-action-group.manage {
+    border-color: rgba(255, 255, 255, 0.07);
+}
+
+.profile-action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.profile-action-buttons .btn {
+    min-height: 30px;
+    padding: 6px 9px;
+    white-space: nowrap;
 }
 
 .profile-preview-panel {
@@ -3211,6 +3252,10 @@ body {
     }
 
     .profile-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .profile-action-bar {
         grid-template-columns: 1fr;
     }
 

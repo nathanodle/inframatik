@@ -2687,18 +2687,33 @@ function renderProfileCard(profile) {
             ${configChips.length ? `<div class="profile-config-chips">${configChips.map(chip => `<span>${esc(chip)}</span>`).join('')}</div>` : ''}
             ${profile.restart_required ? '<div class="profile-warning">Restart required for saved changes.</div>' : ''}
             ${renderProfileOperationPanel(op || failedOp, pendingAction, { context: `profile-${profile.id}` })}
-            <div class="model-actions profile-actions">
-                <button type="button" class="btn" onclick="editInferenceProfile(${profileIdArg})">Edit</button>
-                <button type="button" class="btn" onclick="loadProfileDetails(${profileIdArg})">Details</button>
-                <button type="button" class="btn primary" data-profile-id="${profileIdData}" data-profile-action="start"${disabled}>Start</button>
-                <button type="button" class="btn" data-profile-id="${profileIdData}" data-profile-action="stop"${disabled}>Stop</button>
-                <button type="button" class="btn" data-profile-id="${profileIdData}" data-profile-action="restart"${disabled}>Restart</button>
-                <button type="button" class="btn" onclick="loadProfileConnect(${profileIdArg})">Connect</button>
-                <button type="button" class="btn" onclick="loadProfileTest(${profileIdArg})">Test</button>
-                <button type="button" class="btn" onclick="loadProfileHealth(${profileIdArg})">Health</button>
-                <button type="button" class="btn" onclick="loadProfileLogs(${profileIdArg})">Logs</button>
-                <button type="button" class="btn" onclick="exportInferenceProfile(${profileIdArg})">Export</button>
-                <button type="button" class="btn danger" onclick="deleteInferenceProfile(${profileIdArg},${labelArg})">Delete</button>
+            <div class="profile-action-bar" aria-label="Profile actions">
+                <div class="profile-action-group operate">
+                    <span>Operate</span>
+                    <div class="profile-action-buttons">
+                        <button type="button" class="btn primary" data-profile-id="${profileIdData}" data-profile-action="start"${disabled}>Start</button>
+                        <button type="button" class="btn" data-profile-id="${profileIdData}" data-profile-action="stop"${disabled}>Stop</button>
+                        <button type="button" class="btn" data-profile-id="${profileIdData}" data-profile-action="restart"${disabled}>Restart</button>
+                    </div>
+                </div>
+                <div class="profile-action-group inspect">
+                    <span>Inspect</span>
+                    <div class="profile-action-buttons">
+                        <button type="button" class="btn" onclick="loadProfileDetails(${profileIdArg})">Details</button>
+                        <button type="button" class="btn" onclick="loadProfileConnect(${profileIdArg})">Connect</button>
+                        <button type="button" class="btn" onclick="loadProfileTest(${profileIdArg})">Test</button>
+                        <button type="button" class="btn" onclick="loadProfileHealth(${profileIdArg})">Health</button>
+                        <button type="button" class="btn" onclick="loadProfileLogs(${profileIdArg})">Logs</button>
+                    </div>
+                </div>
+                <div class="profile-action-group manage">
+                    <span>Manage</span>
+                    <div class="profile-action-buttons">
+                        <button type="button" class="btn" onclick="editInferenceProfile(${profileIdArg})">Edit</button>
+                        <button type="button" class="btn" onclick="exportInferenceProfile(${profileIdArg})">Export</button>
+                        <button type="button" class="btn danger" onclick="deleteInferenceProfile(${profileIdArg},${labelArg})">Delete</button>
+                    </div>
+                </div>
             </div>
             <div class="profile-card-detail" id="profile-detail-${esc(profile.id)}"></div>
         </div>

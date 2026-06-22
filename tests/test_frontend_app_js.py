@@ -1005,6 +1005,30 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'active operation updates should replace only the touched profile card and preserve open detail'
                 );
 
+                const profileCardActionHtml = vm.runInContext(`
+                    renderProfileCard({
+                        id: 'qwen-actions',
+                        display_name: 'Qwen Actions',
+                        engine: 'vllm',
+                        engine_launcher_id: 'vllm-main',
+                        state: 'stopped',
+                        model: { artifact_id: 'qwen', snapshot: 'main' },
+                        instances: [{ index: 0, host: '127.0.0.1', port: 10000, gpu_ids: [0] }],
+                    });
+                `, context);
+                assert(
+                    profileCardActionHtml.includes('profile-action-bar') &&
+                    profileCardActionHtml.includes('profile-action-group operate') &&
+                    profileCardActionHtml.includes('profile-action-group inspect') &&
+                    profileCardActionHtml.includes('profile-action-group manage') &&
+                    profileCardActionHtml.indexOf('Operate') < profileCardActionHtml.indexOf('Inspect') &&
+                    profileCardActionHtml.indexOf('Inspect') < profileCardActionHtml.indexOf('Manage') &&
+                    profileCardActionHtml.includes('data-profile-action="start"') &&
+                    profileCardActionHtml.includes('loadProfileConnect') &&
+                    profileCardActionHtml.includes('deleteInferenceProfile'),
+                    'profile cards should group operate, inspect, and manage actions'
+                );
+
                 const deleteProfileResult = await vm.runInContext(`
                     (async () => {
                         const calls = [];
@@ -2627,6 +2651,9 @@ def test_static_inference_model_ui_assets_present():
     assert "renderProfileCard" in app_js
     assert "updateInferenceProfileCard" in app_js
     assert "replaceWith(next)" in app_js
+    assert "profile-action-group operate" in app_js
+    assert "profile-action-group inspect" in app_js
+    assert "profile-action-group manage" in app_js
     assert "renderSystemdPreview" in app_js
     assert "renderCloudflarePreview" in app_js
     assert "renderCommandEnv" in app_js
@@ -2706,6 +2733,9 @@ def test_static_inference_model_ui_assets_present():
     assert ".launcher-validation-panel" in style_css
     assert ".launcher-validation-output" in style_css
     assert ".profile-card" in style_css
+    assert ".profile-action-bar" in style_css
+    assert ".profile-action-group" in style_css
+    assert ".profile-action-buttons" in style_css
     assert ".profile-editor-nav" in style_css
     assert ".profile-editor-tab.active" in style_css
     assert ".profile-editor-tab.has-blockers" in style_css
