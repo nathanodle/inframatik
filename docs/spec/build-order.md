@@ -1,8 +1,8 @@
-# inframatik Build Order (Retrospective)
+# inframatik Build Order (Retrospective + Planned)
 
-Status: **Complete**
+Status: **Complete for implemented phases; Phase 4 inference plan in draft**
 
-This document records the actual implementation order of inframatik, reconstructed from the git history. All steps are complete.
+This document records the actual implementation order of inframatik, reconstructed from the git history, plus the planned build order for the draft local inference platform.
 
 ---
 
@@ -268,6 +268,210 @@ Three rounds of security hardening addressing different attack surfaces.
 
 ---
 
+## Step 9: Local Inference Platform
+
+**Status:** Planned
+**Depends on:** Steps 1-8, especially service management, clustering, Cloudflare, authentication, and MCP
+
+This step adds managed local LLM inference profiles for llama.cpp, vLLM, and SGLang. The implementation should be staged so each layer is testable before slower and riskier parts such as Cloudflare provisioning, long model startup, and MCP mutations.
+
+### Build order
+
+1. **Model storage backend basics**
+   - Configurable per-node model store root.
+   - `models.json` registry, manifest schema v1, artifact/snapshot paths.
+   - Local import, direct URL download, Hugging Face acquisition, immediate SHA-256 hashing.
+   - Download/import job records with interrupted-job recovery and explicit staging cleanup.
+
+2. **Model storage UI**
+   - Node-local model inventory.
+   - Download/import forms, job progress, verification, delete/reference checks.
+   - Master view proxies model operations to the selected worker.
+
+3. **Engine launcher registry**
+   - `inference_engine_launchers.json`.
+   - User-provided executable path, base argv token rows, working directory, env rows.
+   - Path validation and redacted launcher preview.
+
+4. **Profile preview planner and command rendering**
+   - Side-effect-free `POST /api/inference/profiles/preview`.
+   - Validate profile shape, model refs, launchers, ports, GPU placement, exposure intent, raw args/env.
+   - Render argv/env/systemd previews for llama.cpp, vLLM, and SGLang.
+   - Return blockers, warnings, resolved instance plan, port/GPU plan, and restart-required state.
+
+5. **Profile registry and generated systemd units**
+   - `inference_profiles.json`, `inference_secrets.json`, `inference_cleanup.json`.
+   - Atomic writes and per-profile/node planning locks.
+   - Stable port reservations and GPU assignments.
+   - Unit generation/re-rendering without starting processes yet.
+
+6. **Inference operation runner**
+   - `inference_operations.json`.
+   - Start/stop/restart, all-or-nothing profile start/restart, per-instance lifecycle.
+   - Progress records, `409` active-operation conflicts, interrupted-operation reconciliation.
+   - Journald logs, TCP readiness, non-generative health checks.
+
+7. **Inference UI**
+   - Top-level Inference area with Profiles, Models, Launchers, and Jobs.
+   - Profile create/edit flow with grouped fields, dry-run preview, GPU placement view, command/unit diff.
+   - Profile detail with lifecycle, instances, logs, health, metrics, and manual test.
+
+8. **Cloudflare exposure and client bundles**
+   - Single-instance Cloudflare hostname exposure.
+   - Service Auth Access policy with generate-new, rotate, and retire service-token flows.
+   - Engine API key generation/rotation.
+   - Client connection bundles with rendered curl, Python OpenAI SDK, and LiteLLM examples.
+
+9. **Inference MCP surface**
+   - Read resources for nodes, hardware, models, launchers, profiles, operations, logs, and client bundles.
+   - Render/validate tools that call the same preview planner.
+   - Write/lifecycle/model tools with scoped `mcp_` tokens.
+   - No browser approval in MVP; explicit scopes are the permission boundary.
+
+### Acceptance criteria
+
+Each stage should leave the system in a usable, testable state before the next stage starts.
+
+1. **Model storage backend basics**
+   - Model store root can be read and updated through an authenticated API.
+   - `models.json` and artifact manifests are created with schema versions.
+   - Local import copies GGUF files and HF-style directories into managed storage.
+   - Hugging Face and direct URL downloads write only into staging until complete.
+   - Every managed file is SHA-256 hashed before the artifact becomes `ready`.
+   - Active job records survive process state changes as JSON; queued/running/hash/verify jobs become `failed_interrupted` on app restart.
+   - Verification and delete APIs enforce manifest integrity and profile-reference checks.
+
+2. **Model storage UI**
+   - The Models view lists artifacts, snapshots, source, size, format, state, and current/previous-root status.
+   - Local import, Hugging Face download, and direct URL download can be started from the UI.
+   - Active and recent jobs show progress, current file, hashing/verifying state, failure reason, and interrupted state.
+   - Verify, delete, clean staging, and root-change actions use confirmation where destructive.
+   - On a master, model actions execute on the selected worker and refresh that worker's inventory.
+
+3. **Engine launcher registry**
+   - Launchers can be created, listed, updated, validated, and deleted through API and UI.
+   - Executable path validation runs on the target node and reports missing/not-executable clearly.
+   - Base args are stored as ordered argv tokens, not shell strings.
+   - Env vars are stored as key/value rows and redacted in previews/resources.
+   - Deleting a launcher blocks running profile references, confirms stopped references, and never deletes files from disk.
+
+4. **Profile preview planner and command rendering**
+   - `POST /api/inference/profiles/preview` has no side effects.
+   - Preview validates model refs, launchers, ports, GPU placement, exposure mode, raw args, env, and required fields.
+   - Preview returns blockers, warnings, resolved instances, port plan, GPU plan, command/env preview, systemd preview, Cloudflare plan, and restart-required state.
+   - llama.cpp, vLLM, and SGLang command renderers produce argv arrays and redacted env without shell splitting.
+   - Save/create endpoints re-run the same planner under lock before committing state.
+
+5. **Profile registry and generated systemd units**
+   - `inference_profiles.json`, `inference_secrets.json`, and `inference_cleanup.json` use atomic JSON writes.
+   - Profile create/update/delete preserves stable port and GPU assignments unless the user changes placement or port policy.
+   - Systemd user units are generated safely with deterministic names and without starting processes.
+   - Running-profile edits distinguish display-only changes from restart-required operational changes.
+   - Registry, secret, cleanup, port, and generated-unit state remain consistent across app restart.
+
+6. **Inference operation runner**
+   - Start/stop/restart endpoints return operation records for long-running work.
+   - Profile start/restart is all-or-nothing and rolls back started units on failed readiness.
+   - Per-instance lifecycle works without hiding aggregate profile state.
+   - Operations expose progress, current step, per-instance result, error detail, and log pointers.
+   - Same-profile mutating conflicts return `409` with the active operation ID.
+   - Queued/running operations become `failed_interrupted` after app restart and live systemd/profile state is reconciled.
+   - Logs, TCP readiness, non-generative health, and manual test APIs work locally and through master-to-worker proxying.
+
+7. **Inference UI**
+   - A top-level Inference area contains Profiles, Models, Launchers, and Jobs.
+   - Profile create/edit uses grouped sections, live dry-run validation, GPU placement preview, and command/unit diff.
+   - Profile detail shows status, instances, endpoint, lifecycle actions, logs, health, metrics, manual test, and export.
+   - Jobs view shows model jobs and inference operations with progress and interrupted-state handling.
+   - Worker selection on a master scopes all inference UI actions to the selected node.
+   - UI text and controls remain usable on desktop and mobile viewports.
+
+8. **Cloudflare exposure and client bundles**
+   - Single-instance profiles can create/remove Cloudflare exposure with tunnel route, DNS, Access app, and Service Auth policy.
+   - Inframatik can generate new Cloudflare Access service tokens, rotate existing attached tokens, and retire tokens from a profile policy.
+   - One-time Client Secrets and engine API keys are displayed only in the immediate response/session and are never persisted.
+   - Failed Cloudflare cleanup creates retryable cleanup records without blocking local profile deletion.
+   - Client bundles render local, LAN, and single-instance Cloudflare connection examples for curl, Python OpenAI SDK, and LiteLLM.
+   - Replicated profile bundles require an explicit instance target; no implicit load-balanced endpoint is exposed in MVP.
+
+9. **Inference MCP surface**
+   - Scoped `mcp_` tokens support read/render/write/lifecycle/model scopes and node/profile restrictions.
+   - MCP resources expose nodes, hardware, models, launchers, profiles, operations, logs, and client bundle metadata without raw secrets.
+   - Validate/render tools call the same side-effect-free preview planner used by REST/UI.
+   - Write and lifecycle tools call the same backend services as the UI and return operation IDs for long-running work.
+   - Model download/import tools enforce the same URL safety, import allowlist, and max-size rules as REST/UI.
+   - Cloudflare service-token and engine-key tools return raw secrets only in the immediate tool result.
+
+### Test strategy
+
+Testing should follow the build order. Prefer deterministic unit and API tests for JSON registries, planners, renderers, and auth behavior. Keep real systemd, GPU, and Cloudflare checks as explicit integration/manual tests unless a local fake is straightforward.
+
+1. **Model storage backend basics**
+   - Unit tests: manifest read/write, artifact ID validation, safe archive extraction, URL safety checks, hash calculation, root-change rules, deletion/reference checks.
+   - API tests: configure root, local import from temp directories, direct URL download via local test server, job status, verify, delete, interrupted-job startup reconciliation.
+   - Manual/integration: large file download/import on a real model disk and failed/interrupted staging cleanup.
+
+2. **Model storage UI**
+   - Frontend tests: rendering empty inventory, ready artifacts, failed/interrupted jobs, previous-root artifacts, destructive confirmation states.
+   - API-backed smoke test: start a small local import, watch job progress, verify artifact appears, clean staging for a synthetic interrupted job.
+   - Manual master/worker check: selected-worker model inventory and job actions proxy to the worker.
+
+3. **Engine launcher registry**
+   - Unit tests: argv token storage, env key validation, redaction, launcher reference checks, deletion blockers.
+   - API tests: create/update/list/validate/delete launchers using temp executable and non-executable paths.
+   - UI smoke: add launcher, validate path, edit args/env, see redacted preview, deletion warning for referenced launcher.
+
+4. **Profile preview planner and command rendering**
+   - Unit tests: command renderers for llama.cpp, vLLM, and SGLang; raw arg ordering; env resolution; redaction; invalid field blockers.
+   - Planner tests: port collision, GPU claim conflicts, shared GPU warnings, replicated instance layout, restart-required diffing, Cloudflare plan warnings.
+   - API tests: preview has no filesystem/systemd/Cloudflare side effects and save re-plans under lock.
+
+5. **Profile registry and generated systemd units**
+   - Unit tests: profile schema migration hook, atomic write helper, stable port/GPU preservation, systemd unit name/content generation, secret metadata redaction.
+   - API tests: create/update/delete profile, generated unit preview/write, running-profile edit classification, cleanup record creation path with mocked Cloudflare failure.
+   - Manual: inspect generated user unit files for a harmless command profile before enabling lifecycle operations.
+
+6. **Inference operation runner**
+   - Unit tests: operation state transitions, progress updates, same-profile conflict detection, interrupted-operation reconciliation, all-or-nothing rollback logic with fake systemd.
+   - API tests: start/stop/restart with fake readiness server, TCP timeout path, log endpoint with fake journal adapter, `409` active-operation response.
+   - Manual/integration: real `systemctl --user` start/stop/restart on a tiny local HTTP test process; optional smoke with a small llama.cpp/vLLM/SGLang server when available.
+
+7. **Inference UI**
+   - Frontend tests: tab navigation, profile list states, profile editor validation rendering, GPU selector layout, operation progress, logs/test panels, mobile/desktop text fit.
+   - Playwright smoke: create a launcher/profile against mocked APIs, run preview, save, observe operation progress, open Connect/Logs/Health/Test.
+   - Manual: use a real node and at least one worker to verify selected-node context stays correct.
+
+8. **Cloudflare exposure and client bundles**
+   - Unit tests: Access Service Auth policy rendering with multiple service tokens, one-time secret redaction, client bundle examples, replicated-bundle explicit instance requirement.
+   - API tests with mocked Cloudflare client: create/remove exposure, generate-new token, rotate token, retire token, failed cleanup retry record, rendered bundle with one-time secrets.
+   - Manual Cloudflare check: one single-instance profile creates DNS/tunnel/Access app/policy, client headers work, rotate/generate/retire behave as documented, cleanup removes owned resources.
+
+9. **Inference MCP surface**
+   - Unit tests: scope authorization, node/profile restrictions, secret redaction in resources, tool payload validation.
+   - MCP/API tests: render/validate tools match REST preview output; write/lifecycle tools call same services and return operation IDs; model download tools enforce URL/import safety.
+   - Manual agent check: Codex/Claude can inspect hardware/models/launchers, ask for a profile preview, and apply a stopped profile change with an appropriately scoped `mcp_` token.
+
+Regression checks after each stage:
+
+1. Existing service management tests still pass.
+2. Existing Cloudflare setup/dashboard tests still pass.
+3. Existing MCP service-token behavior remains scoped to `svc_` tokens.
+4. `git diff --check` and frontend static tests pass.
+5. No API/resource response exposes raw secrets except documented one-time generation/rotation responses.
+
+### Build-order rationale
+
+Model storage comes first because every profile needs a stable local model reference. Launchers come before profiles because command rendering depends on them. The preview planner comes before registry writes and systemd so the UI and MCP can validate drafts without side effects. Cloudflare and client bundles come after local lifecycle because they depend on stable ports, endpoints, secrets, and profile state. MCP comes last so it can wrap the same backend services used by the UI instead of introducing a second implementation path.
+
+### Relevant specs
+
+- [Model Storage](model-storage.md) -- artifact store, downloads, imports, manifests
+- [Inference](inference.md) -- profiles, launchers, lifecycle, UI, Cloudflare exposure, MCP
+- [Cloudflare Integration](cloudflare.md) -- tunnels, Access apps, Service Auth service tokens
+- [AI Agent Integration](ai-agents.md) -- MCP token scopes and inference tools
+
+---
+
 ## Dependency Graph
 
 ```
@@ -286,9 +490,11 @@ Step 1: Core System + Services
   │                             └── Step 7: Security Hardening
   │                                   │
   │                                   └── Step 8: Code Cleanup + Docs
+  │                                         │
+  │                                         └── Step 9: Local Inference Platform (planned)
 ```
 
-Each step required the previous steps to exist. Clustering needs services and system metrics to proxy. CF integration needs clustering for worker tunnel setup. Setup UX needs all features to configure them. Auth needs setup to create passwords. Agent platform needs auth for service tokens. Security hardening needs all features to audit. Cleanup and docs come last.
+Each completed step required the previous steps to exist. Clustering needs services and system metrics to proxy. CF integration needs clustering for worker tunnel setup. Setup UX needs all features to configure them. Auth needs setup to create passwords. Agent platform needs auth for service tokens. Security hardening needs all features to audit. Cleanup and docs followed the completed core. The planned local inference platform builds on the completed service, cluster, Cloudflare, auth, and MCP foundations.
 
 ---
 

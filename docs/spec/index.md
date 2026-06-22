@@ -11,7 +11,7 @@ A FastAPI + vanilla JS application that monitors system metrics, manages service
 ### Planning
 | Document | Status | Description |
 |----------|--------|-------------|
-| [Build Order](build-order.md) | ✅ Complete | Implementation order (retrospective) |
+| [Build Order](build-order.md) | ✅ Complete + 🔲 Draft | Completed implementation order plus planned local inference build sequence |
 
 ### Shared Specs
 | Document | Status | Description |
@@ -29,6 +29,8 @@ A FastAPI + vanilla JS application that monitors system metrics, manages service
 | [Cloudflare Integration](cloudflare.md) | ✅ Complete | Tunnels, DNS, Access apps, dashboard protection, setup wizard |
 | [Authentication](authentication.md) | ✅ Complete | Password, sessions, CF JWT, API keys, service tokens |
 | [AI Agent Integration](ai-agents.md) | ✅ Complete | MCP server, CLI tool, .inframatik, harness detection |
+| [Model Storage](model-storage.md) | 🔲 Draft | Managed local model artifact store, downloads, imports, manifests |
+| [Inference](inference.md) | 🔲 Draft | LLM server profiles for llama.cpp, vLLM, and SGLang |
 
 ---
 
@@ -53,6 +55,15 @@ A FastAPI + vanilla JS application that monitors system metrics, manages service
 - CLI tool (`inframatik init`)
 - Claude Code + Codex integration
 - .inframatik config file with inline instructions
+
+### Phase 4: Local Inference Platform (Draft)
+- Managed model artifact store
+- Model download/import/verification flows
+- User-configured engine launchers
+- Inference profiles for llama.cpp, vLLM, and SGLang
+- Generated systemd user services for inference instances
+- Node-local inference management with master remote control for selected workers
+- MCP-assisted profile validation and configuration
 
 ### Future
 - HTTP MCP endpoint improvements (streaming responses, resource exposure)
@@ -79,3 +90,6 @@ A FastAPI + vanilla JS application that monitors system metrics, manages service
 - [Cloudflare Access API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/access/)
 - [MCP Specification](https://modelcontextprotocol.io/)
 - [systemd User Services](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)
+- [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
+- [vLLM online serving](https://docs.vllm.ai/en/latest/serving/online_serving/)
+- [SGLang](https://github.com/sgl-project/sglang)

@@ -4,7 +4,7 @@
 
 ## Overview
 
-inframatik provides a complete integration path for AI coding agents (Claude Code, Codex) and programmatic clients to deploy and manage services. The system consists of a CLI tool (`inframatik init`) that authenticates, creates a scoped service token, writes a `.inframatik` config file with inline API docs, detects installed agent harnesses, and registers the built-in MCP server. The MCP server implements JSON-RPC 2.0 over HTTP directly in FastAPI with no external SDK dependency, exposing five service management tools scoped to a single service name.
+inframatik provides a complete integration path for AI coding agents (Claude Code, Codex) and programmatic clients to deploy and manage services. The system consists of a CLI tool (`inframatik init`) that authenticates, creates a scoped service token, writes a `.inframatik` config file with inline API docs, detects installed agent harnesses, and registers the built-in MCP server. The current MCP server implements JSON-RPC 2.0 over HTTP directly in FastAPI with no external SDK dependency, exposing five service management tools scoped to a single service name. Draft inference extensions add scoped `mcp_` tokens, inventory resources, validation/render tools, and lifecycle/model operations.
 
 ---
 
@@ -17,6 +17,7 @@ inframatik provides a complete integration path for AI coding agents (Claude Cod
 | [Service Management](service-management.md) | deploy, restart, stop, logs, status -- same functions as REST API |
 | [Backend](backend.md) | FastAPI router, middleware pipeline, request lifecycle |
 | [Clustering](clustering.md) | Install script includes CLI symlink setup |
+| [Inference](inference.md) | MCP extension for AI-assisted inference profile configuration |
 
 ---
 
@@ -266,6 +267,85 @@ Each tool handler calls the same `services.py` functions used by the REST API:
 | stop | `stop_service()` |
 | logs | `get_service_logs()` |
 | status | `list_services()` (filtered by name) |
+
+## Draft Extension: Inference MCP
+
+The existing service-scoped MCP server remains the deployment surface for `.inframatik` projects. Inference management extends the same `/mcp` endpoint, but it should use dedicated MCP tokens with explicit scopes instead of single-service `svc_` tokens because inference profiles, model artifacts, engines, and nodes are not owned by one service.
+
+The inference MCP surface includes read/render/validate tools and scoped mutation tools. Mutation is controlled by explicit `mcp_` token scopes rather than browser approval.
+
+### Inference Resources
+
+MCP resources are planned for read-only inventory. If the current MCP implementation still supports tools only when this lands, these can be exposed as read tools first and upgraded to native resources later.
+
+| Resource | Purpose |
+|----------|---------|
+| `inframatik://nodes` | List known nodes and roles |
+| `inframatik://node/{id}/hardware` | CPU, RAM, GPU model/count/VRAM, driver/runtime hints |
+| `inframatik://node/{id}/models` | Local model artifact inventory and manifest summaries |
+| `inframatik://node/{id}/inference/launchers` | Configured engine launchers, redacted env, and validation summary |
+| `inframatik://node/{id}/inference/profiles` | Profile summaries and current status |
+| `inframatik://node/{id}/inference/profile/{profile_id}` | Full profile config, rendered command, and health summary |
+| `inframatik://node/{id}/inference/profile/{profile_id}/client-bundles` | Saved client bundle metadata and default rendered connection metadata without raw secrets |
+| `inframatik://node/{id}/inference/operations` | Recent inference operations and progress |
+| `inframatik://node/{id}/inference/logs/{profile_id}` | Bounded recent logs |
+| `inframatik://node/{id}/system/metrics` | Current system/GPU utilization snapshot |
+
+### Inference Tools
+
+Read/render tools:
+
+| Tool | Scope | Purpose |
+|------|-------|---------|
+| `validate_inference_profile` | `mcp:inference:render` | Dry-run validate and plan a draft profile using the shared preview planner |
+| `render_inference_command` | `mcp:inference:render` | Return argv/env/systemd preview from the shared no-write planner |
+| `estimate_inference_fit` | `mcp:inference:render` | Best-effort VRAM, context, parallelism, and concurrency fit analysis |
+| `render_inference_client_bundle` | `mcp:inference:render` | Render connection examples for a profile/instance target with optional caller-supplied one-time secrets; never stores secrets |
+| `get_inference_operation` | `mcp:read` | Read one inference operation status/result |
+
+Mutating tools:
+
+| Tool | Scope | Purpose |
+|------|-------|---------|
+| `create_inference_profile` | `mcp:inference:write` | Create a stopped profile |
+| `update_inference_profile` | `mcp:inference:write` | Patch an existing stopped profile |
+| `delete_inference_profile` | `mcp:inference:write` | Delete a stopped profile |
+| `save_inference_client_bundle` | `mcp:inference:write` | Save named client bundle metadata without raw secrets |
+| `delete_inference_client_bundle` | `mcp:inference:write` | Delete named client bundle metadata only |
+| `create_inference_launcher` | `mcp:inference:write` | Create a node-local launcher |
+| `update_inference_launcher` | `mcp:inference:write` | Update launcher path, base args, working directory, or env |
+| `delete_inference_launcher` | `mcp:inference:write` | Delete launcher metadata when reference checks pass; never deletes files from disk |
+| `rotate_inference_api_key` | `mcp:inference:write` | Generate or rotate a profile engine API key. Raw key returned once. |
+| `disable_inference_api_key` | `mcp:inference:write` | Disable a profile engine API key |
+| `generate_cloudflare_service_token` | `mcp:inference:write` | Generate and attach a new Cloudflare Access service token. Raw secret returned once. |
+| `rotate_cloudflare_service_token` | `mcp:inference:write` | Rotate an attached Cloudflare Access service token secret. Raw secret returned once. |
+| `retire_cloudflare_service_token` | `mcp:inference:write` | Remove a service token from a profile policy and optionally delete if owned/unreferenced |
+| `start_inference_profile` | `mcp:inference:lifecycle` | Start generated systemd unit |
+| `stop_inference_profile` | `mcp:inference:lifecycle` | Stop generated systemd unit |
+| `restart_inference_profile` | `mcp:inference:lifecycle` | Restart generated systemd unit |
+| `resolve_model_source` | `mcp:model:read` | Inspect HF/direct/local source and return a file plan |
+| `download_model` | `mcp:model:download` | Start a model download/import job |
+| `verify_model` | `mcp:model:write` | Verify a local artifact |
+| `delete_model` | `mcp:model:write` | Delete a model artifact/snapshot when reference checks pass; never stops profiles automatically |
+
+Write and lifecycle tools that start long-running inference work should return `operation_id`, initial state, and polling guidance instead of blocking until a large model has loaded or Cloudflare provisioning has completed.
+
+### Safety Rules
+
+1. Service MCP tools continue to require `svc_` tokens and remain scoped to one service.
+2. Inference MCP tools require `mcp_` tokens with explicit scope lists.
+3. Read/render tokens cannot create profiles, start processes, download/delete models, edit launchers, rotate keys, or edit files.
+4. Validation/render tools call the same side-effect-free planner as `POST /api/inference/profiles/preview`.
+5. Tool responses should redact secrets and return command previews before lifecycle operations.
+6. Risky settings such as `trust_remote_code`, public exposure, launcher path/env changes, raw args/env, and model downloads must be called out in validation output.
+7. No browser approval is required in MVP; possession of a token with the required explicit scopes authorizes the mutation.
+8. Tokens default to the selected node. Full-cluster tokens are allowed only when explicitly created and should be visually marked.
+9. `mcp:model:download` covers Hugging Face, direct URL, and local import sources; direct URLs require `https`, public targets by default, and max-size enforcement.
+10. Local imports over MCP must be under configured import allowlist roots on the target node.
+11. MCP model downloads never auto-create profiles, auto-start profiles, or auto-enable `trust_remote_code`.
+12. Master-to-worker behavior follows existing proxy rules; workers execute local profile operations and serve inference traffic locally.
+13. Operation resources and `get_inference_operation` must redact secrets and should include log pointers, not unbounded logs.
+14. Cloudflare service-token generation/rotation tools may return a raw Client Secret only in the immediate tool result; stored resources expose metadata only.
 
 ### Error Handling
 

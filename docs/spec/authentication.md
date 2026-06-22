@@ -4,7 +4,7 @@
 
 ## Overview
 
-inframatik supports four authentication methods that coexist within a single middleware pipeline. Browser users authenticate with a password and receive a session token. Cloudflare Access JWTs bypass password login entirely for deployments behind CF Zero Trust. API keys secure worker-to-master communication. Scoped service tokens give AI agents and CI/CD pipelines restricted access to a single service's endpoints, including the MCP server.
+inframatik's current implementation supports four authentication methods that coexist within a single middleware pipeline. Browser users authenticate with a password and receive a session token. Cloudflare Access JWTs bypass password login entirely for deployments behind CF Zero Trust. API keys secure worker-to-master communication. Scoped service tokens give AI agents and CI/CD pipelines restricted access to a single service's endpoints, including the MCP server. Draft inference management adds scoped `mcp_` tokens for node/profile/model operations without changing existing `svc_` service-token behavior.
 
 ---
 
@@ -17,6 +17,7 @@ inframatik supports four authentication methods that coexist within a single mid
 | [Clustering](clustering.md) | API keys for worker registration and heartbeats |
 | [Cloudflare Integration](cloudflare.md) | CF Access apps, team domain, audience tag |
 | [AI Agent Integration](ai-agents.md) | Service tokens for MCP and REST access |
+| [Inference](inference.md) | Scoped MCP tokens for AI-assisted profile configuration |
 
 ---
 
@@ -212,6 +213,80 @@ if scope:
     services = [s for s in services if s.get("name") == scope]
 ```
 
+## Draft Extension: MCP Tokens
+
+Inference MCP needs scope-list tokens rather than service-scoped tokens. Existing `svc_` tokens remain tied to one normal service and continue to authorize the current deployment MCP tools only.
+
+### Format
+
+- **Prefix:** `mcp_`
+- **Body:** 32 random hex bytes (64 hex characters)
+- **Full format:** `mcp_` + 64 hex chars (68 characters total)
+- **Generation:** `secrets.token_hex(32)`
+- **Header:** `Authorization: Bearer mcp_...`
+
+### Scopes
+
+| Scope | Allows |
+|-------|--------|
+| `mcp:read` | Basic node/profile/model read resources |
+| `mcp:logs` | Bounded log resources |
+| `mcp:inference:render` | Validate/render/estimate inference profiles and render client bundles |
+| `mcp:inference:write` | Create/update/delete stopped profiles; manage launchers and client bundles; rotate/disable engine API keys; manage Cloudflare service tokens |
+| `mcp:inference:lifecycle` | Start, stop, and restart profiles |
+| `mcp:model:read` | Resolve model sources and read model inventory |
+| `mcp:model:download` | Start Hugging Face, direct URL, or allowlisted local import jobs |
+| `mcp:model:write` | Verify or delete model artifacts where allowed |
+
+### Storage
+
+MCP tokens are stored in node.json under a separate `mcp_tokens` dict:
+
+```json
+{
+  "mcp_tokens": {
+    "mcp_abc123...": {
+      "name": "profile-helper",
+      "scopes": ["mcp:read", "mcp:inference:render"],
+      "node_ids": ["local"],
+      "profile_ids": [],
+      "created_at": 1709856000,
+      "last_used_at": 1709857000
+    }
+  }
+}
+```
+
+`node_ids` and `profile_ids` are optional allowlists. MVP does not use browser approval for MCP mutation; explicit token scopes are the permission boundary.
+
+Default scoping rules:
+
+1. Tokens created from a selected node default to `node_ids: ["<selected-node-id>"]`.
+2. Tokens created from a profile page default to that selected node and `profile_ids: ["<profile-id>"]` for lifecycle-oriented presets.
+3. Tokens that can create new profiles may leave `profile_ids` empty while still restricting `node_ids`.
+4. Full-cluster tokens are allowed, but must be explicit. Use an empty/missing `node_ids` allowlist only when the admin selects a full-cluster option.
+5. The UI should visually mark full-cluster tokens because they can affect all reachable nodes within their scopes.
+
+### Middleware Behavior
+
+Draft middleware additions:
+
+1. Initialize `request.state.mcp_scopes = []`, `request.state.mcp_node_ids = []`, and `request.state.mcp_profile_ids = []`.
+2. In the Bearer-token branch, check `mcp_` tokens after sessions and before `svc_` tokens.
+3. Valid `mcp_` tokens are allowed only on `/mcp`.
+4. The MCP route enforces tool-specific scopes, node allowlists, and profile allowlists.
+5. MCP token validation never grants normal REST dashboard access.
+
+### Management Endpoints
+
+Draft admin endpoints:
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `GET /api/config/mcp-tokens` | GET | Session/CF JWT | List MCP token metadata without token values |
+| `POST /api/config/mcp-tokens` | POST | Session/CF JWT | Create scoped MCP token. Token is shown once. |
+| `DELETE /api/config/mcp-tokens/{token}` | DELETE | Session/CF JWT | Revoke MCP token immediately |
+
 ---
 
 ## Middleware Flow
@@ -357,6 +432,7 @@ These paths bypass the middleware and implement their own authentication:
 | Session token | (none) | 32 hex bytes | 64 | `secrets.token_hex(32)` |
 | API key | `sdk_` | 32 hex bytes | 68 | `secrets.token_hex(32)` |
 | Service token | `svc_` | 32 hex bytes | 68 | `secrets.token_hex(32)` |
+| MCP token (draft) | `mcp_` | 32 hex bytes | 68 | `secrets.token_hex(32)` |
 | Enrollment token | `enroll-` | 16 hex bytes | 39 | `secrets.token_hex(16)` |
 
 ---
@@ -378,6 +454,15 @@ These paths bypass the middleware and implement their own authentication:
 - Token displayed once in a copy-friendly format after creation
 - "Revoke" button per token: calls `DELETE /api/config/service-tokens/{token}`
 - Available on standalone, master, and worker settings views
+
+### Draft Settings -- MCP Tokens Section
+
+- Separate from service tokens so inference permissions are not confused with app deployment permissions
+- Lists token name, scopes, optional node/profile restrictions, created date, and last-used date
+- Token value is shown only once at creation
+- Preset buttons should cover read-only helper, profile editor, and full lifecycle operator
+- Risky scopes (`mcp:inference:lifecycle`, `mcp:model:download`, `mcp:model:write`) should be visually distinct
+- New tokens default to the selected node; full-cluster tokens require an explicit option and visible warning/label
 
 ---
 
@@ -410,6 +495,7 @@ These paths bypass the middleware and implement their own authentication:
 | Session cleanup | Expired sessions pruned on every `create_session()` call |
 | Enrollment tokens | 128-bit entropy (16 random bytes), one-time use, consumed on success |
 | Service token scoping | Path restriction + service name enforcement in middleware |
+| MCP token scoping (draft) | Explicit scopes, selected-node default, optional profile allowlist, explicit full-cluster option, restricted to `/mcp` |
 | No CORS | No `CORSMiddleware` configured; same-origin only (secure default) |
 | Token entropy | All tokens use `secrets.token_hex()` (cryptographically secure) |
 | CF key caching | 1-hour TTL; stale cache used on fetch failure (graceful degradation) |

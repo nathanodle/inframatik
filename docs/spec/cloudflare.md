@@ -16,6 +16,7 @@ inframatik integrates with the Cloudflare API to provide secure public access to
 | [UI](ui.md) | Tunnel section with tabs, CF setup wizard in settings, route/access add forms |
 | [Service Management](service-management.md) | Auto CF setup on service registration with hostname |
 | [Clustering](clustering.md) | Master creates tunnels for workers, pushes token to worker |
+| [Inference](inference.md) | Cloudflare exposure mode for inference APIs using Access Service Auth |
 
 ---
 
@@ -43,6 +44,15 @@ The CF setup wizard is a multi-step flow triggered from the settings modal:
 - Calls `GET https://api.cloudflare.com/client/v4/accounts` with Bearer token
 - Returns list of accessible accounts
 - Error if token is invalid or no accounts accessible
+
+Token permissions needed for current features:
+
+| Feature | Required Cloudflare token permissions |
+|---------|---------------------------------------|
+| Tunnel, DNS, normal Access apps | Existing setup permissions for account, tunnel, DNS, Access apps/policies |
+| Inference Service Auth | `Access: Service Tokens Write` plus `Access: Apps and Policies Write` |
+
+If the token lacks service-token permission, inference Cloudflare exposure should still allow selecting an externally managed service token, but the UI cannot generate new client credentials.
 
 ### Step 2: Select Account and List Zones
 
@@ -219,6 +229,146 @@ All CF API calls use `httpx.AsyncClient` with 10-second timeout and Bearer token
 - Creates a policy with `decision: "allow"` and `include: [{email_domain: {domain: "..."}}]`
 - `POST /accounts/{account_id}/access/policies`
 
+### Draft: Service Auth for Inference APIs
+
+Inference endpoints are API clients first, not browser pages. For inference profiles exposed through Cloudflare, the preferred Access policy is Service Auth with a Cloudflare Access service token.
+
+Important distinction:
+
+| Token | Purpose | Stored by inframatik |
+|-------|---------|----------------------|
+| Cloudflare API token | Lets inframatik create tunnels, DNS records, Access apps, policies, and service tokens | Yes, existing `cf_token` |
+| Cloudflare Access service token | Lets an API client call a specific Access-protected hostname | Metadata only; client secret shown once |
+
+Service token creation:
+
+- `POST /accounts/{account_id}/access/service_tokens`
+- Requires Cloudflare API token permission `Access: Service Tokens Write`
+- Returns `client_id`, `client_secret`, token ID, name, and expiration
+- `client_secret` is displayed only once by Cloudflare and should not be persisted by inframatik
+
+Request:
+
+```json
+{
+  "name": "inframatik-llm-qwen-client",
+  "duration": "8760h"
+}
+```
+
+Response fields used by inframatik:
+
+```json
+{
+  "id": "service-token-uuid",
+  "name": "inframatik-llm-qwen-client",
+  "client_id": "abc123.access",
+  "client_secret": "one-time-secret",
+  "created_at": "2026-06-22T00:00:00Z",
+  "expires_at": "2027-06-22T00:00:00Z"
+}
+```
+
+Service token rotation:
+
+- Cloudflare exposes a service-token secret rotation API that returns a fresh `client_secret`
+- Requires Cloudflare API token permission to edit service tokens
+- Keeps the service token ID, Client ID, policy attachment, and profile metadata
+- Returns the new Client Secret once; inframatik must not persist it
+- Treat the previous Client Secret as no longer safe to use; clients should be updated immediately
+
+Generate-new versus rotate:
+
+| Action | Behavior | Use case |
+|--------|----------|----------|
+| Generate new service token | Create another Cloudflare Access service token and add it to the same Service Auth policy | No-downtime rollout, multiple clients, staged replacement |
+| Rotate existing service token | Rotate the selected token secret and show the new secret once | Emergency replacement or scheduled rotation when clients can update immediately |
+| Retire service token | Remove token from policy and optionally delete if inframatik owns it and nothing else references it | Complete a rollout after clients move to a new token |
+
+Service Auth policy:
+
+- Create a reusable Access policy with `decision: "non_identity"`.
+- Include one or more active service tokens by token ID.
+- Attach the policy to the inference Access application.
+- Do not use `decision: "allow"` for API service tokens; that is identity/browser auth and can redirect API clients to the login page.
+
+Policy request:
+
+```json
+{
+  "name": "inframatik-llm-qwen-service-auth",
+  "decision": "non_identity",
+  "include": [
+    {
+      "service_token": {
+        "token_id": "service-token-uuid"
+      }
+    },
+    {
+      "service_token": {
+        "token_id": "new-service-token-uuid"
+      }
+    }
+  ]
+}
+```
+
+Optional IP restriction:
+
+```json
+{
+  "require": [
+    {
+      "ip": {
+        "ip": "192.0.2.0/24"
+      }
+    }
+  ]
+}
+```
+
+Provisioning flow for a new inference hostname:
+
+1. Add tunnel route for hostname to the profile's local port.
+2. Create DNS CNAME for hostname.
+3. Create Cloudflare Access service token if the user selected "New token".
+4. Create Service Auth reusable policy with `decision: "non_identity"` and active `include.service_token.token_id` entries.
+5. Create Access application for hostname with that policy attached.
+6. Return the Client ID and Client Secret in the API response for one-time UI display.
+7. Store only service token metadata and profile reference metadata: Access app ID, policy ID, hostname, and profile ID.
+
+Client credential lifecycle after provisioning:
+
+1. **Generate new client** creates a new Cloudflare Access service token, adds its token ID to the existing Service Auth policy, stores metadata, and returns Client ID/Client Secret once.
+2. **Rotate client** calls Cloudflare secret rotation for the selected service token, stores updated rotation/expiration metadata, and returns the new Client Secret once.
+3. **Retire client** removes the service token from the Service Auth policy. If inframatik created the token and no other profile references it, offer to delete the token from Cloudflare.
+4. Existing service tokens selected by the user are externally managed by default. Rotating or deleting them requires an explicit confirmation because other clients may depend on them.
+
+Existing-token flow:
+
+1. User selects or enters an existing service token ID/name.
+2. inframatik creates the Service Auth policy and Access app using that token ID.
+3. inframatik cannot display the existing Client Secret because Cloudflare only shows it at token creation time.
+
+Client request headers:
+
+```text
+CF-Access-Client-Id: <client_id>
+CF-Access-Client-Secret: <client_secret>
+```
+
+Inframatik should store only cleanup/display metadata such as token ID, name, client ID, expiration, active/retired state, last rotation time, ownership, and profile/hostname references. Engine-native API keys remain recommended as a second layer for public inference endpoints.
+
+Cleanup rules:
+
+1. Stopping an inference profile does not remove tunnel routes, DNS records, Access apps, policies, or service-token metadata.
+2. Deleting an inference hostname or deleting the profile removes the tunnel route, DNS record, and Access application.
+3. If inframatik created the service token and no other profile references it, offer to delete it.
+4. If the token was externally managed, never delete it automatically.
+5. If cleanup fails for any Cloudflare resource, create or update a retryable inference cleanup record.
+6. The UI should offer retry cleanup and forget cleanup record actions.
+7. Forgetting a cleanup record removes local retry metadata only and never calls Cloudflare.
+
 ---
 
 ## Dashboard Access
@@ -359,6 +509,11 @@ If cloudflared is unreachable (connect error or timeout):
 | `/api/cf/access/apps` | POST | Create Access app `{name, hostname, policy_id}` |
 | `/api/cf/access/apps/{hostname}` | DELETE | Delete Access app by hostname |
 | `/api/cf/access/policies` | GET | Discover reusable policies |
+| `/api/cf/access/service-tokens` | GET | List stored service-token metadata and optionally Cloudflare token summaries |
+| `/api/cf/access/service-tokens` | POST | Create Access service token. Secret returned once. |
+| `/api/cf/access/service-tokens/{id}/rotate` | POST | Rotate Access service token secret. Secret returned once. |
+| `/api/cf/access/service-tokens/{id}` | DELETE | Delete a Cloudflare Access service token if inframatik owns it |
+| `/api/cf/access/service-auth-policy` | POST | Create Service Auth policy for `{service_token_ids, name, ip_allowlist?}` |
 
 ### Dashboard Access
 
@@ -395,9 +550,31 @@ If cloudflared is unreachable (connect error or timeout):
   "cf_zone_id": "zone-uuid",
   "cf_default_policy_id": "policy-uuid",
   "tunnel_id": "tunnel-uuid",
-  "dashboard_hostname": "dash.example.com"
+  "dashboard_hostname": "dash.example.com",
+  "cf_access_service_tokens": {
+    "service-token-uuid": {
+      "name": "inframatik-llm-qwen-client",
+      "client_id": "abc123.access",
+      "expires_at": "2027-06-22T00:00:00Z",
+      "created_by": "inframatik",
+      "active": true,
+      "retired_at": null,
+      "last_rotated_at": null,
+      "profile_refs": [
+        {
+          "profile_id": "qwen-vllm",
+          "hostname": "qwen.example.com",
+          "access_app_id": "app-uuid",
+          "access_policy_id": "policy-uuid"
+        }
+      ],
+      "created_at": 1782086400
+    }
+  }
 }
 ```
+
+`cf_access_service_tokens` stores metadata only. It must never store `client_secret`.
 
 ### Worker CF Fields in Master's Config
 
