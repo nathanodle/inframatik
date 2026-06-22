@@ -2925,6 +2925,22 @@ function patchInferenceProfile(profile) {
     return true;
 }
 
+function removeInferenceProfile(profileId) {
+    if (!profileId) return false;
+    const before = (inferenceProfilesData || []).length;
+    inferenceProfilesData = (inferenceProfilesData || []).filter(item => item.id !== profileId);
+    pendingInferenceProfileActions.delete(profileId);
+    Array.from(pendingInferenceInstanceActions.keys()).forEach(key => {
+        if (String(key).startsWith(`${profileId}:`)) pendingInferenceInstanceActions.delete(key);
+    });
+    clearProfileDetail(profileId);
+    if (currentAppView === 'inference' && activeInferenceTab === 'profiles') {
+        renderInferenceProfiles(inferenceProfilesData);
+    }
+    renderProfileSelects();
+    return inferenceProfilesData.length !== before;
+}
+
 function profileInstanceGpuText(instance) {
     const ids = instance.gpu_ids || [];
     if (!ids.length) return 'none';
@@ -3248,9 +3264,10 @@ async function deleteInferenceProfile(profileId, label) {
     if (!confirm(`Delete inference profile "${label}"?`)) return;
     setInferenceError('');
     try {
-        await api('DELETE', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}`));
-        setInferenceStatus(`Deleted profile ${profileId}.`);
-        await refreshInferenceProfiles();
+        const result = await api('DELETE', modelNodePath(`/api/inference/profiles/${encodeURIComponent(profileId)}`));
+        const deletedId = (result && result.deleted) || profileId;
+        removeInferenceProfile(deletedId);
+        setInferenceStatus(`Deleted profile ${deletedId}.`);
     } catch (e) {
         setInferenceError(e.message);
     }

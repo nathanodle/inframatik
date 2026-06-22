@@ -802,6 +802,62 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'terminal inference operation events should patch profile state locally and refresh only open detail'
                 );
 
+                const deleteProfileResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        selectedNodeId = 'self-node';
+                        isMaster = false;
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'profiles';
+                        inferenceProfilesData = [
+                            { id: 'qwen-delete', display_name: 'Qwen Delete', state: 'stopped', instances: [] },
+                            { id: 'keep', display_name: 'Keep', state: 'stopped', instances: [] },
+                        ];
+                        profileDetailCache.set('qwen-delete', '<div>stale detail</div>');
+                        profileDetailModes.set('qwen-delete', 'details');
+                        profileOutputCache.set('qwen-delete', '<div>stale output</div>');
+                        pendingInferenceProfileActions.set('qwen-delete', 'start');
+                        pendingInferenceInstanceActions.set('qwen-delete:0', 'restart');
+                        document.getElementById('profile-detail-qwen-delete').innerHTML = '<div>stale detail</div>';
+                        confirm = function(message) {
+                            calls.push(['confirm', message]);
+                            return true;
+                        };
+                        api = async function(method, path) {
+                            calls.push([method, path]);
+                            if (method === 'DELETE' && path === '/api/inference/profiles/qwen-delete') {
+                                return { deleted: 'qwen-delete', removed_units: ['infra-llm-qwen-delete.service'] };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        refreshInferenceProfiles = async function() { calls.push(['refreshProfiles']); };
+                        renderInferenceProfiles = function(profiles) {
+                            calls.push(['renderProfiles', profiles.map(item => item.id).join(',')]);
+                        };
+                        await deleteInferenceProfile('qwen-delete', 'Qwen Delete');
+                        return {
+                            calls,
+                            profileIds: inferenceProfilesData.map(item => item.id),
+                            hasDetail: profileDetailCache.has('qwen-delete'),
+                            hasPendingProfile: pendingInferenceProfileActions.has('qwen-delete'),
+                            hasPendingInstance: pendingInferenceInstanceActions.has('qwen-delete:0'),
+                            detailHtml: document.getElementById('profile-detail-qwen-delete').innerHTML,
+                        };
+                    })()
+                `, context);
+                assert(
+                    deleteProfileResult.calls.some(call => call[0] === 'DELETE' && call[1] === '/api/inference/profiles/qwen-delete') &&
+                    !deleteProfileResult.calls.some(call => call[0] === 'refreshProfiles') &&
+                    deleteProfileResult.calls.some(call => call[0] === 'renderProfiles' && call[1] === 'keep') &&
+                    deleteProfileResult.profileIds.length === 1 &&
+                    deleteProfileResult.profileIds[0] === 'keep' &&
+                    deleteProfileResult.hasDetail === false &&
+                    deleteProfileResult.hasPendingProfile === false &&
+                    deleteProfileResult.hasPendingInstance === false &&
+                    deleteProfileResult.detailHtml === '',
+                    'deleting a profile should remove local state, cached detail, and pending actions without a broad refresh'
+                );
+
                 const conflictResult = await vm.runInContext(`
                     (async () => {
                         const calls = [];
@@ -2168,6 +2224,7 @@ def test_static_inference_model_ui_assets_present():
     assert "saveInferenceProfile({restart:true})" in index_html
     assert "/api/inference/profiles/${encodeURIComponent(profileId)}/export" in app_js
     assert "patchInferenceProfile" in app_js
+    assert "removeInferenceProfile" in app_js
     assert "rotateProfileApiKey" in app_js
     assert "loadProfileConnect" in app_js
     assert "copyButton" in app_js
