@@ -274,6 +274,7 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
                         "max_queued_requests": 64,
                         "max_batch_tokens": 8192,
                         "expert_parallel": 4,
+                        "enable_metrics": True,
                         "reasoning_parser": "deepseek-r1",
                         "tool_call_parser": "hermes",
                         "speculative": {"model": "draft", "num_tokens": 3},
@@ -299,7 +300,7 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
                     "engine": "llama.cpp",
                     "engine_launcher_id": "llama-main",
                     "model": {"artifact_id": "llama", "snapshot": "v1"},
-                    "common": {"context_length": 2048, "max_batch_tokens": 4096, "port": 10002},
+                    "common": {"context_length": 2048, "max_batch_tokens": 4096, "enable_metrics": True, "port": 10002},
                     "engine_config": {"llama_cpp": {
                         "n_gpu_layers": -1,
                         "threads": 8,
@@ -322,6 +323,7 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
         assert "--dp-size" in sg_argv
         assert "--max-prefill-tokens" in sg_argv
         assert "--max-queued-requests" in sg_argv
+        assert "--enable-metrics" in sg_argv
         assert "--chunked-prefill-size" in sg_argv
         assert "--moe-a2a-backend" in sg_argv
         assert "--moe-runner-backend" in sg_argv
@@ -340,6 +342,7 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
         assert "--flash-attn" in llama_argv
         assert "--tensor-split" in llama_argv
         assert "--threads-batch" in llama_argv
+        assert "--metrics" in llama_argv
         assert llama_argv.count("--batch-size") == 1
         assert llama_argv[llama_argv.index("--batch-size") + 1] == "1024"
         assert "--cache-type-k" in llama_argv

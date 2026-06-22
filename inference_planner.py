@@ -990,6 +990,7 @@ def _render_sglang(argv: list[str], model_path: str, common: dict, cfg: dict, in
     _append(argv, "--tool-call-parser", common.get("tool_call_parser"))
     _append(argv, "--chat-template", common.get("chat_template"))
     _append(argv, "--log-level", common.get("log_level"))
+    _append_bool(argv, "--enable-metrics", common.get("enable_metrics"))
 
     expert = common.get("expert_parallel")
     context = common.get("context_parallel") if isinstance(common.get("context_parallel"), dict) else {}
@@ -1040,6 +1041,7 @@ def _render_llama_cpp(argv: list[str], model_path: str, common: dict, cfg: dict,
     _append(argv, "--parallel", common.get("max_concurrent_requests"))
     _append(argv, "--chat-template", common.get("chat_template"))
     _append(argv, "--reasoning-format", common.get("reasoning_parser"))
+    _append_bool(argv, "--metrics", common.get("enable_metrics"))
     _append(argv, "--n-gpu-layers", cfg.get("n_gpu_layers"))
     _append(argv, "--main-gpu", cfg.get("main_gpu"))
     _append(argv, "--split-mode", cfg.get("split_mode"))

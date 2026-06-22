@@ -1762,6 +1762,20 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'manual port policy should preserve explicit multi-instance ports'
                 );
 
+                const metricsDraftResult = vm.runInContext(`
+                    resetProfileForm();
+                    document.getElementById('profile-id').value = 'qwen-metrics';
+                    document.getElementById('profile-engine').value = 'vllm';
+                    document.getElementById('profile-launcher').value = 'vllm-main';
+                    document.getElementById('profile-model').value = 'qwen@v1';
+                    document.getElementById('profile-metrics').checked = true;
+                    buildProfileDraft().common.enable_metrics;
+                `, context);
+                assert(
+                    metricsDraftResult === true,
+                    'profile editor should include explicitly enabled metrics in structured common config'
+                );
+
                 const saveRestartCalls = await vm.runInContext(`
                     (async () => {
                         const calls = [];
@@ -3067,6 +3081,7 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-vllm-all2all-backend"' in index_html
     assert 'id="profile-sglang-moe-a2a-backend"' in index_html
     assert 'id="profile-llama-tensor-split"' in index_html
+    assert 'id="profile-metrics"' in index_html
     assert 'id="inference-profiles-list"' in index_html
     assert 'id="inference-operations-list"' in index_html
     assert 'id="inference-live-status"' in index_html
@@ -3177,6 +3192,7 @@ def test_static_inference_model_ui_assets_present():
     assert "renderInferenceGpuHints" in app_js
     assert "profileConfigChips" in app_js
     assert "structuredCommonConfig" in app_js
+    assert "enable_metrics" in app_js
     assert "structuredEngineConfig" in app_js
     assert "draft = buildProfileDraft()" in app_js
     assert "setInferenceError(e.message)" in app_js

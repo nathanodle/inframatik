@@ -1951,6 +1951,7 @@ const STRUCTURED_COMMON_KEYS = [
     'reasoning_parser',
     'tool_call_parser',
     'enable_auto_tool_choice',
+    'enable_metrics',
     'chat_template',
     'log_level',
     'speculative',
@@ -2303,6 +2304,7 @@ function structuredCommonConfig() {
         reasoning_parser: modelOptionalValue('profile-reasoning-parser'),
         tool_call_parser: modelOptionalValue('profile-tool-call-parser'),
         enable_auto_tool_choice: profileBooleanValue('profile-auto-tool-choice') ? true : null,
+        enable_metrics: profileBooleanValue('profile-metrics') ? true : null,
         chat_template: modelOptionalValue('profile-chat-template'),
         log_level: modelOptionalValue('profile-log-level'),
         speculative,
@@ -2496,6 +2498,7 @@ function resetProfileForm() {
         if (el) el.value = '';
     });
     ['profile-trust-remote-code', 'profile-prefix-caching', 'profile-auto-tool-choice',
+        'profile-metrics',
         'profile-vllm-expert-parallel', 'profile-vllm-ep-weight-filter', 'profile-vllm-eplb', 'profile-vllm-dbo',
         'profile-vllm-headless',
         'profile-sglang-dp-attention', 'profile-sglang-dsa-prefill-cp',
@@ -2579,6 +2582,7 @@ function fillProfileForm(profile) {
     setProfileChecked('profile-trust-remote-code', common.trust_remote_code);
     setProfileChecked('profile-prefix-caching', common.enable_prefix_caching);
     setProfileChecked('profile-auto-tool-choice', common.enable_auto_tool_choice);
+    setProfileChecked('profile-metrics', common.enable_metrics);
     const deployment = profile.deployment || {};
     const portPolicy = deployment.port_policy || {};
     const commonPorts = Array.isArray(common.ports) ? common.ports : common.port ? [common.port] : [];
