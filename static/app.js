@@ -1948,6 +1948,33 @@ function renderProfileSelects() {
     renderProfileEngineFields();
 }
 
+function renderLauncherState() {
+    renderProfileSelects();
+    if (currentAppView === 'inference' && activeInferenceTab === 'launchers') {
+        renderLaunchers(inferenceLaunchersData || []);
+    }
+}
+
+function patchInferenceLauncher(launcher) {
+    if (!launcher || !launcher.id) return false;
+    const existing = inferenceLaunchersData || [];
+    const next = [
+        launcher,
+        ...existing.filter(item => item.id !== launcher.id),
+    ].sort((a, b) => String(a.engine || '').localeCompare(String(b.engine || '')) || String(a.id || '').localeCompare(String(b.id || '')));
+    inferenceLaunchersData = next;
+    renderLauncherState();
+    return true;
+}
+
+function removeInferenceLauncher(launcherId) {
+    if (!launcherId || !inferenceLaunchersData) return false;
+    const before = inferenceLaunchersData.length;
+    inferenceLaunchersData = inferenceLaunchersData.filter(item => item.id !== launcherId);
+    renderLauncherState();
+    return inferenceLaunchersData.length !== before;
+}
+
 function renderProfileEngineFields() {
     const engine = (document.getElementById('profile-engine') || {}).value || 'vllm';
     const wanted = engine === 'llama.cpp' ? 'llama' : engine;
@@ -4330,14 +4357,15 @@ async function submitLauncherForm() {
         if (editId) {
             delete body.id;
             Object.keys(body).forEach(key => body[key] === null && delete body[key]);
-            await api('PUT', modelNodePath(`/api/inference/launchers/${encodeURIComponent(editId)}`), body);
+            const launcher = await api('PUT', modelNodePath(`/api/inference/launchers/${encodeURIComponent(editId)}`), body);
+            patchInferenceLauncher(launcher);
             setInferenceStatus(`Updated launcher ${editId}.`);
         } else {
-            await api('POST', modelNodePath('/api/inference/launchers'), body);
+            const launcher = await api('POST', modelNodePath('/api/inference/launchers'), body);
+            patchInferenceLauncher(launcher);
             setInferenceStatus('Launcher saved.');
         }
         resetLauncherFormAndEnableId();
-        await refreshInferenceLaunchers();
     } catch (e) {
         setInferenceError(e.message);
     }
@@ -4465,17 +4493,17 @@ async function deleteLauncher(launcherId, displayName) {
     if (!confirm(`Delete launcher "${displayName}"?`)) return;
     setInferenceError('');
     try {
-        await api('DELETE', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}`));
+        const result = await api('DELETE', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}`));
+        removeInferenceLauncher((result && result.deleted) || launcherId);
         setInferenceStatus(`Deleted launcher ${launcherId}.`);
-        await refreshInferenceLaunchers();
     } catch (e) {
         const detail = e.detail;
         if (detail && detail.requires_force) {
             const refs = (detail.references || []).map(ref => ref.name || ref.profile_id).join(', ');
             if (confirm(`Stopped profiles reference this launcher: ${refs}. Delete anyway?`)) {
-                await api('DELETE', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}?force_stopped_references=true`));
+                const result = await api('DELETE', modelNodePath(`/api/inference/launchers/${encodeURIComponent(launcherId)}?force_stopped_references=true`));
+                removeInferenceLauncher((result && result.deleted) || launcherId);
                 setInferenceStatus(`Deleted launcher ${launcherId}.`);
-                await refreshInferenceLaunchers();
                 return;
             }
         }

@@ -1362,6 +1362,91 @@ def test_app_js_cloudflare_section_gating_by_role():
                     saveRestartCalls.profile.display_name === 'Qwen Saved',
                     'Save & Restart should patch the saved profile locally and then queue a restart operation'
                 );
+
+                const launcherPatchResult = await vm.runInContext(`
+                    (async () => {
+                        const calls = [];
+                        isMaster = false;
+                        selectedNodeId = 'self-node';
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'launchers';
+                        inferenceLaunchersData = [];
+                        refreshInferenceLaunchers = async function() { calls.push(['refreshLaunchers']); };
+                        confirm = function(message) { calls.push(['confirm', message]); return true; };
+                        api = async function(method, path, body) {
+                            calls.push([method, path, body && body.display_name]);
+                            if (method === 'POST' && path === '/api/inference/launchers') {
+                                return {
+                                    id: 'vllm-main',
+                                    display_name: 'vLLM Main',
+                                    engine: 'vllm',
+                                    executable: '/opt/vllm/bin/python',
+                                    base_args: ['-m', 'vllm.entrypoints.openai.api_server'],
+                                    redacted_env_keys: [],
+                                    env_count: 0,
+                                };
+                            }
+                            if (method === 'PUT' && path === '/api/inference/launchers/vllm-main') {
+                                return {
+                                    id: 'vllm-main',
+                                    display_name: 'vLLM Prod',
+                                    engine: 'vllm',
+                                    executable: '/opt/vllm/bin/python',
+                                    base_args: ['-m', 'vllm.entrypoints.openai.api_server', '--disable-log-requests'],
+                                    redacted_env_keys: [],
+                                    env_count: 0,
+                                };
+                            }
+                            if (method === 'DELETE' && path === '/api/inference/launchers/vllm-main') {
+                                return { deleted: 'vllm-main', references: { running: [], stopped: [] } };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+
+                        document.getElementById('launcher-edit-id').value = '';
+                        document.getElementById('launcher-id').value = 'vllm-main';
+                        document.getElementById('launcher-display-name').value = 'vLLM Main';
+                        document.getElementById('launcher-engine').value = 'vllm';
+                        document.getElementById('launcher-executable').value = '/opt/vllm/bin/python';
+                        document.getElementById('launcher-working-dir').value = '';
+                        await submitLauncherForm();
+                        const afterCreateHtml = document.getElementById('launchers-list').innerHTML;
+                        const afterCreateOptions = document.getElementById('profile-launcher').innerHTML;
+
+                        document.getElementById('launcher-edit-id').value = 'vllm-main';
+                        document.getElementById('launcher-id').value = 'vllm-main';
+                        document.getElementById('launcher-display-name').value = 'vLLM Prod';
+                        document.getElementById('launcher-engine').value = 'vllm';
+                        document.getElementById('launcher-executable').value = '/opt/vllm/bin/python';
+                        document.getElementById('launcher-working-dir').value = '';
+                        await submitLauncherForm();
+                        const afterUpdateHtml = document.getElementById('launchers-list').innerHTML;
+
+                        await deleteLauncher('vllm-main', 'vLLM Prod');
+                        return {
+                            calls,
+                            launchers: inferenceLaunchersData.map(item => item.id),
+                            afterCreateHtml,
+                            afterCreateOptions,
+                            afterUpdateHtml,
+                            afterDeleteHtml: document.getElementById('launchers-list').innerHTML,
+                            afterDeleteOptions: document.getElementById('profile-launcher').innerHTML,
+                        };
+                    })()
+                `, context);
+                assert(
+                    launcherPatchResult.calls.some(call => call[0] === 'POST' && call[1] === '/api/inference/launchers') &&
+                    launcherPatchResult.calls.some(call => call[0] === 'PUT' && call[1] === '/api/inference/launchers/vllm-main') &&
+                    launcherPatchResult.calls.some(call => call[0] === 'DELETE' && call[1] === '/api/inference/launchers/vllm-main') &&
+                    !launcherPatchResult.calls.some(call => call[0] === 'refreshLaunchers') &&
+                    launcherPatchResult.afterCreateHtml.includes('vLLM Main') &&
+                    launcherPatchResult.afterCreateOptions.includes('vllm-main') &&
+                    launcherPatchResult.afterUpdateHtml.includes('vLLM Prod') &&
+                    launcherPatchResult.launchers.length === 0 &&
+                    launcherPatchResult.afterDeleteHtml.includes('No engine launchers configured yet.') &&
+                    !launcherPatchResult.afterDeleteOptions.includes('vllm-main'),
+                    'launcher save/update/delete should patch local launcher state without reloading the launcher registry'
+                );
             })().catch((error) => {
                 console.error(error.stack || error.message);
                 process.exit(1);
@@ -2357,6 +2442,8 @@ def test_static_inference_model_ui_assets_present():
     assert "handleModelJobEvent" in app_js
     assert "handleModelJobEvent(msg.job, msg)" in app_js
     assert "mergeModelArtifactFromJob" in app_js
+    assert "patchInferenceLauncher" in app_js
+    assert "removeInferenceLauncher" in app_js
     assert "removeModelArtifactLocal" in app_js
     assert "patchModelVerification" in app_js
     assert "profileJsonValue" in app_js
