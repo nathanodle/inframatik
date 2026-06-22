@@ -1739,7 +1739,7 @@ body {
     margin-top: 9px;
 }
 
-.connect-mini-facts div {
+.connect-mini-facts > div {
     min-width: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -1783,7 +1783,7 @@ body {
     margin-top: 10px;
 }
 
-.connect-facts div {
+.connect-facts > div {
     min-width: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -1801,11 +1801,24 @@ body {
 
 .connect-facts code {
     display: block;
-    margin-top: 3px;
     color: var(--text-primary);
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     overflow-wrap: anywhere;
+}
+
+.connect-copy-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px;
+    margin-top: 3px;
+}
+
+.copy-btn {
+    min-height: 24px;
+    padding: 3px 8px;
+    font-size: 11px;
 }
 
 .profile-secret-strip {
@@ -1815,7 +1828,7 @@ body {
     margin-top: 10px;
 }
 
-.profile-secret-strip div,
+.profile-secret-strip > div,
 .profile-token-row {
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -1875,6 +1888,18 @@ body {
     grid-template-columns: 1fr;
     gap: 10px;
     margin-top: 12px;
+}
+
+.client-example-card {
+    min-width: 0;
+}
+
+.client-example-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 4px;
 }
 
 .profile-token-list {

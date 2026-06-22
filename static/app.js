@@ -3198,6 +3198,12 @@ function connectBadge(label, state = '') {
     return `<span class="model-badge ${esc(state)}">${esc(label)}</span>`;
 }
 
+function copyButton(value, label = 'Copy') {
+    const text = String(value || '');
+    if (!text || text === '--') return '';
+    return `<button type="button" class="btn copy-btn" data-copy="${esc(text)}" onclick="copyText(this.dataset.copy, this)">${esc(label)}</button>`;
+}
+
 function renderClientBundle(bundle, secrets = {}) {
     if (!bundle) {
         return '<div class="empty-state">No client bundle available.</div>';
@@ -3213,6 +3219,11 @@ function renderClientBundle(bundle, secrets = {}) {
         secrets.engine_api_key ? ['Engine API key', secrets.engine_api_key] : null,
         secrets.client_secret ? ['Cloudflare Client Secret', secrets.client_secret] : null,
     ].filter(Boolean);
+    const exampleRows = [
+        ['curl', examples.curl],
+        ['Python', examples.python_openai],
+        ['LiteLLM', examples.litellm],
+    ];
     return `
         <div class="profile-connect-panel">
             <div class="connect-section-header">
@@ -3223,8 +3234,14 @@ function renderClientBundle(bundle, secrets = {}) {
                 ${connectBadge(bundle.exposure_mode || 'local')}
             </div>
             <div class="connect-facts">
-                <div><span>Base URL</span><code>${esc(bundle.base_url || '--')}</code></div>
-                <div><span>Model</span><code>${esc(bundle.model || '--')}</code></div>
+                <div>
+                    <span>Base URL</span>
+                    <div class="connect-copy-row"><code>${esc(bundle.base_url || '--')}</code>${copyButton(bundle.base_url)}</div>
+                </div>
+                <div>
+                    <span>Model</span>
+                    <div class="connect-copy-row"><code>${esc(bundle.model || '--')}</code>${copyButton(bundle.model)}</div>
+                </div>
             </div>
             ${headerRows.length ? `
                 <div class="connect-section-header compact">
@@ -3232,14 +3249,14 @@ function renderClientBundle(bundle, secrets = {}) {
                 </div>
                 <div class="profile-secret-strip">
                     ${headerRows.map(([key, value]) => `
-                        <div><span>${esc(key)}</span><code>${esc(value)}</code></div>
+                        <div><span>${esc(key)}</span><div class="connect-copy-row"><code>${esc(value)}</code>${copyButton(value)}</div></div>
                     `).join('')}
                 </div>
             ` : '<div class="profile-card-line">No auth headers configured for this bundle.</div>'}
             ${oneTimeRows.length ? `
                 <div class="profile-one-time-secret">
                     <div class="launcher-card-title">Shown Once</div>
-                    ${oneTimeRows.map(([label, value]) => `<div><span>${esc(label)}</span><code>${esc(value)}</code></div>`).join('')}
+                    ${oneTimeRows.map(([label, value]) => `<div><span>${esc(label)}</span><div class="connect-copy-row"><code>${esc(value)}</code>${copyButton(value)}</div></div>`).join('')}
                 </div>
             ` : ''}
             ${missing.length ? `<div class="profile-card-line">Missing one-time values: ${esc(missing.join(', '))}</div>` : ''}
@@ -3247,18 +3264,15 @@ function renderClientBundle(bundle, secrets = {}) {
                 <div class="launcher-card-title">Examples</div>
             </div>
             <div class="client-example-grid">
-                <div>
-                    <div class="launcher-card-meta">curl</div>
-                    <pre class="profile-log-view">${esc(examples.curl || '')}</pre>
-                </div>
-                <div>
-                    <div class="launcher-card-meta">Python</div>
-                    <pre class="profile-log-view">${esc(examples.python_openai || '')}</pre>
-                </div>
-                <div>
-                    <div class="launcher-card-meta">LiteLLM</div>
-                    <pre class="profile-log-view">${esc(examples.litellm || '')}</pre>
-                </div>
+                ${exampleRows.map(([label, value]) => `
+                    <div class="client-example-card">
+                        <div class="client-example-head">
+                            <div class="launcher-card-meta">${esc(label)}</div>
+                            ${copyButton(value)}
+                        </div>
+                        <pre class="profile-log-view">${esc(value || '')}</pre>
+                    </div>
+                `).join('')}
             </div>
         </div>
     `;
@@ -4670,10 +4684,34 @@ function renderEnrollmentTokens(tokens) {
 }
 
 function copyText(text, btn) {
-    navigator.clipboard.writeText(text).then(() => {
+    const value = String(text || '');
+    const markCopied = () => {
         const orig = btn.textContent;
         btn.textContent = 'Copied!';
         setTimeout(() => btn.textContent = orig, 1500);
+    };
+    const fallbackCopy = () => {
+        const textarea = document.createElement('textarea');
+        textarea.value = value;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const ok = document.execCommand && document.execCommand('copy');
+        document.body.removeChild(textarea);
+        if (!ok) throw new Error('Copy failed');
+    };
+    const clipboard = typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText
+        ? navigator.clipboard.writeText(value)
+        : Promise.reject(new Error('Clipboard API unavailable'));
+    clipboard.then(markCopied).catch(() => {
+        try {
+            fallbackCopy();
+            markCopied();
+        } catch (e) {
+            alert('Copy failed. Select the value manually.');
+        }
     });
 }
 
