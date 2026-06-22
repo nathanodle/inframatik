@@ -1520,6 +1520,19 @@ function setInferenceTab(tab) {
     if (panel) panel.classList.add('active');
 }
 
+function setProfileEditorSection(section) {
+    const active = ['basics', 'runtime', 'placement', 'exposure', 'engine', 'advanced'].includes(section) ? section : 'basics';
+    document.querySelectorAll('[data-profile-editor-section]').forEach(tab => {
+        const selected = tab.dataset.profileEditorSection === active;
+        tab.classList.toggle('active', selected);
+        tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+    });
+    document.querySelectorAll('[data-profile-editor-panel]').forEach(panel => {
+        if (panel.dataset.profileEditorPanel === active) panel.classList.add('active');
+        else panel.classList.remove('active');
+    });
+}
+
 function setInferenceError(message) {
     setElementText('inference-error', message || '');
 }
@@ -2210,6 +2223,7 @@ function resetProfileForm() {
     if (exposureEl) exposureEl.value = 'local';
     renderProfileSelects();
     renderProfileEngineFields();
+    setProfileEditorSection('basics');
     syncProfileSaveRestartButton(null);
     setElementHtml('profile-preview-panel', '<div class="empty-state">No preview yet.</div>');
 }
@@ -2227,6 +2241,7 @@ function syncProfileSaveRestartButton(profile) {
 
 function fillProfileForm(profile) {
     resetProfileForm();
+    setProfileEditorSection('basics');
     document.getElementById('profile-edit-id').value = profile.id || '';
     document.getElementById('profile-id').value = profile.id || '';
     document.getElementById('profile-id').disabled = true;

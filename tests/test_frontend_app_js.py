@@ -1115,6 +1115,102 @@ def test_app_js_launcher_venv_builder_sets_python_module_command():
     )
 
 
+def test_app_js_profile_editor_sections_toggle():
+    _run_node(
+        textwrap.dedent(
+            r"""
+            const fs = require('fs');
+            const vm = require('vm');
+
+            function makeElement(id, dataset = {}) {
+                const classes = new Set();
+                return {
+                    id,
+                    dataset,
+                    style: {},
+                    value: '',
+                    textContent: '',
+                    innerHTML: '',
+                    attributes: {},
+                    classList: {
+                        add(name) { classes.add(name); },
+                        remove(name) { classes.delete(name); },
+                        toggle(name, force) {
+                            if (force) classes.add(name);
+                            else classes.delete(name);
+                        },
+                        contains(name) { return classes.has(name); },
+                    },
+                    setAttribute(name, value) { this.attributes[name] = String(value); },
+                    getAttribute(name) { return this.attributes[name]; },
+                    addEventListener() {},
+                    querySelectorAll() { return []; },
+                    querySelector() { return null; },
+                };
+            }
+
+            const sections = ['basics', 'runtime', 'placement', 'exposure', 'engine', 'advanced'];
+            const tabs = sections.map(name => makeElement('tab-' + name, { profileEditorSection: name }));
+            const panels = sections.map(name => makeElement('panel-' + name, { profileEditorPanel: name }));
+            const elements = new Map([...tabs, ...panels].map(el => [el.id, el]));
+
+            const document = {
+                cookie: '',
+                addEventListener() {},
+                createElement() { return makeElement('created'); },
+                getElementById(id) {
+                    if (!elements.has(id)) elements.set(id, makeElement(id));
+                    return elements.get(id);
+                },
+                querySelectorAll(selector) {
+                    if (selector === '[data-profile-editor-section]') return tabs;
+                    if (selector === '[data-profile-editor-panel]') return panels;
+                    return [];
+                },
+                querySelector() { return makeElement('query-result'); },
+            };
+
+            const context = {
+                console,
+                document,
+                window: { location: { hostname: 'localhost' } },
+                location: { protocol: 'http:', host: 'localhost' },
+                WebSocket: function WebSocket() { return {}; },
+                fetch: async () => { throw new Error('fetch should not run'); },
+                setTimeout,
+                clearTimeout,
+                setInterval: () => 1,
+                clearInterval: () => {},
+            };
+            context.globalThis = context;
+
+            vm.createContext(context);
+            vm.runInContext(fs.readFileSync('static/app.js', 'utf8'), context, {
+                filename: 'static/app.js',
+            });
+
+            vm.runInContext(`
+                function assert(condition, message) {
+                    if (!condition) throw new Error(message);
+                }
+
+                setProfileEditorSection('runtime');
+                assert(document.getElementById('tab-runtime').classList.contains('active'), 'runtime tab should be active');
+                assert(document.getElementById('tab-runtime').getAttribute('aria-selected') === 'true', 'runtime tab should be selected');
+                assert(!document.getElementById('tab-basics').classList.contains('active'), 'basics tab should be inactive');
+                assert(document.getElementById('tab-basics').getAttribute('aria-selected') === 'false', 'basics tab should be unselected');
+                assert(document.getElementById('panel-runtime').classList.contains('active'), 'runtime panel should be active');
+                assert(!document.getElementById('panel-basics').classList.contains('active'), 'basics panel should be hidden');
+
+                setProfileEditorSection('nope');
+                assert(document.getElementById('tab-basics').classList.contains('active'), 'invalid section should fall back to basics tab');
+                assert(document.getElementById('panel-basics').classList.contains('active'), 'invalid section should fall back to basics panel');
+            `, context);
+            """
+        )
+    )
+
+
 def test_static_index_contains_setup_guidance_and_empty_state_copy():
     index_html = (ROOT / "static" / "index.html").read_text()
 
@@ -1151,6 +1247,16 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-engine-json"' in index_html
     assert 'id="profile-save-restart-btn"' in index_html
     assert "Save & Restart" in index_html
+    assert 'class="profile-editor-nav"' in index_html
+    assert 'data-profile-editor-section="basics"' in index_html
+    assert 'data-profile-editor-section="runtime"' in index_html
+    assert 'data-profile-editor-section="placement"' in index_html
+    assert 'data-profile-editor-section="exposure"' in index_html
+    assert 'data-profile-editor-section="engine"' in index_html
+    assert 'data-profile-editor-section="advanced"' in index_html
+    assert 'data-profile-editor-panel="engine"' in index_html
+    assert 'class="profile-engine-details" open' in index_html
+    assert "setProfileEditorSection" in app_js
     assert 'id="profile-gpu-hints"' in index_html
     assert 'id="profile-kv-cache-dtype"' in index_html
     assert 'id="profile-gpu-memory-utilization"' in index_html
@@ -1264,6 +1370,9 @@ def test_static_inference_model_ui_assets_present():
     assert ".launcher-validation-panel" in style_css
     assert ".launcher-validation-output" in style_css
     assert ".profile-card" in style_css
+    assert ".profile-editor-nav" in style_css
+    assert ".profile-editor-tab.active" in style_css
+    assert ".profile-editor-section.active" in style_css
     assert ".profile-detail-panel" in style_css
     assert ".profile-operation-panel" in style_css
     assert ".profile-operation-steps" in style_css
@@ -1327,6 +1436,7 @@ if __name__ == "__main__":
     test_app_js_node_selection_starts_priority_refresh_immediately()
     test_app_js_inference_ws_state_transitions_manage_activity_polling()
     test_app_js_launcher_venv_builder_sets_python_module_command()
+    test_app_js_profile_editor_sections_toggle()
     test_static_index_contains_setup_guidance_and_empty_state_copy()
     test_static_inference_model_ui_assets_present()
     test_worker_enrollment_ui_uses_same_origin_backend_endpoint()

@@ -333,6 +333,15 @@
                 <section class="settings-panel profile-form-panel">
                     <div class="settings-subsection-header">Profile</div>
                     <input type="hidden" id="profile-edit-id">
+                    <div class="profile-editor-nav" role="tablist" aria-label="Profile editor sections">
+                        <button class="profile-editor-tab active" type="button" data-profile-editor-section="basics" aria-selected="true" onclick="setProfileEditorSection('basics')">Basics</button>
+                        <button class="profile-editor-tab" type="button" data-profile-editor-section="runtime" aria-selected="false" onclick="setProfileEditorSection('runtime')">Runtime</button>
+                        <button class="profile-editor-tab" type="button" data-profile-editor-section="placement" aria-selected="false" onclick="setProfileEditorSection('placement')">Placement</button>
+                        <button class="profile-editor-tab" type="button" data-profile-editor-section="exposure" aria-selected="false" onclick="setProfileEditorSection('exposure')">Exposure</button>
+                        <button class="profile-editor-tab" type="button" data-profile-editor-section="engine" aria-selected="false" onclick="setProfileEditorSection('engine')">Engine</button>
+                        <button class="profile-editor-tab" type="button" data-profile-editor-section="advanced" aria-selected="false" onclick="setProfileEditorSection('advanced')">Advanced</button>
+                    </div>
+                    <div class="profile-editor-section active" data-profile-editor-panel="basics" role="tabpanel">
                     <div class="model-form-grid">
                         <div class="form-group">
                             <label>Profile ID</label>
@@ -371,6 +380,8 @@
                             <input type="number" id="profile-context" placeholder="65536" min="1" step="1" autocomplete="off">
                         </div>
                     </div>
+                    </div>
+                    <div class="profile-editor-section" data-profile-editor-panel="runtime" role="tabpanel">
                     <div class="settings-subsection-header compact">Runtime</div>
                     <div class="model-form-grid">
                         <div class="form-group">
@@ -490,6 +501,8 @@
                         <label class="model-checkbox"><input type="checkbox" id="profile-prefix-caching"> Prefix caching</label>
                         <label class="model-checkbox"><input type="checkbox" id="profile-auto-tool-choice"> Auto tool choice</label>
                     </div>
+                    </div>
+                    <div class="profile-editor-section" data-profile-editor-panel="placement" role="tabpanel">
                     <div class="settings-subsection-header compact">Placement</div>
                     <div class="model-form-grid">
                         <div class="form-group">
@@ -533,6 +546,8 @@
                             </select>
                         </div>
                     </div>
+                    </div>
+                    <div class="profile-editor-section" data-profile-editor-panel="exposure" role="tabpanel">
                     <div class="settings-subsection-header compact">Exposure</div>
                     <div class="model-form-grid">
                         <div class="form-group">
@@ -548,7 +563,9 @@
                             <input type="text" id="profile-hostname" placeholder="llm.example.com" autocomplete="off">
                         </div>
                     </div>
-                    <details class="profile-engine-details">
+                    </div>
+                    <div class="profile-editor-section" data-profile-editor-panel="engine" role="tabpanel">
+                    <details class="profile-engine-details" open>
                         <summary>Engine Tuning</summary>
                         <div class="engine-field engine-field-vllm">
                             <div class="settings-subsection-header compact">vLLM</div>
@@ -823,6 +840,8 @@
                             </div>
                         </div>
                     </details>
+                    </div>
+                    <div class="profile-editor-section" data-profile-editor-panel="advanced" role="tabpanel">
                     <div class="model-form-grid">
                         <div class="form-group">
                             <label>Raw Args</label>
@@ -842,6 +861,7 @@
                             <label>Engine JSON</label>
                             <textarea id="profile-engine-json" rows="7" placeholder='{"enable_expert_parallel":true,"all2all_backend":"deepep_high_throughput"}'></textarea>
                         </div>
+                    </div>
                     </div>
                     <div class="form-actions">
                         <button class="btn" onclick="resetProfileForm()">Reset</button>
