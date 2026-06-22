@@ -299,7 +299,6 @@ async def _run_start(operation_id: str, profile_id: str, instance_index: Optiona
         _set_step(operation_id, "waiting_ready", "running", progress=65)
         grace = _startup_grace(profile)
         for instance in started:
-            await wait_unit_active(instance["unit"], timeout=grace)
             await wait_instance_ready(instance, timeout=grace)
         _set_step(operation_id, "waiting_ready", "succeeded", progress=90)
     except Exception as e:

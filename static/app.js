@@ -73,6 +73,7 @@ let inferenceSystemData = null;
 let pendingInferenceProfileActions = new Map();
 let pendingInferenceInstanceActions = new Map();
 let inferenceOperationWatchers = new Set();
+let inferenceFailureLogFetches = new Set();
 let profileDetailCache = new Map();
 let profileDetailModes = new Map();
 let profileOutputCache = new Map();
@@ -1581,6 +1582,7 @@ async function refreshInferenceProfiles() {
         renderInferenceGpuHints();
         renderInferenceProfiles(inferenceProfilesData);
         renderInferenceOperations(inferenceOperationsData);
+        hydrateVisibleInferenceFailures(nodeId);
         updateInferencePolling();
     } catch (e) {
         setInferenceError(e.message);
@@ -1602,6 +1604,7 @@ async function refreshInferenceJobs() {
         inferenceOperationsData = operations.operations || [];
         renderInferenceOperations(inferenceOperationsData);
         renderModelJobs(models.jobs || []);
+        hydrateVisibleInferenceFailures(nodeId);
         updateInferencePolling();
     } catch (e) {
         setInferenceError(e.message);
@@ -2334,7 +2337,6 @@ function renderInferenceProfiles(profiles) {
         const recentOp = op || profileOps.find(item => ['failed', 'failed_interrupted', 'succeeded', 'canceled'].includes(item.state));
         const pendingAction = pendingInferenceProfileActions.get(profile.id);
         const busy = Boolean(op || pendingAction);
-        const busyLabel = pendingAction ? `${pendingAction} queued` : (op ? (op.current_step || op.state) : '');
         const failedOp = recentOp && ['failed', 'failed_interrupted'].includes(recentOp.state) ? recentOp : null;
         const profileIdArg = jsArg(profile.id);
         const labelArg = jsArg(profile.display_name || profile.id);
@@ -2353,9 +2355,7 @@ function renderInferenceProfiles(profiles) {
                 <div class="profile-card-line">${esc(instanceText)}</div>
                 ${configChips.length ? `<div class="profile-config-chips">${configChips.map(chip => `<span>${esc(chip)}</span>`).join('')}</div>` : ''}
                 ${profile.restart_required ? '<div class="profile-warning">Restart required for saved changes.</div>' : ''}
-                ${op ? `<div class="profile-operation-inline">${esc(op.kind)} · ${esc(op.current_step || op.state)} · ${Number(op.progress || 0)}%</div>` : ''}
-                ${pendingAction && !op ? `<div class="profile-operation-inline">${esc(busyLabel)}...</div>` : ''}
-                ${failedOp ? renderProfileFailureDiagnostic(failedOp) : ''}
+                ${renderProfileOperationPanel(op || failedOp, pendingAction)}
                 <div class="model-actions profile-actions">
                     <button type="button" class="btn" onclick="editInferenceProfile(${profileIdArg})">Edit</button>
                     <button type="button" class="btn" onclick="loadProfileDetails(${profileIdArg})">Details</button>
@@ -2393,18 +2393,132 @@ function operationFailureLogs(operation) {
     return detail.logs || '';
 }
 
-function renderProfileFailureDiagnostic(operation) {
-    const message = operationFailureMessage(operation);
-    const logs = operationFailureLogs(operation);
-    const logBlock = logs
-        ? `<pre class="profile-log-view profile-diagnostic-log">${esc(logs)}</pre>`
-        : '';
+function operationStateColor(state) {
+    if (state === 'succeeded') return 'green';
+    if (ACTIVE_INFERENCE_OPERATION_STATES.has(state)) return 'yellow';
+    if (state === 'canceled') return '';
+    return 'red';
+}
+
+function operationStepLabel(value) {
+    return String(value || '').replace(/_/g, ' ');
+}
+
+function renderOperationSteps(operation) {
+    const steps = (operation && operation.steps) || [];
+    if (!steps.length) return '';
     return `
-        <details class="profile-diagnostic" open>
-            <summary>${esc(operation.kind || 'operation')} failed: ${esc(message)}</summary>
-            ${logBlock}
-        </details>
+        <div class="profile-operation-steps">
+            ${steps.map(step => `
+                <span class="profile-operation-step ${esc(step.state || 'pending')}">${esc(operationStepLabel(step.name))}</span>
+            `).join('')}
+        </div>
     `;
+}
+
+function renderOperationFacts(detail) {
+    const facts = [
+        detail.unit ? ['Unit', detail.unit] : null,
+        detail.host && detail.port ? ['Target', `${detail.host}:${detail.port}`] : null,
+        detail.restart_count !== undefined && detail.restart_count !== null ? ['Restarts', detail.restart_count] : null,
+    ].filter(Boolean);
+    if (!facts.length) return '';
+    return `
+        <div class="profile-operation-facts">
+            ${facts.map(([label, value]) => `
+                <div><span>${esc(label)}</span><code>${esc(value)}</code></div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderProfileOperationPanel(operation, pendingAction = '') {
+    if (!operation) {
+        if (!pendingAction) return '';
+        return `
+            <div class="profile-operation-panel active">
+                <div class="profile-operation-head">
+                    <div>
+                        <div class="profile-operation-title">${esc(profileActionLabel(pendingAction))} queued</div>
+                        <div class="profile-operation-sub">Waiting for operation record</div>
+                    </div>
+                    <span class="model-badge yellow">queued</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill yellow" style="width:8%"></div></div>
+            </div>
+        `;
+    }
+    const progress = Math.max(0, Math.min(100, Number(operation.progress || 0)));
+    const color = operationStateColor(operation.state);
+    const failed = ['failed', 'failed_interrupted'].includes(operation.state);
+    const detail = failed ? operationResultDetail(operation) : {};
+    const message = failed ? operationFailureMessage(operation) : '';
+    const logs = failed ? operationFailureLogs(operation) : '';
+    const panelClass = failed ? 'failed' : ACTIVE_INFERENCE_OPERATION_STATES.has(operation.state) ? 'active' : 'complete';
+    return `
+        <div class="profile-operation-panel ${panelClass}">
+            <div class="profile-operation-head">
+                <div>
+                    <div class="profile-operation-title">${esc(operationStepLabel(operation.kind || 'operation'))}</div>
+                    <div class="profile-operation-sub">${esc(operationStepLabel(operation.current_step || operation.state || '--'))}</div>
+                </div>
+                <span class="model-badge ${color}">${esc(operation.state || 'unknown')}</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill ${color}" style="width:${progress}%"></div></div>
+            ${renderOperationSteps(operation)}
+            ${failed ? `
+                <div class="profile-operation-error">${esc(message)}</div>
+                ${renderOperationFacts(detail)}
+                ${logs ? `<pre class="profile-log-view profile-diagnostic-log">${esc(logs)}</pre>` : ''}
+            ` : ''}
+        </div>
+    `;
+}
+
+function operationNeedsFailureLogHydration(operation) {
+    return operation
+        && operation.id
+        && operation.profile_id
+        && ['failed', 'failed_interrupted'].includes(operation.state)
+        && !operationFailureLogs(operation);
+}
+
+function operationWithHydratedLogs(operation, logs) {
+    const existing = operation && operation.result && typeof operation.result === 'object'
+        ? { ...operation.result }
+        : {};
+    if (existing.cause && typeof existing.cause === 'object') {
+        existing.cause = {
+            ...existing.cause,
+            message: existing.cause.message || operation.error || 'Operation failed.',
+            logs,
+        };
+    } else {
+        existing.message = existing.message || operation.error || 'Operation failed.';
+        existing.logs = logs;
+    }
+    return { ...operation, result: existing };
+}
+
+async function hydrateInferenceFailureDiagnostics(operation, nodeId = selectedNodeId) {
+    if (!operationNeedsFailureLogHydration(operation)) return;
+    const key = `${nodeId || 'local'}:${operation.id}`;
+    if (inferenceFailureLogFetches.has(key)) return;
+    inferenceFailureLogFetches.add(key);
+    try {
+        const data = await api('GET', nodePathFor(nodeId, `/api/inference/profiles/${encodeURIComponent(operation.profile_id)}/logs?lines=120`));
+        const logs = data.logs || '';
+        if (!logs) return;
+        mergeInferenceOperation(operationWithHydratedLogs(operation, logs), { hydrateLogs: false, suppressTerminalStatus: true });
+    } catch (e) {
+        // Log hydration is best-effort; the operation record remains authoritative.
+    }
+}
+
+function hydrateVisibleInferenceFailures(nodeId = selectedNodeId) {
+    (inferenceOperationsData || []).forEach(operation => {
+        hydrateInferenceFailureDiagnostics(operation, nodeId);
+    });
 }
 
 function profileDetailId(profileId) {
@@ -2766,7 +2880,7 @@ function shouldUseInferenceOperationWs(nodeId) {
     return wsConnected;
 }
 
-function mergeInferenceOperation(operation) {
+function mergeInferenceOperation(operation, options = {}) {
     if (!operation || !operation.id) return;
     inferenceOperationsData = [
         operation,
@@ -2777,16 +2891,21 @@ function mergeInferenceOperation(operation) {
         if (operation.instance_index !== null && operation.instance_index !== undefined) {
             pendingInferenceInstanceActions.delete(instanceActionKey(operation.profile_id, operation.instance_index));
         }
-        if (operation.state === 'succeeded') {
-            setInferenceStatus(`${operation.kind || 'Operation'} completed for ${operation.profile_id}.`);
-        } else if (operation.state === 'failed') {
-            setInferenceError(operationFailureMessage(operation));
+        if (!options.suppressTerminalStatus) {
+            if (operation.state === 'succeeded') {
+                setInferenceStatus(`${operation.kind || 'Operation'} completed for ${operation.profile_id}.`);
+            } else if (operation.state === 'failed') {
+                setInferenceError(operationFailureMessage(operation));
+            }
         }
     }
     if (currentAppView === 'inference' && activeInferenceTab === 'profiles') {
         renderInferenceProfiles(inferenceProfilesData);
     }
     renderInferenceOperations(inferenceOperationsData);
+    if (options.hydrateLogs !== false) {
+        hydrateInferenceFailureDiagnostics(operation);
+    }
     updateInferencePolling();
 }
 

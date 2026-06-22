@@ -180,7 +180,7 @@ def _setup_profile(tmp_path: Path, port: int):
 
 
 @contextmanager
-def _fake_runtime(tcp_ok=True, journal_text="TOKEN=secret\nready", restart_count=None):
+def _fake_runtime(tcp_ok=True, journal_text="TOKEN=secret\nready", restart_count=None, unit_state="active"):
     actions = []
 
     async def fake_systemctl(action, unit):
@@ -188,7 +188,7 @@ def _fake_runtime(tcp_ok=True, journal_text="TOKEN=secret\nready", restart_count
         return {"ok": True, "code": 0, "output": action}
 
     async def fake_state(_unit):
-        return "active"
+        return unit_state() if callable(unit_state) else unit_state
 
     async def fake_tcp(_host, _port):
         return tcp_ok
@@ -278,6 +278,28 @@ def test_profile_start_reports_restart_loop_logs(tmp_path: Path):
         assert "restarted" in cause["message"]
         assert "libcudart.so.12" in cause["logs"]
         assert "API_TOKEN=<redacted>" in cause["logs"]
+
+
+def test_profile_start_reports_fast_exit_logs(tmp_path: Path):
+    port = _free_port()
+    with _temp_inference(tmp_path, port=port):
+        _setup_profile(tmp_path, port)
+        with _fake_runtime(
+            tcp_ok=False,
+            unit_state="inactive",
+            journal_text="HF_TOKEN=secret\nRuntimeError: CUDA_HOME is not set",
+        ):
+            async def scenario():
+                op = await inference_operations.start_profile("qwen")
+                return await inference_operations.wait_for_operation(op["id"], timeout=1.0)
+
+            done = _run(scenario())
+
+        assert done["state"] == "failed"
+        cause = done["result"]["cause"]
+        assert "inactive" in cause["message"]
+        assert "CUDA_HOME is not set" in cause["logs"]
+        assert "HF_TOKEN=<redacted>" in cause["logs"]
 
 
 def test_active_operation_conflict_and_interrupted_reconciliation(tmp_path: Path):

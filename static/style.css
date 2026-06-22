@@ -1428,6 +1428,125 @@ body {
     margin-top: 8px;
 }
 
+.profile-operation-panel {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.profile-operation-panel.active {
+    border-color: rgba(245, 158, 11, 0.24);
+    background: var(--yellow-glow);
+}
+
+.profile-operation-panel.failed {
+    border-color: rgba(239, 68, 68, 0.34);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.profile-operation-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.profile-operation-title {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: capitalize;
+}
+
+.profile-operation-sub {
+    margin-top: 2px;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: capitalize;
+}
+
+.profile-operation-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 9px;
+}
+
+.profile-operation-step {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 2px 7px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-muted);
+    background: var(--bg-input);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+
+.profile-operation-step.running {
+    color: var(--yellow);
+    border-color: rgba(245, 158, 11, 0.24);
+    background: var(--yellow-glow);
+}
+
+.profile-operation-step.succeeded {
+    color: var(--green);
+    border-color: rgba(16, 185, 129, 0.24);
+    background: var(--green-glow);
+}
+
+.profile-operation-step.failed {
+    color: var(--red);
+    border-color: rgba(239, 68, 68, 0.24);
+    background: var(--red-glow);
+}
+
+.profile-operation-error {
+    margin-top: 9px;
+    color: #fecaca;
+    font-size: 12px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.profile-operation-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 8px;
+    margin-top: 9px;
+}
+
+.profile-operation-facts div {
+    min-width: 0;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.16);
+    padding: 8px 9px;
+}
+
+.profile-operation-facts span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.profile-operation-facts code {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
 .profile-diagnostic {
     margin-top: 10px;
     padding: 10px 12px;
@@ -1442,12 +1561,6 @@ body {
     font-size: 12px;
     font-weight: 700;
     line-height: 1.4;
-}
-
-.profile-operation-inline {
-    color: var(--yellow);
-    font-size: 12px;
-    margin-top: 8px;
 }
 
 .profile-log-view {

@@ -646,6 +646,10 @@ def test_static_inference_model_ui_assets_present():
     assert "handleInferenceOperationEvent(msg.operation, msg)" in app_js
     assert "websocketEventMatchesSelectedNode" in app_js
     assert "selectedInferenceNodeIds" in app_js
+    assert "renderProfileOperationPanel" in app_js
+    assert "hydrateInferenceFailureDiagnostics" in app_js
+    assert "hydrateVisibleInferenceFailures" in app_js
+    assert "operationWithHydratedLogs" in app_js
     assert "model_job" in app_js
     assert "handleModelJobEvent" in app_js
     assert "handleModelJobEvent(msg.job, msg)" in app_js
@@ -671,6 +675,9 @@ def test_static_inference_model_ui_assets_present():
     assert ".launcher-card" in style_css
     assert ".profile-card" in style_css
     assert ".profile-detail-panel" in style_css
+    assert ".profile-operation-panel" in style_css
+    assert ".profile-operation-steps" in style_css
+    assert ".profile-operation-facts" in style_css
     assert ".profile-instance-row" in style_css
     assert ".profile-test-panel" in style_css
     assert ".profile-config-chips" in style_css
