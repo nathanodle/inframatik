@@ -15,7 +15,14 @@ class _DummyRequest:
     def __init__(self, headers=None, cookies=None):
         self.headers = headers or {}
         self.cookies = cookies or {}
-        self.state = types.SimpleNamespace(service_scope=None, service_capability=None)
+        self.state = types.SimpleNamespace(
+            service_scope=None,
+            service_capability=None,
+            mcp_scopes=None,
+            mcp_node_ids=[],
+            mcp_profile_ids=[],
+            mcp_token_id=None,
+        )
 
 
 def _run(coro):
@@ -115,6 +122,36 @@ def test_check_auth_rejects_service_token_without_service_scope():
         auth.validate_session = original_validate_session
         auth.get_node_config = original_get_node_config
         node_config.get_service_token_auth = original_get_service_token_auth
+
+
+def test_check_auth_accepts_mcp_token_and_sets_scopes():
+    original_validate_session = auth.validate_session
+    original_get_node_config = auth.get_node_config
+    original_get_mcp_token_auth = node_config.get_mcp_token_auth
+    auth.get_node_config = lambda: {}
+    auth.validate_session = lambda _token: False
+    node_config.get_mcp_token_auth = lambda token: (
+        {
+            "token_id": "mt_1",
+            "scopes": ["mcp:read", "mcp:inference:render"],
+            "node_ids": ["node-a"],
+            "profile_ids": ["qwen"],
+        }
+        if token == "mcp_token"
+        else None
+    )
+    try:
+        req = _DummyRequest(headers={"Authorization": "Bearer mcp_token"})
+        assert _run(auth.check_auth(req))
+        assert req.state.service_scope is None
+        assert req.state.mcp_token_id == "mt_1"
+        assert req.state.mcp_scopes == ["mcp:read", "mcp:inference:render"]
+        assert req.state.mcp_node_ids == ["node-a"]
+        assert req.state.mcp_profile_ids == ["qwen"]
+    finally:
+        auth.validate_session = original_validate_session
+        auth.get_node_config = original_get_node_config
+        node_config.get_mcp_token_auth = original_get_mcp_token_auth
 
 
 def test_check_auth_session_bearer_takes_precedence_over_service_scope():

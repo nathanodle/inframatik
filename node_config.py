@@ -21,6 +21,16 @@ _SERVICE_TOKEN_CAPABILITY_RANK = {
     "operate": 1,
     "deploy": 2,
 }
+MCP_TOKEN_SCOPES = (
+    "mcp:read",
+    "mcp:logs",
+    "mcp:inference:render",
+    "mcp:inference:write",
+    "mcp:inference:lifecycle",
+    "mcp:model:read",
+    "mcp:model:download",
+    "mcp:model:write",
+)
 _HOST_ENTRY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 _config_cache: Optional[dict] = None
@@ -111,6 +121,18 @@ def _purge_expired_service_tokens(config: dict) -> bool:
     return changed
 
 
+def _purge_expired_mcp_tokens(config: dict) -> bool:
+    now = int(time.time())
+    tokens = config.get("mcp_tokens", {})
+    changed = False
+    for token, meta in list(tokens.items()):
+        expires_at = meta.get("expires_at")
+        if expires_at is not None and now >= expires_at:
+            del tokens[token]
+            changed = True
+    return changed
+
+
 def cleanup_expired_tokens() -> bool:
     """Purge expired enrollment/service tokens from config. Returns True if changed."""
     config = get_node_config()
@@ -119,6 +141,7 @@ def cleanup_expired_tokens() -> bool:
     changed = False
     changed = _purge_expired_enrollment_tokens(config) or changed
     changed = _purge_expired_service_tokens(config) or changed
+    changed = _purge_expired_mcp_tokens(config) or changed
     if changed:
         save_node_config(config)
     return changed
@@ -157,6 +180,15 @@ def generate_service_token() -> str:
 def service_token_id(token: str) -> str:
     digest = hashlib.sha256(token.encode()).hexdigest()[:16]
     return f"st_{digest}"
+
+
+def generate_mcp_token() -> str:
+    return "mcp_" + secrets.token_hex(32)
+
+
+def mcp_token_id(token: str) -> str:
+    digest = hashlib.sha256(token.encode()).hexdigest()[:16]
+    return f"mt_{digest}"
 
 
 def normalize_service_token_capability(capability: Optional[str]) -> str:
@@ -295,6 +327,103 @@ def get_service_token_scope(token: str) -> Optional[str]:
     if not meta:
         return None
     return meta.get("service")
+
+
+def normalize_mcp_scopes(scopes) -> list[str]:
+    if scopes is None:
+        scopes = ["mcp:read", "mcp:inference:render", "mcp:model:read"]
+    if isinstance(scopes, str):
+        scopes = [scopes]
+    if not isinstance(scopes, list):
+        raise ValueError("MCP token scopes must be a list")
+    normalized = []
+    for scope in scopes:
+        value = str(scope or "").strip().lower()
+        if value not in MCP_TOKEN_SCOPES:
+            raise ValueError("Invalid MCP scope. Allowed values: " + ", ".join(MCP_TOKEN_SCOPES))
+        if value not in normalized:
+            normalized.append(value)
+    if not normalized:
+        raise ValueError("At least one MCP scope is required")
+    return normalized
+
+
+def create_mcp_token(
+    name: Optional[str] = None,
+    scopes=None,
+    node_ids: Optional[list[str]] = None,
+    profile_ids: Optional[list[str]] = None,
+) -> str:
+    config = get_node_config()
+    if not config:
+        raise ValueError("Node not configured")
+    token_scopes = normalize_mcp_scopes(scopes)
+    _purge_expired_mcp_tokens(config)
+    now = int(time.time())
+    ttl = _get_service_token_ttl()
+    token = generate_mcp_token()
+    config.setdefault("mcp_tokens", {})[token] = {
+        "name": str(name or "MCP inference token").strip()[:80],
+        "scopes": token_scopes,
+        "node_ids": [str(item) for item in (node_ids or []) if str(item).strip()],
+        "profile_ids": [str(item) for item in (profile_ids or []) if str(item).strip()],
+        "created_at": now,
+        "expires_at": now + ttl,
+    }
+    save_node_config(config)
+    return token
+
+
+def get_mcp_token_auth(token: str) -> Optional[dict]:
+    config = get_node_config()
+    if not config:
+        return None
+    changed = _purge_expired_mcp_tokens(config)
+    entry = config.get("mcp_tokens", {}).get(token)
+    if not entry:
+        if changed:
+            save_node_config(config)
+        return None
+    try:
+        scopes = normalize_mcp_scopes(entry.get("scopes"))
+    except ValueError:
+        if changed:
+            save_node_config(config)
+        return None
+    if entry.get("scopes") != scopes:
+        entry["scopes"] = scopes
+        changed = True
+    entry["last_used_at"] = int(time.time())
+    changed = True
+    if changed:
+        save_node_config(config)
+    return {
+        "token_id": mcp_token_id(token),
+        "name": entry.get("name"),
+        "scopes": scopes,
+        "node_ids": list(entry.get("node_ids") or []),
+        "profile_ids": list(entry.get("profile_ids") or []),
+        "created_at": entry.get("created_at"),
+        "expires_at": entry.get("expires_at"),
+        "last_used_at": entry.get("last_used_at"),
+    }
+
+
+def revoke_mcp_token_by_id(token_id: str) -> bool:
+    config = get_node_config()
+    if not config:
+        return False
+    tokens = config.get("mcp_tokens", {})
+    changed = _purge_expired_mcp_tokens(config)
+    found = False
+    for token in list(tokens.keys()):
+        if mcp_token_id(token) == token_id:
+            del tokens[token]
+            found = True
+            changed = True
+    if changed:
+        save_node_config(config)
+    return found
 
 
 def generate_api_key() -> str:

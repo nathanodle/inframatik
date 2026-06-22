@@ -34,6 +34,10 @@ from node_config import (
     revoke_service_token_by_id,
     service_token_id,
     normalize_service_token_capability,
+    create_mcp_token,
+    revoke_mcp_token_by_id,
+    mcp_token_id,
+    normalize_mcp_scopes,
     create_enrollment_token,
     consume_enrollment_token,
     delete_enrollment_token,
@@ -685,6 +689,19 @@ async def config_get():
         }
         for token, v in svc_tokens.items()
     ]
+    result["mcp_tokens"] = [
+        {
+            "token_id": mcp_token_id(token),
+            "name": v.get("name"),
+            "scopes": v.get("scopes") or [],
+            "node_ids": v.get("node_ids") or [],
+            "profile_ids": v.get("profile_ids") or [],
+            "created_at": v.get("created_at"),
+            "expires_at": v.get("expires_at"),
+            "last_used_at": v.get("last_used_at"),
+        }
+        for token, v in config.get("mcp_tokens", {}).items()
+    ]
     return result
 
 
@@ -1018,6 +1035,49 @@ async def config_revoke_service_token_by_id(token_id: str):
 @cluster_router.delete("/api/config/service-tokens/{token}")
 async def config_revoke_service_token(token: str):
     revoke_service_token(token)
+    return {"status": "revoked"}
+
+
+class McpTokenBody(BaseModel):
+    name: Optional[str] = None
+    scopes: list[str]
+    node_ids: list[str] = []
+    profile_ids: list[str] = []
+
+
+@cluster_router.post("/api/config/mcp-tokens")
+async def config_create_mcp_token(body: McpTokenBody):
+    try:
+        token = create_mcp_token(
+            name=body.name,
+            scopes=body.scopes,
+            node_ids=body.node_ids,
+            profile_ids=body.profile_ids,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    config = get_node_config() or {}
+    meta = config.get("mcp_tokens", {}).get(token, {})
+    try:
+        scopes = normalize_mcp_scopes(meta.get("scopes"))
+    except ValueError:
+        scopes = []
+    return {
+        "token": token,
+        "token_id": mcp_token_id(token),
+        "name": meta.get("name"),
+        "scopes": scopes,
+        "node_ids": meta.get("node_ids") or [],
+        "profile_ids": meta.get("profile_ids") or [],
+        "created_at": meta.get("created_at"),
+        "expires_at": meta.get("expires_at"),
+    }
+
+
+@cluster_router.delete("/api/config/mcp-tokens/by-id/{token_id}")
+async def config_revoke_mcp_token_by_id(token_id: str):
+    if not revoke_mcp_token_by_id(token_id):
+        raise HTTPException(404, "MCP token not found")
     return {"status": "revoked"}
 
 

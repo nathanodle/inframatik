@@ -232,7 +232,7 @@ def test_mcp_requires_service_token_even_when_auth_true():
         patches=((auth, "check_auth", _auth_true),),
     )
     assert resp.status_code == 403
-    assert resp.json()["detail"] == "Service token required for MCP endpoint"
+    assert resp.json()["detail"] == "Service or MCP token required for MCP endpoint"
 
 
 def test_mcp_initialize_with_scoped_token():

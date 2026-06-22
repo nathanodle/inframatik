@@ -154,6 +154,9 @@ async def auth_middleware(request: Request, call_next):
     # Require auth for everything else
     request.state.service_scope = None
     request.state.service_capability = None
+    request.state.mcp_scopes = None
+    request.state.mcp_node_ids = []
+    request.state.mcp_profile_ids = []
     from auth import check_auth
     if not await check_auth(request):
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})

@@ -18,12 +18,16 @@ def _response_json(resp):
 
 
 class _DummyRequest:
-    def __init__(self, body=None, body_exc=None, scope=None, capability="deploy"):
+    def __init__(self, body=None, body_exc=None, scope=None, capability="deploy", mcp_scopes=None, node_ids=None, profile_ids=None):
         self._body = body
         self._body_exc = body_exc
         self.state = types.SimpleNamespace(
             service_scope=scope,
             service_capability=capability,
+            mcp_scopes=mcp_scopes,
+            mcp_node_ids=node_ids or [],
+            mcp_profile_ids=profile_ids or [],
+            mcp_token_id="mt_test" if mcp_scopes else None,
         )
 
     async def json(self):
@@ -95,6 +99,17 @@ def test_protocol_tools_list_includes_register_for_deploy_capability():
     assert "stop" in tool_names
     assert "logs" in tool_names
     assert "status" in tool_names
+
+
+def test_protocol_tools_list_filters_inference_by_mcp_scope():
+    auth = {"scopes": ["mcp:read", "mcp:inference:render"], "node_ids": [], "profile_ids": []}
+    resp = mcp_routes._handle_mcp_protocol_method(6, "tools/list", "read", auth)
+    payload = _response_json(resp)
+    tool_names = {t["name"] for t in payload["result"]["tools"]}
+    assert "validate_inference_profile" in tool_names
+    assert "render_inference_client_bundle" in tool_names
+    assert "create_inference_profile" not in tool_names
+    assert "start_inference_profile" not in tool_names
 
 
 def test_protocol_unknown_method_returns_none():
@@ -294,6 +309,71 @@ def test_endpoint_requires_service_scope():
     req = _DummyRequest(body={"id": 1, "method": "initialize"}, scope=None)
     exc = _assert_raises_async(HTTPException, mcp_routes.mcp_endpoint, req)
     assert exc.status_code == 403
+
+
+def test_endpoint_initialize_with_mcp_token_advertises_resources():
+    req = _DummyRequest(
+        body={"id": 21, "method": "initialize"},
+        mcp_scopes=["mcp:read"],
+    )
+    resp = asyncio.run(mcp_routes.mcp_endpoint(req))
+    payload = _response_json(resp)
+    assert "resources" in payload["result"]["capabilities"]
+
+
+def test_endpoint_mcp_resources_read_uses_proxy_and_redacts_shape():
+    original_proxy = mcp_routes.proxy_to_node
+    calls = []
+
+    async def fake_proxy(node_id, method, path, body=None):
+        calls.append((node_id, method, path, body))
+        return {"profiles": [{"id": "qwen", "advanced": {"env": {"TOKEN": "<redacted>"}}}]}
+
+    mcp_routes.proxy_to_node = fake_proxy
+    try:
+        req = _DummyRequest(
+            body={"id": 22, "method": "resources/read", "params": {"uri": "inframatik://node/node-a/inference/profiles"}},
+            mcp_scopes=["mcp:read"],
+            node_ids=["node-a"],
+        )
+        resp = asyncio.run(mcp_routes.mcp_endpoint(req))
+    finally:
+        mcp_routes.proxy_to_node = original_proxy
+    payload = _response_json(resp)
+    content = json.loads(payload["result"]["contents"][0]["text"])
+    assert content["profiles"][0]["advanced"]["env"]["TOKEN"] == "<redacted>"
+    assert calls == [("node-a", "GET", "/api/inference/profiles", None)]
+
+
+def test_endpoint_mcp_validate_tool_uses_proxy():
+    original_proxy = mcp_routes.proxy_to_node
+    calls = []
+
+    async def fake_proxy(node_id, method, path, body=None):
+        calls.append((node_id, method, path, body))
+        return {"valid_for_save": True, "blockers": [], "warnings": []}
+
+    mcp_routes.proxy_to_node = fake_proxy
+    try:
+        req = _DummyRequest(
+            body={
+                "id": 23,
+                "method": "tools/call",
+                "params": {
+                    "name": "validate_inference_profile",
+                    "arguments": {"node_id": "node-a", "profile": {"id": "qwen"}},
+                },
+            },
+            mcp_scopes=["mcp:inference:render"],
+            node_ids=["node-a"],
+        )
+        resp = asyncio.run(mcp_routes.mcp_endpoint(req))
+    finally:
+        mcp_routes.proxy_to_node = original_proxy
+    payload = _response_json(resp)
+    result = json.loads(payload["result"]["content"][0]["text"])
+    assert result["valid_for_save"] is True
+    assert calls == [("node-a", "POST", "/api/inference/profiles/preview", {"id": "qwen"})]
 
 
 def test_endpoint_parse_error():

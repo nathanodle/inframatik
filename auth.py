@@ -344,5 +344,14 @@ async def check_auth(request) -> bool:
                 request.state.service_scope = token_auth["service"]
                 request.state.service_capability = token_auth["capability"]
                 return True
+        if token.startswith("mcp_"):
+            from node_config import get_mcp_token_auth
+            token_auth = get_mcp_token_auth(token)
+            if token_auth and token_auth.get("scopes"):
+                request.state.mcp_token_id = token_auth.get("token_id")
+                request.state.mcp_scopes = token_auth["scopes"]
+                request.state.mcp_node_ids = token_auth.get("node_ids") or []
+                request.state.mcp_profile_ids = token_auth.get("profile_ids") or []
+                return True
 
     return False

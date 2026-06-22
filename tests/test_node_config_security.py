@@ -132,6 +132,40 @@ def test_revoke_service_token_by_id_unknown_returns_false():
     assert not node_config.revoke_service_token_by_id("st_doesnotexist")
 
 
+@_run_with_temp_config
+def test_mcp_token_auth_scope_restrictions_and_revoke():
+    node_config.init_as_master("master")
+    token = node_config.create_mcp_token(
+        name="inference",
+        scopes=["mcp:read", "mcp:inference:write"],
+        node_ids=["node-a"],
+        profile_ids=["qwen"],
+    )
+    token_id = node_config.mcp_token_id(token)
+    auth = node_config.get_mcp_token_auth(token)
+    assert token.startswith("mcp_")
+    assert token_id.startswith("mt_")
+    assert auth["scopes"] == ["mcp:read", "mcp:inference:write"]
+    assert auth["node_ids"] == ["node-a"]
+    assert auth["profile_ids"] == ["qwen"]
+    assert auth["last_used_at"] is not None
+    assert node_config.revoke_mcp_token_by_id(token_id)
+    assert node_config.get_mcp_token_auth(token) is None
+
+
+@_run_with_temp_config
+def test_mcp_token_expiry_and_invalid_scope():
+    node_config.init_as_master("master")
+    _assert_raises(ValueError, node_config.create_mcp_token, scopes=["mcp:root"])
+    token = node_config.create_mcp_token(scopes=["mcp:read"])
+    cfg = node_config.get_node_config()
+    cfg["mcp_tokens"][token]["expires_at"] = int(time.time()) - 1
+    node_config.save_node_config(cfg)
+
+    assert node_config.get_mcp_token_auth(token) is None
+    assert token not in node_config.get_node_config().get("mcp_tokens", {})
+
+
 def test_service_token_capability_hierarchy():
     assert node_config.service_token_capability_allows("read", "read")
     assert not node_config.service_token_capability_allows("read", "operate")
