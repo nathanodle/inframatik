@@ -908,11 +908,12 @@ def _render_vllm(argv: list[str], model_path: str, common: dict, cfg: dict, inst
     _append(argv, "--log-level", common.get("log_level"))
 
     expert = common.get("expert_parallel")
-    if expert is True or isinstance(expert, (int, dict)) and expert:
-        argv.append("--enable-expert-parallel")
     context = common.get("context_parallel") if isinstance(common.get("context_parallel"), dict) else {}
     speculative = common.get("speculative") if isinstance(common.get("speculative"), dict) else {}
     lora = common.get("lora") if isinstance(common.get("lora"), dict) else {}
+    expert_enabled = cfg.get("enable_expert_parallel") is True or expert is True or (
+        isinstance(expert, (int, dict)) and bool(expert)
+    )
 
     _append(argv, "--load-format", cfg.get("load_format"))
     _append(argv, "--distributed-executor-backend", cfg.get("distributed_executor_backend"))
@@ -940,7 +941,7 @@ def _render_vllm(argv: list[str], model_path: str, common: dict, cfg: dict, inst
     _append(argv, "--decode-context-parallel-size", cfg.get("decode_context_parallel_size") or context.get("decode_size"))
     _append(argv, "--prefill-context-parallel-size", cfg.get("prefill_context_parallel_size") or context.get("prefill_size"))
     _append(argv, "--context-parallel-backend", cfg.get("context_parallel_backend") or context.get("backend"))
-    _append_bool(argv, "--enable-expert-parallel", cfg.get("enable_expert_parallel"))
+    _append_bool(argv, "--enable-expert-parallel", expert_enabled)
     _append_bool(argv, "--enable-ep-weight-filter", cfg.get("enable_ep_weight_filter"))
     _append(argv, "--all2all-backend", cfg.get("all2all_backend"))
     _append_bool(argv, "--enable-eplb", cfg.get("enable_eplb"))
@@ -991,17 +992,18 @@ def _render_sglang(argv: list[str], model_path: str, common: dict, cfg: dict, in
     _append(argv, "--log-level", common.get("log_level"))
 
     expert = common.get("expert_parallel")
-    if isinstance(expert, int):
-        _append(argv, "--ep-size", expert)
-    elif isinstance(expert, dict):
-        _append(argv, "--ep-size", expert.get("size"))
     context = common.get("context_parallel") if isinstance(common.get("context_parallel"), dict) else {}
     speculative = common.get("speculative") if isinstance(common.get("speculative"), dict) else {}
     lora = common.get("lora") if isinstance(common.get("lora"), dict) else {}
+    ep_size = cfg.get("ep_size")
+    if (ep_size is None or ep_size == "") and isinstance(expert, int):
+        ep_size = expert
+    elif (ep_size is None or ep_size == "") and isinstance(expert, dict):
+        ep_size = expert.get("size")
 
     _append(argv, "--load-format", cfg.get("load_format"))
     _append(argv, "--page-size", cfg.get("page_size"))
-    _append(argv, "--ep-size", cfg.get("ep_size"))
+    _append(argv, "--ep-size", ep_size)
     _append_bool(argv, "--enable-dp-attention", cfg.get("enable_dp_attention"))
     _append(argv, "--load-balance-method", cfg.get("load_balance_method"))
     _append(argv, "--moe-a2a-backend", cfg.get("moe_a2a_backend"))
@@ -1036,7 +1038,6 @@ def _render_llama_cpp(argv: list[str], model_path: str, common: dict, cfg: dict,
         _append(argv, "--api-key", "<redacted>")
     _append(argv, "--ctx-size", common.get("context_length"))
     _append(argv, "--parallel", common.get("max_concurrent_requests"))
-    _append(argv, "--batch-size", common.get("max_batch_tokens"))
     _append(argv, "--chat-template", common.get("chat_template"))
     _append(argv, "--reasoning-format", common.get("reasoning_parser"))
     _append(argv, "--n-gpu-layers", cfg.get("n_gpu_layers"))
@@ -1048,7 +1049,8 @@ def _render_llama_cpp(argv: list[str], model_path: str, common: dict, cfg: dict,
     _append(argv, "--tensor-split", tensor_split)
     _append(argv, "--threads", cfg.get("threads"))
     _append(argv, "--threads-batch", cfg.get("threads_batch"))
-    _append(argv, "--batch-size", cfg.get("batch_size"))
+    batch_size = cfg.get("batch_size") if cfg.get("batch_size") is not None else common.get("max_batch_tokens")
+    _append(argv, "--batch-size", batch_size)
     _append(argv, "--ubatch-size", cfg.get("ubatch_size"))
     _append_bool(argv, "--flash-attn", cfg.get("flash_attention"))
     _append(argv, "--cache-type-k", cfg.get("cache_type_k") or common.get("kv_cache_dtype"))

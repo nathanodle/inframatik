@@ -172,6 +172,7 @@ def test_vllm_preview_renders_argv_env_redaction_and_raw_args(tmp_path: Path):
                         "tensor_parallel": 2,
                         "pipeline_parallel": 1,
                         "data_parallel": 2,
+                        "expert_parallel": 2,
                         "gpu_memory_utilization": 0.9,
                         "cpu_offload_gb": 4,
                         "max_concurrent_requests": 32,
@@ -224,6 +225,7 @@ def test_vllm_preview_renders_argv_env_redaction_and_raw_args(tmp_path: Path):
         assert "--enable-auto-tool-choice" in command["argv"]
         assert "--speculative-model" in command["argv"]
         assert "--num-speculative-tokens" in command["argv"]
+        assert command["argv"].count("--enable-expert-parallel") == 1
         assert "--api-server-count" in command["argv"]
         assert "--data-parallel-backend" in command["argv"]
         assert "--data-parallel-rank" in command["argv"]
@@ -271,6 +273,7 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
                         "max_prefill_tokens": 2048,
                         "max_queued_requests": 64,
                         "max_batch_tokens": 8192,
+                        "expert_parallel": 4,
                         "reasoning_parser": "deepseek-r1",
                         "tool_call_parser": "hermes",
                         "speculative": {"model": "draft", "num_tokens": 3},
@@ -296,11 +299,12 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
                     "engine": "llama.cpp",
                     "engine_launcher_id": "llama-main",
                     "model": {"artifact_id": "llama", "snapshot": "v1"},
-                    "common": {"context_length": 2048, "port": 10002},
+                    "common": {"context_length": 2048, "max_batch_tokens": 4096, "port": 10002},
                     "engine_config": {"llama_cpp": {
                         "n_gpu_layers": -1,
                         "threads": 8,
                         "threads_batch": 4,
+                        "batch_size": 1024,
                         "tensor_split": [1, 1],
                         "cache_type_k": "q8_0",
                         "cache_type_v": "q8_0",
@@ -325,6 +329,8 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
         assert "--dist-init-addr" in sg_argv
         assert "--nnodes" in sg_argv
         assert "--node-rank" in sg_argv
+        assert sg_argv.count("--ep-size") == 1
+        assert sg_argv[sg_argv.index("--ep-size") + 1] == "2"
         assert "--speculative-draft-model-path" in sg_argv
         assert "--speculative-num-steps" in sg_argv
 
@@ -334,6 +340,8 @@ def test_sglang_and_llama_command_renderers(tmp_path: Path):
         assert "--flash-attn" in llama_argv
         assert "--tensor-split" in llama_argv
         assert "--threads-batch" in llama_argv
+        assert llama_argv.count("--batch-size") == 1
+        assert llama_argv[llama_argv.index("--batch-size") + 1] == "1024"
         assert "--cache-type-k" in llama_argv
         assert "--cache-type-v" in llama_argv
 
