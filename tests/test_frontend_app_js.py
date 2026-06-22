@@ -700,11 +700,46 @@ def test_app_js_cloudflare_section_gating_by_role():
                     startupPanelHtml.includes('active') &&
                     startupPanelHtml.includes('TCP') &&
                     startupPanelHtml.includes('waiting') &&
+                    startupPanelHtml.includes('is active; waiting for the inference API port') &&
                     startupPanelHtml.includes('Restarts') &&
                     startupPanelHtml.includes('42s / 10m') &&
                     startupPanelHtml.includes('loadOperationLogs(&quot;qwen&quot;, 0,') &&
                     startupPanelHtml.includes('profile-operation-log-output-panel-op-start'),
                     'active inference operation panel should show live startup readiness facts and inline targeted logs'
+                );
+
+                const failedStartupHtml = vm.runInContext(`
+                    renderProfileOperationPanel({
+                        id: 'op-failed-start',
+                        kind: 'profile_start',
+                        state: 'failed',
+                        profile_id: 'qwen',
+                        current_step: 'failed',
+                        progress: 100,
+                        result: {
+                            message: 'Start failed; started instances were stopped',
+                            cause: {
+                                message: 'Unit infra-llm-qwen.service restarted 3 times before TCP readiness',
+                                unit: 'infra-llm-qwen.service',
+                                host: '127.0.0.1',
+                                port: 10000,
+                                restart_count: 3,
+                                logs: 'ImportError: libcudart.so.12: cannot open shared object file',
+                            },
+                            rollback: [{ index: 0, unit: 'infra-llm-qwen.service', ok: true }],
+                        },
+                    });
+                `, context);
+                assert(
+                    failedStartupHtml.includes('Start failed; started instances were stopped') &&
+                    failedStartupHtml.includes('Unit infra-llm-qwen.service restarted 3 times before TCP readiness') &&
+                    failedStartupHtml.includes('Likely cause') &&
+                    failedStartupHtml.includes('systemd unit is restarting') &&
+                    failedStartupHtml.includes('Next action') &&
+                    failedStartupHtml.includes('Rollback') &&
+                    failedStartupHtml.includes('Rollback stopped 1 started instance') &&
+                    failedStartupHtml.includes('ImportError: libcudart.so.12'),
+                    'failed startup operation panel should explain cause, next action, rollback, and captured logs'
                 );
 
                 const startupOperationListHtml = vm.runInContext(`
@@ -2554,6 +2589,8 @@ def test_static_inference_model_ui_assets_present():
     assert ".profile-operation-actions" in style_css
     assert ".profile-operation-steps" in style_css
     assert ".profile-operation-facts" in style_css
+    assert ".profile-operation-narrative" in style_css
+    assert ".profile-operation-diagnosis" in style_css
     assert ".profile-operation-log-output" in style_css
     assert ".inference-operation-context" in style_css
     assert "renderProfileOperationPanel(op, '', { context: 'operations' })" in app_js

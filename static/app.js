@@ -2688,8 +2688,13 @@ function operationResultDetail(operation) {
 }
 
 function operationFailureMessage(operation) {
+    const result = operation && operation.result && typeof operation.result === 'object' ? operation.result : {};
     const detail = operationResultDetail(operation);
-    return detail.message || operation.error || 'Operation failed.';
+    const messages = [];
+    if (result.message) messages.push(result.message);
+    if (detail.message && detail.message !== result.message) messages.push(detail.message);
+    if (!messages.length && operation && operation.error) messages.push(operation.error);
+    return messages.join(' ') || 'Operation failed.';
 }
 
 function operationFailureLogs(operation) {
@@ -2712,6 +2717,68 @@ function operationStateColor(state) {
 
 function operationStepLabel(value) {
     return String(value || '').replace(/_/g, ' ');
+}
+
+function operationLiveNarrative(operation, detail) {
+    if (!operation || !ACTIVE_INFERENCE_OPERATION_STATES.has(operation.state)) return '';
+    detail = detail || {};
+    const step = operation.current_step || operation.state || '';
+    const target = detail.host && detail.port ? `${detail.host}:${detail.port}` : '';
+    const unit = detail.unit || 'the systemd unit';
+    if (step === 'waiting_ready' || detail.phase === 'waiting_ready') {
+        if (detail.tcp_reachable) return `Instance ${detail.instance_index ?? ''} is reachable${target ? ` at ${target}` : ''}; finishing startup checks.`;
+        if (detail.systemd_state === 'active') return `${unit} is active; waiting for the inference API port${target ? ` ${target}` : ''} to accept connections.`;
+        if (detail.systemd_state) return `${unit} is ${detail.systemd_state}; waiting for it to become active before checking TCP readiness.`;
+        return `Waiting for the inference API${target ? ` at ${target}` : ''} to become reachable.`;
+    }
+    if (step === 'start_units') return 'Starting generated systemd user service units for this profile.';
+    if (step === 'stop_units') return 'Stopping generated systemd user service units for this profile.';
+    if (step === 'validate') return 'Validating profile, launcher, model, ports, and GPU placement before touching systemd.';
+    return '';
+}
+
+function operationFailureDiagnosis(operation, detail) {
+    if (!operation || !['failed', 'failed_interrupted'].includes(operation.state)) return '';
+    const result = operation.result && typeof operation.result === 'object' ? operation.result : {};
+    detail = detail || {};
+    const message = operationFailureMessage(operation);
+    const lower = `${message} ${detail.message || ''}`.toLowerCase();
+    const restartCount = Number(detail.restart_count);
+    let cause = 'The operation failed before the profile reached a healthy serving state.';
+    let action = 'Open the logs below, fix the launcher/model/runtime issue, then start or restart the profile.';
+    if (operation.state === 'failed_interrupted') {
+        cause = 'inframatik restarted while this operation was still running.';
+        action = 'Check the current profile state, then start or restart the profile if the service is not running.';
+    } else if ((Number.isFinite(restartCount) && restartCount >= 3) || lower.includes('restarted')) {
+        cause = 'The generated systemd unit is restarting before the API becomes reachable.';
+        action = 'Check the logs for Python import errors, CUDA/runtime problems, missing model files, or invalid engine args.';
+    } else if (lower.includes('tcp readiness') || lower.includes('port') || detail.tcp_reachable === false) {
+        cause = 'The process started, but the inference API port never became reachable.';
+        action = 'Verify host/port settings, startup grace time, model load duration, and engine server arguments.';
+    } else if (lower.includes('inactive') || lower.includes('failed') || detail.systemd_state) {
+        cause = 'The systemd unit exited or failed before startup completed.';
+        action = 'Use the logs to fix the launcher executable, virtualenv, CUDA libraries, environment, or model-specific arguments.';
+    }
+    const rollback = Array.isArray(result.rollback) && result.rollback.length
+        ? `Rollback stopped ${result.rollback.length} started instance${result.rollback.length === 1 ? '' : 's'}.`
+        : result.message && String(result.message).toLowerCase().includes('stopped')
+            ? result.message
+            : '';
+    const rows = [
+        ['Likely cause', cause],
+        ['Next action', action],
+        rollback ? ['Rollback', rollback] : null,
+    ].filter(Boolean);
+    return `
+        <div class="profile-operation-diagnosis">
+            ${rows.map(([label, value]) => `
+                <div>
+                    <span>${esc(label)}</span>
+                    <p>${esc(value)}</p>
+                </div>
+            `).join('')}
+        </div>
+    `;
 }
 
 function renderOperationSteps(operation) {
@@ -2803,6 +2870,7 @@ function renderProfileOperationPanel(operation, pendingAction = '', options = {}
     const detail = failed ? operationResultDetail(operation) : operationRuntimeStatus(operation);
     const message = failed ? operationFailureMessage(operation) : '';
     const logs = failed ? operationFailureLogs(operation) : '';
+    const narrative = operationLiveNarrative(operation, detail);
     const panelClass = failed ? 'failed' : ACTIVE_INFERENCE_OPERATION_STATES.has(operation.state) ? 'active' : 'complete';
     const operationIdArg = jsArg(operation.id);
     const logTargetId = operationLogOutputId(operation, options.context);
@@ -2822,10 +2890,12 @@ function renderProfileOperationPanel(operation, pendingAction = '', options = {}
                 </div>
             </div>
             <div class="progress-bar"><div class="progress-fill ${color}" style="width:${progress}%"></div></div>
+            ${narrative ? `<div class="profile-operation-narrative">${esc(narrative)}</div>` : ''}
             ${renderOperationSteps(operation)}
             ${renderOperationFacts(detail)}
             ${failed ? `
                 <div class="profile-operation-error">${esc(message)}</div>
+                ${operationFailureDiagnosis(operation, detail)}
                 ${logs ? `<pre class="profile-log-view profile-diagnostic-log">${esc(logs)}</pre>` : ''}
             ` : ''}
             ${logTargetId ? `<div class="profile-operation-log-output" id="${esc(logTargetId)}">${cachedLogOutput}</div>` : ''}
