@@ -3434,6 +3434,30 @@ function handleInferenceOperationEvent(operation, event = {}) {
     }
 }
 
+function mergeInferenceOperationSnapshot(operations, nodeId = selectedNodeId) {
+    const list = Array.isArray(operations) ? operations : [];
+    inferenceOperationsData = list;
+    let needsProfileRender = false;
+    list.forEach(operation => {
+        if (!isTerminalInferenceOperation(operation) || !operation.profile_id) return;
+        pendingInferenceProfileActions.delete(operation.profile_id);
+        if (operation.instance_index !== null && operation.instance_index !== undefined) {
+            pendingInferenceInstanceActions.delete(instanceActionKey(operation.profile_id, operation.instance_index));
+        }
+        const patched = patchProfileFromOperation(operation);
+        if (!patched && currentAppView === 'inference' && activeInferenceTab === 'profiles') {
+            needsProfileRender = true;
+        }
+        if (operation.profile_id && profileDetailModes.get(operation.profile_id) === 'details') {
+            loadProfileDetails(operation.profile_id);
+        }
+    });
+    if (needsProfileRender) renderInferenceProfiles(inferenceProfilesData);
+    renderInferenceOperations(inferenceOperationsData);
+    hydrateVisibleInferenceFailures(nodeId);
+    updateInferencePolling();
+}
+
 function modelJobIsTerminal(job) {
     return job && ['ready', 'failed', 'failed_interrupted', 'canceled'].includes(job.state);
 }
@@ -3457,6 +3481,17 @@ function renderModelInventoryState() {
     if (['models', 'storage'].includes(activeInferenceTab)) {
         renderInferenceSummary(inferenceModelData || { artifacts: [], jobs: [] }, inferenceStorageData || {});
         renderModelInventory((inferenceModelData && inferenceModelData.artifacts) || []);
+    }
+}
+
+function renderPolledModelState() {
+    if (currentAppView !== 'inference' || !inferenceModelData) return;
+    if (activeInferenceTab === 'jobs') {
+        renderModelJobs(inferenceModelData.jobs || []);
+    } else if (['models', 'storage'].includes(activeInferenceTab)) {
+        renderInferenceSummary(inferenceModelData, inferenceStorageData || {});
+        renderModelInventory(inferenceModelData.artifacts || []);
+        renderModelJobs(inferenceModelData.jobs || []);
     }
 }
 
@@ -4536,11 +4571,6 @@ function hasActiveInferenceActivity() {
 async function refreshInferenceActivity() {
     const nodeId = selectedNodeId;
     if (!nodeId || currentAppView !== 'inference') return;
-    if (['profiles', 'models', 'jobs', 'storage'].includes(activeInferenceTab)) {
-        await refreshActiveInferenceTab();
-        return;
-    }
-
     const needsModels = hasActiveInferenceModelJob();
     const needsOperations = hasActiveInferenceOperation();
     if (!needsModels && !needsOperations) {
@@ -4555,13 +4585,15 @@ async function refreshInferenceActivity() {
             needsOperations ? api('GET', modelNodePath('/api/inference/operations')) : Promise.resolve(null),
         ]);
         if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
-        if (models) inferenceModelData = models;
-        if (operations) {
-            inferenceOperationsData = operations.operations || [];
-            renderInferenceOperations(inferenceOperationsData);
-            hydrateVisibleInferenceFailures(nodeId);
+        if (models) {
+            inferenceModelData = models;
+            renderPolledModelState();
         }
-        updateInferencePolling();
+        if (operations) {
+            mergeInferenceOperationSnapshot(operations.operations || [], nodeId);
+        } else {
+            updateInferencePolling();
+        }
     } catch (e) {
         setInferenceError(e.message);
         stopInferencePolling();

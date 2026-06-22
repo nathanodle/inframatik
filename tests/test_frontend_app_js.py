@@ -2000,6 +2000,54 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
                     );
 
                     calls.length = 0;
+                    activeInferenceTab = 'profiles';
+                    inferenceProfilesData = [{
+                        id: 'qwen',
+                        display_name: 'Qwen',
+                        state: 'starting',
+                        instances: [{ index: 0, state: 'starting' }],
+                    }];
+                    inferenceOperationsData = [{ id: 'op-profile', kind: 'profile_start', state: 'running', profile_id: 'qwen' }];
+                    refreshActiveInferenceTab = async function() {
+                        calls.push(['refreshActiveInferenceTab']);
+                    };
+                    renderInferenceProfiles = function(profiles) {
+                        calls.push(['renderProfiles', profiles[0] && profiles[0].state]);
+                    };
+                    renderInferenceOperations = function(operations) {
+                        calls.push(['renderOperations', operations[0] && operations[0].state]);
+                    };
+                    api = async function(method, path) {
+                        calls.push(['api', method, path]);
+                        if (path === '/api/inference/operations') {
+                            return {
+                                operations: [{
+                                    id: 'op-profile',
+                                    kind: 'profile_start',
+                                    state: 'succeeded',
+                                    profile_id: 'qwen',
+                                    result: { state: 'running', instances: [{ index: 0 }] },
+                                }],
+                            };
+                        }
+                        throw new Error('unexpected API call: ' + method + ' ' + path);
+                    };
+                    await refreshInferenceActivity();
+                    assert(
+                        !calls.some(call => call[0] === 'refreshActiveInferenceTab'),
+                        'fallback polling on Profiles should not run the broad active-tab refresh'
+                    );
+                    assert(
+                        inferenceProfilesData[0].state === 'running' &&
+                        inferenceProfilesData[0].instances[0].state === 'running',
+                        'fallback polling on Profiles should patch terminal operation state locally'
+                    );
+                    assert(
+                        calls.some(call => call[0] === 'renderProfiles' && call[1] === 'running'),
+                        'fallback polling on Profiles should re-render the patched profile cards'
+                    );
+
+                    calls.length = 0;
                     inferenceOperationsData = [{ id: 'op-2', state: 'running', profile_id: 'qwen' }];
                     api = async function(method, path) {
                         calls.push(['api', method, path]);
@@ -2419,6 +2467,7 @@ def test_static_inference_model_ui_assets_present():
     assert "handleInferenceOperationEvent" in app_js
     assert "handleInferenceOperationEvent(msg.operation, msg)" in app_js
     assert "websocketEventMatchesSelectedNode" in app_js
+    assert "mergeInferenceOperationSnapshot" in app_js
     assert "selectedInferenceNodeIds" in app_js
     assert "renderProfileOperationPanel" in app_js
     assert "operationLogButton" in app_js
@@ -2442,6 +2491,7 @@ def test_static_inference_model_ui_assets_present():
     assert "handleModelJobEvent" in app_js
     assert "handleModelJobEvent(msg.job, msg)" in app_js
     assert "mergeModelArtifactFromJob" in app_js
+    assert "renderPolledModelState" in app_js
     assert "patchInferenceLauncher" in app_js
     assert "removeInferenceLauncher" in app_js
     assert "removeModelArtifactLocal" in app_js
