@@ -436,7 +436,8 @@ def test_app_js_cloudflare_section_gating_by_role():
                         const calls = [];
                         selectedNodeId = 'self-node';
                         isMaster = false;
-                        const target = document.getElementById('operation-log-target');
+                        const targetId = 'profile-operation-log-output-panel-op-start';
+                        const target = document.getElementById(targetId);
                         api = async function(method, path) {
                             calls.push([method, path]);
                             if (method === 'GET' && path === '/api/inference/profiles/qwen/instances/0/logs?lines=180') {
@@ -444,15 +445,25 @@ def test_app_js_cloudflare_section_gating_by_role():
                             }
                             throw new Error('unexpected API call: ' + method + ' ' + path);
                         };
-                        await loadOperationLogs('qwen', 0, 'operation-log-target');
-                        return { calls, html: target.innerHTML };
+                        await loadOperationLogs('qwen', 0, targetId);
+                        const reRendered = renderProfileOperationPanel({
+                            id: 'op-start',
+                            kind: 'profile_start',
+                            state: 'running',
+                            profile_id: 'qwen',
+                            current_step: 'waiting_ready',
+                            progress: 75,
+                            runtime_status: { instance_index: 0 },
+                        });
+                        return { calls, html: target.innerHTML, reRendered };
                     })()
                 `, context);
                 assert(
                     operationLogResult.calls.some(call => call[0] === 'GET' && call[1] === '/api/inference/profiles/qwen/instances/0/logs?lines=180') &&
                     operationLogResult.html.includes('instance 0 logs') &&
-                    operationLogResult.html.includes('server ready on :10000'),
-                    'operation log action should load instance logs into the clicked operation panel'
+                    operationLogResult.html.includes('server ready on :10000') &&
+                    operationLogResult.reRendered.includes('server ready on :10000'),
+                    'operation log action should load and preserve instance logs in the clicked operation panel'
                 );
 
                 const cancelCalls = await vm.runInContext(`
@@ -1588,6 +1599,7 @@ def test_static_inference_model_ui_assets_present():
     assert "selectedInferenceNodeIds" in app_js
     assert "renderProfileOperationPanel" in app_js
     assert "operationLogButton" in app_js
+    assert "operationLogOutputCache" in app_js
     assert "loadOperationLogs" in app_js
     assert "profileLogRequest" in app_js
     assert "hydrateInferenceFailureDiagnostics" in app_js

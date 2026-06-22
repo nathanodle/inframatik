@@ -92,6 +92,7 @@ let inferenceFailureLogFetches = new Set();
 let profileDetailCache = new Map();
 let profileDetailModes = new Map();
 let profileOutputCache = new Map();
+let operationLogOutputCache = new Map();
 let inferenceJobsTimer = null;
 let activeInferenceTab = 'profiles';
 const ACTIVE_MODEL_JOB_STATES = new Set(['queued', 'running', 'hashing', 'verifying']);
@@ -2750,6 +2751,7 @@ function renderProfileOperationPanel(operation, pendingAction = '', options = {}
     const operationIdArg = jsArg(operation.id);
     const logTargetId = operationLogOutputId(operation, options.context);
     const logButton = operationLogButton(operation, detail, { ...options, logTargetId });
+    const cachedLogOutput = logTargetId ? operationLogOutputCache.get(logTargetId) || '' : '';
     return `
         <div class="profile-operation-panel ${panelClass}">
             <div class="profile-operation-head">
@@ -2770,7 +2772,7 @@ function renderProfileOperationPanel(operation, pendingAction = '', options = {}
                 <div class="profile-operation-error">${esc(message)}</div>
                 ${logs ? `<pre class="profile-log-view profile-diagnostic-log">${esc(logs)}</pre>` : ''}
             ` : ''}
-            ${logTargetId ? `<div class="profile-operation-log-output" id="${esc(logTargetId)}"></div>` : ''}
+            ${logTargetId ? `<div class="profile-operation-log-output" id="${esc(logTargetId)}">${cachedLogOutput}</div>` : ''}
         </div>
     `;
 }
@@ -3424,18 +3426,28 @@ async function loadProfileLogs(profileId, instanceIndex = null) {
 async function loadOperationLogs(profileId, instanceIndex = null, targetId = '') {
     const target = targetId ? document.getElementById(targetId) : null;
     const request = profileLogRequest(profileId, instanceIndex);
-    if (target) setHtmlIfChanged(target, `<div class="empty-state compact">Loading ${esc(request.label)} logs...</div>`);
+    const loadingHtml = `<div class="empty-state compact">Loading ${esc(request.label)} logs...</div>`;
+    if (target) {
+        operationLogOutputCache.set(targetId, loadingHtml);
+        setHtmlIfChanged(target, loadingHtml);
+    }
     try {
         const data = await api('GET', modelNodePath(request.path));
         const html = renderProfileLogOutput(request.label, data.logs || '');
         if (target) {
+            operationLogOutputCache.set(targetId, html);
             setHtmlIfChanged(target, html);
         } else {
             await loadProfileLogs(profileId, instanceIndex);
         }
     } catch (e) {
-        if (target) setHtmlIfChanged(target, `<div class="model-job-error">${esc(e.message)}</div>`);
-        else setInferenceError(e.message);
+        if (target) {
+            const errorHtml = `<div class="model-job-error">${esc(e.message)}</div>`;
+            operationLogOutputCache.set(targetId, errorHtml);
+            setHtmlIfChanged(target, errorHtml);
+        } else {
+            setInferenceError(e.message);
+        }
     }
 }
 
