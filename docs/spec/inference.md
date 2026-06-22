@@ -90,6 +90,8 @@ The primary user objects are:
 Engine launcher + Model artifact -> Profile -> Instance
 ```
 
+Launcher setup should support both direct binaries and Python virtualenv module launches without changing the stored launcher contract. For venv-based installs, the UI derives `executable` as `<venv>/bin/python` and stores module args such as `-m vllm.entrypoints.openai.api_server` or `-m sglang.launch_server` in `base_args`. Profiles and systemd rendering still consume the same `executable + base_args + env` shape.
+
 Example:
 
 ```json

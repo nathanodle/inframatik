@@ -1076,6 +1076,10 @@ body {
     font-size: 11px;
 }
 
+.launcher-venv-row {
+    margin-top: -2px;
+}
+
 .launcher-arg-row,
 .launcher-env-row {
     display: grid;

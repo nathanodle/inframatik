@@ -985,9 +985,20 @@
                         <label>Display Name</label>
                         <input type="text" id="launcher-display-name" placeholder="vLLM main" autocomplete="off">
                     </div>
-                    <div class="form-group">
-                        <label>Executable</label>
-                        <input type="text" id="launcher-executable" placeholder="/home/user/vllm/bin/vllm" autocomplete="off">
+                    <div class="model-form-grid">
+                        <div class="form-group">
+                            <label>Executable</label>
+                            <input type="text" id="launcher-executable" placeholder="/home/user/vllm/bin/python" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Python venv</label>
+                            <input type="text" id="launcher-venv-path" placeholder="/home/user/vllm" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="launcher-preset-row launcher-venv-row">
+                        <button class="btn" type="button" onclick="applyLauncherVenvPreset('vllm')">Use vLLM venv</button>
+                        <button class="btn" type="button" onclick="applyLauncherVenvPreset('sglang')">Use SGLang venv</button>
+                        <button class="btn" type="button" onclick="syncLauncherVenvFromExecutable()">Infer venv</button>
                     </div>
                     <div class="form-group">
                         <label>Working Directory</label>

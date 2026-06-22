@@ -980,6 +980,141 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
     )
 
 
+def test_app_js_launcher_venv_builder_sets_python_module_command():
+    _run_node(
+        textwrap.dedent(
+            r"""
+            const fs = require('fs');
+            const vm = require('vm');
+
+            function makeElement(id) {
+                const el = {
+                    id,
+                    style: {},
+                    dataset: {},
+                    value: '',
+                    disabled: false,
+                    selectedIndex: 0,
+                    options: [],
+                    className: '',
+                    children: [],
+                    classList: {
+                        add() {},
+                        remove() {},
+                        contains() { return false; },
+                    },
+                    addEventListener() {},
+                    appendChild(child) {
+                        this.children.push(child);
+                        this.innerHTML += child.innerHTML || '';
+                        return child;
+                    },
+                    querySelectorAll() { return []; },
+                    querySelector() { return null; },
+                };
+                let html = '';
+                Object.defineProperty(el, 'innerHTML', {
+                    get() { return html; },
+                    set(value) { html = String(value ?? ''); },
+                });
+                Object.defineProperty(el, 'textContent', {
+                    get() { return this._textContent || ''; },
+                    set(value) {
+                        this._textContent = String(value ?? '');
+                        this.innerHTML = this._textContent
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(/"/g, '&quot;');
+                    },
+                });
+                return el;
+            }
+
+            const elements = new Map();
+            const document = {
+                cookie: '',
+                addEventListener() {},
+                createElement() {
+                    return makeElement('created');
+                },
+                getElementById(id) {
+                    if (!elements.has(id)) elements.set(id, makeElement(id));
+                    return elements.get(id);
+                },
+                querySelectorAll() { return []; },
+                querySelector() { return makeElement('query-result'); },
+            };
+
+            const context = {
+                console,
+                document,
+                window: { location: { hostname: 'localhost' } },
+                location: { protocol: 'http:', host: 'localhost' },
+                WebSocket: function WebSocket() { return {}; },
+                fetch: async () => { throw new Error('fetch should not run'); },
+                setTimeout,
+                clearTimeout,
+                setInterval: () => 1,
+                clearInterval: () => {},
+            };
+            context.globalThis = context;
+
+            vm.createContext(context);
+            vm.runInContext(fs.readFileSync('static/app.js', 'utf8'), context, {
+                filename: 'static/app.js',
+            });
+
+            vm.runInContext(`
+                function assert(condition, message) {
+                    if (!condition) throw new Error(message);
+                }
+
+                document.getElementById('launcher-venv-path').value = '/home/aiml/venvs/vllm/';
+                applyLauncherVenvPreset('vllm');
+                assert(
+                    document.getElementById('launcher-executable').value === '/home/aiml/venvs/vllm/bin/python',
+                    'vLLM venv preset should derive the Python executable'
+                );
+                assert(
+                    document.getElementById('launcher-engine').value === 'vllm',
+                    'vLLM venv preset should select the vLLM engine'
+                );
+                const vllmArgs = document.getElementById('launcher-arg-rows').innerHTML;
+                assert(vllmArgs.includes('-m'), 'vLLM venv preset should include module flag');
+                assert(
+                    vllmArgs.includes('vllm.entrypoints.openai.api_server'),
+                    'vLLM venv preset should use the OpenAI-compatible API server module'
+                );
+
+                document.getElementById('launcher-venv-path').value = '~/sglang-env';
+                applyLauncherVenvPreset('sglang');
+                assert(
+                    document.getElementById('launcher-executable').value === '~/sglang-env/bin/python',
+                    'SGLang venv preset should preserve expandable home paths'
+                );
+                assert(
+                    document.getElementById('launcher-engine').value === 'sglang',
+                    'SGLang venv preset should select the SGLang engine'
+                );
+                const sglangArgs = document.getElementById('launcher-arg-rows').innerHTML;
+                assert(sglangArgs.includes('sglang.launch_server'), 'SGLang venv preset should use the SGLang module');
+
+                document.getElementById('launcher-executable').value = '/opt/runtime/bin/python3.11';
+                syncLauncherVenvFromExecutable();
+                assert(
+                    document.getElementById('launcher-venv-path').value === '/opt/runtime',
+                    'launcher form should infer a venv root from a Python executable'
+                );
+
+                resetLauncherForm();
+                assert(document.getElementById('launcher-venv-path').value === '', 'reset should clear the venv helper');
+            `, context);
+            """
+        )
+    )
+
+
 def test_static_index_contains_setup_guidance_and_empty_state_copy():
     index_html = (ROOT / "static" / "index.html").read_text()
 
@@ -1029,13 +1164,20 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="inference-operations-list"' in index_html
     assert 'data-inference-tab="launchers"' in index_html
     assert 'id="launcher-executable"' in index_html
+    assert 'id="launcher-venv-path"' in index_html
     assert 'id="launcher-arg-rows"' in index_html
     assert 'id="launcher-env-rows"' in index_html
     assert "applyLauncherPreset('vllm-module')" in index_html
     assert "applyLauncherPreset('sglang-module')" in index_html
+    assert "applyLauncherVenvPreset('vllm')" in index_html
+    assert "applyLauncherVenvPreset('sglang')" in index_html
+    assert "syncLauncherVenvFromExecutable" in index_html
     assert "vllm.entrypoints.openai.api_server" in app_js
     assert "sglang.launch_server" in app_js
     assert "setLauncherBaseArgs" in app_js
+    assert "pythonExecutableFromVenv" in app_js
+    assert "deriveVenvPathFromPythonExecutable" in app_js
+    assert "launcherModuleName" in app_js
     assert 'id="model-jobs-list"' in index_html
     assert 'id="model-store-root-input"' in index_html
     assert "/api/models" in app_js
@@ -1184,6 +1326,7 @@ if __name__ == "__main__":
     test_app_js_system_render_limits_hidden_tab_dom_writes()
     test_app_js_node_selection_starts_priority_refresh_immediately()
     test_app_js_inference_ws_state_transitions_manage_activity_polling()
+    test_app_js_launcher_venv_builder_sets_python_module_command()
     test_static_index_contains_setup_guidance_and_empty_state_copy()
     test_static_inference_model_ui_assets_present()
     test_worker_enrollment_ui_uses_same_origin_backend_endpoint()

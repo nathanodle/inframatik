@@ -3661,7 +3661,7 @@ async function refreshInferenceLaunchers() {
 function resetLauncherForm() {
     const editId = document.getElementById('launcher-edit-id');
     if (editId) editId.value = '';
-    ['launcher-id', 'launcher-display-name', 'launcher-executable', 'launcher-working-dir'].forEach(id => {
+    ['launcher-id', 'launcher-display-name', 'launcher-executable', 'launcher-venv-path', 'launcher-working-dir'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
@@ -3676,18 +3676,67 @@ function setLauncherBaseArgs(args) {
     (args || []).forEach(arg => addLauncherArgRow(arg));
 }
 
+function launcherModuleArgs(engine) {
+    if (engine === 'vllm') return ['-m', 'vllm.entrypoints.openai.api_server'];
+    if (engine === 'sglang') return ['-m', 'sglang.launch_server'];
+    return [];
+}
+
 function applyLauncherPreset(preset) {
     const engine = document.getElementById('launcher-engine');
     if (preset === 'vllm-module') {
         if (engine) engine.value = 'vllm';
-        setLauncherBaseArgs(['-m', 'vllm.entrypoints.openai.api_server']);
+        setLauncherBaseArgs(launcherModuleArgs('vllm'));
     } else if (preset === 'sglang-module') {
         if (engine) engine.value = 'sglang';
-        setLauncherBaseArgs(['-m', 'sglang.launch_server']);
+        setLauncherBaseArgs(launcherModuleArgs('sglang'));
     } else if (preset === 'direct-binary') {
         setLauncherBaseArgs([]);
     }
     setInferenceStatus('Launcher base args updated.');
+}
+
+function normalizedVenvPath(value) {
+    return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function pythonExecutableFromVenv(value) {
+    const venvPath = normalizedVenvPath(value);
+    return venvPath ? `${venvPath}/bin/python` : '';
+}
+
+function deriveVenvPathFromPythonExecutable(value) {
+    return String(value || '').trim().replace(/\/bin\/python(?:\d+(?:\.\d+)?)?$/, '');
+}
+
+function syncLauncherVenvFromExecutable() {
+    const executable = document.getElementById('launcher-executable');
+    const venv = document.getElementById('launcher-venv-path');
+    if (!executable || !venv) return;
+    const inferred = deriveVenvPathFromPythonExecutable(executable.value || '');
+    if (inferred && inferred !== (executable.value || '').trim()) {
+        venv.value = inferred;
+        setInferenceStatus('Python venv inferred from executable.');
+        return;
+    }
+    setInferenceError('Executable does not look like a Python venv path.');
+}
+
+function applyLauncherVenvPreset(engineName) {
+    const engine = engineName === 'sglang' ? 'sglang' : 'vllm';
+    const venv = document.getElementById('launcher-venv-path');
+    const executable = document.getElementById('launcher-executable');
+    const python = pythonExecutableFromVenv(venv ? venv.value : '');
+    if (!python) {
+        setInferenceError('Python venv path is required.');
+        return;
+    }
+    setInferenceError('');
+    if (executable) executable.value = python;
+    const engineEl = document.getElementById('launcher-engine');
+    if (engineEl) engineEl.value = engine;
+    setLauncherBaseArgs(launcherModuleArgs(engine));
+    setInferenceStatus(`${engine === 'vllm' ? 'vLLM' : 'SGLang'} launcher set to ${python}.`);
 }
 
 function addLauncherArgRow(value = '') {
@@ -3781,12 +3830,14 @@ function renderLaunchers(launchers) {
     setHtmlIfChanged(el, launchers.map(launcher => {
         const preview = (launcher.command_preview || [launcher.executable, ...(launcher.base_args || [])]).join(' ');
         const envKeys = (launcher.redacted_env_keys || []).join(', ') || 'none';
+        const moduleName = launcherModuleName(launcher);
+        const mode = moduleName ? `module ${moduleName}` : 'direct command';
         return `
             <div class="launcher-card">
                 <div class="launcher-card-header">
                     <div>
                         <div class="launcher-card-title">${esc(launcher.display_name || launcher.id)}</div>
-                        <div class="launcher-card-meta">${esc(launcher.id)} · ${esc(launcher.engine)} · env: ${esc(envKeys)}</div>
+                        <div class="launcher-card-meta">${esc(launcher.id)} · ${esc(launcher.engine)} · ${esc(mode)} · env: ${esc(envKeys)}</div>
                     </div>
                     <div class="model-actions">
                         <button class="btn" onclick="editLauncher('${esc(launcher.id)}')">Edit</button>
@@ -3811,6 +3862,11 @@ function editLauncher(launcherId) {
     document.getElementById('launcher-display-name').value = launcher.display_name || '';
     document.getElementById('launcher-engine').value = launcher.engine || 'vllm';
     document.getElementById('launcher-executable').value = launcher.executable || '';
+    const venvEl = document.getElementById('launcher-venv-path');
+    if (venvEl) {
+        const inferred = deriveVenvPathFromPythonExecutable(launcher.executable || '');
+        venvEl.value = inferred && inferred !== (launcher.executable || '') ? inferred : '';
+    }
     document.getElementById('launcher-working-dir').value = launcher.working_dir || '';
     setElementHtml('launcher-arg-rows', '');
     (launcher.base_args || []).forEach(arg => addLauncherArgRow(arg));
@@ -3823,6 +3879,14 @@ function resetLauncherFormAndEnableId() {
     resetLauncherForm();
     const idEl = document.getElementById('launcher-id');
     if (idEl) idEl.disabled = false;
+}
+
+function launcherModuleName(launcher) {
+    const args = launcher && launcher.base_args;
+    if (!Array.isArray(args)) return '';
+    const moduleFlagIndex = args.indexOf('-m');
+    if (moduleFlagIndex === -1 || !args[moduleFlagIndex + 1]) return '';
+    return args[moduleFlagIndex + 1];
 }
 
 async function validateLauncher(launcherId) {
