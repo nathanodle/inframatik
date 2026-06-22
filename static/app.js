@@ -3594,6 +3594,25 @@ function resetLauncherForm() {
     setElementHtml('launcher-env-rows', '');
 }
 
+function setLauncherBaseArgs(args) {
+    setElementHtml('launcher-arg-rows', '');
+    (args || []).forEach(arg => addLauncherArgRow(arg));
+}
+
+function applyLauncherPreset(preset) {
+    const engine = document.getElementById('launcher-engine');
+    if (preset === 'vllm-module') {
+        if (engine) engine.value = 'vllm';
+        setLauncherBaseArgs(['-m', 'vllm.entrypoints.openai.api_server']);
+    } else if (preset === 'sglang-module') {
+        if (engine) engine.value = 'sglang';
+        setLauncherBaseArgs(['-m', 'sglang.launch_server']);
+    } else if (preset === 'direct-binary') {
+        setLauncherBaseArgs([]);
+    }
+    setInferenceStatus('Launcher base args updated.');
+}
+
 function addLauncherArgRow(value = '') {
     const el = document.getElementById('launcher-arg-rows');
     if (!el) return;

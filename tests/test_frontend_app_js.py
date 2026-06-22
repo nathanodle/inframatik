@@ -813,6 +813,11 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="launcher-executable"' in index_html
     assert 'id="launcher-arg-rows"' in index_html
     assert 'id="launcher-env-rows"' in index_html
+    assert "applyLauncherPreset('vllm-module')" in index_html
+    assert "applyLauncherPreset('sglang-module')" in index_html
+    assert "vllm.entrypoints.openai.api_server" in app_js
+    assert "sglang.launch_server" in app_js
+    assert "setLauncherBaseArgs" in app_js
     assert 'id="model-jobs-list"' in index_html
     assert 'id="model-store-root-input"' in index_html
     assert "/api/models" in app_js
@@ -891,6 +896,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".model-table-row" in style_css
     assert ".model-job-row" in style_css
     assert ".launcher-card" in style_css
+    assert ".launcher-preset-row" in style_css
     assert ".launcher-validation-panel" in style_css
     assert ".launcher-validation-output" in style_css
     assert ".profile-card" in style_css

@@ -1063,6 +1063,19 @@ body {
     gap: 8px;
 }
 
+.launcher-preset-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.launcher-preset-row .btn {
+    min-height: 26px;
+    padding: 4px 8px;
+    font-size: 11px;
+}
+
 .launcher-arg-row,
 .launcher-env-row {
     display: grid;

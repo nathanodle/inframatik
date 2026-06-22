@@ -998,6 +998,11 @@
                             <label>Base Args</label>
                             <button class="btn" type="button" onclick="addLauncherArgRow()">Add Arg</button>
                         </div>
+                        <div class="launcher-preset-row">
+                            <button class="btn" type="button" onclick="applyLauncherPreset('vllm-module')">vLLM Python module</button>
+                            <button class="btn" type="button" onclick="applyLauncherPreset('sglang-module')">SGLang Python module</button>
+                            <button class="btn" type="button" onclick="applyLauncherPreset('direct-binary')">Direct binary</button>
+                        </div>
                         <div id="launcher-arg-rows" class="launcher-token-rows"></div>
                     </div>
                     <div class="launcher-token-section">
