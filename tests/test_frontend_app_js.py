@@ -768,7 +768,7 @@ def test_app_js_cloudflare_section_gating_by_role():
                     failedStartupHtml.includes('Next action') &&
                     failedStartupHtml.includes('Validate the engine launcher') &&
                     failedStartupHtml.includes('Suggested Env') &&
-                    failedStartupHtml.includes('openLauncherValidation(&quot;vllm-main&quot;)') &&
+                    failedStartupHtml.includes('openLauncherValidation(&quot;vllm-main&quot;, &quot;qwen&quot;)') &&
                     failedStartupHtml.includes('Validate launcher') &&
                     failedStartupHtml.includes('Rollback') &&
                     failedStartupHtml.includes('Rollback stopped 1 started instance') &&
@@ -784,6 +784,8 @@ def test_app_js_cloudflare_section_gating_by_role():
                         selectedNodeId = 'self-node';
                         isMaster = false;
                         inferenceLaunchersData = [];
+                        inferenceProfilesData = [{ id: 'qwen', display_name: 'Qwen', state: 'failed', engine_launcher_id: 'vllm-main' }];
+                        launcherValidationProfileContext = new Map();
                         const originalRenderLaunchers = renderLaunchers;
                         const originalValidateLauncher = validateLauncher;
                         const originalApi = api;
@@ -799,8 +801,8 @@ def test_app_js_cloudflare_section_gating_by_role():
                             throw new Error('unexpected API call: ' + method + ' ' + path);
                         };
                         try {
-                            await openLauncherValidation('vllm-main');
-                            return { calls, activeInferenceTab };
+                            await openLauncherValidation('vllm-main', 'qwen');
+                            return { calls, activeInferenceTab, contextProfile: launcherValidationProfileContext.get('vllm-main') };
                         } finally {
                             renderLaunchers = originalRenderLaunchers;
                             validateLauncher = originalValidateLauncher;
@@ -813,6 +815,7 @@ def test_app_js_cloudflare_section_gating_by_role():
                     launcherFixActionResult.calls.some(call => call[0] === 'GET' && call[1] === '/api/inference/launchers') &&
                     launcherFixActionResult.calls.some(call => call[0] === 'renderLaunchers' && call[1] === 'vllm-main') &&
                     launcherFixActionResult.calls.some(call => call[0] === 'validateLauncher' && call[1] === 'vllm-main') &&
+                    launcherFixActionResult.contextProfile === 'qwen' &&
                     launcherFixActionResult.calls.some(call => call[0] === 'status' && String(call[1]).includes('Validating launcher')),
                     'failed startup launcher fix action should load Launchers and validate the profile launcher'
                 );
@@ -1855,6 +1858,35 @@ def test_app_js_cloudflare_section_gating_by_role():
                     launcherValidationSuggestionHtml.includes('data-copy=') &&
                     launcherValidationSuggestionHtml.includes('copyText(this.dataset.copy, this)'),
                     'launcher validation should render suggested env values with copy controls'
+                );
+
+                const launcherValidationRecoveryHtml = vm.runInContext(`
+                    inferenceProfilesData = [{ id: 'qwen', display_name: 'Qwen', state: 'failed', engine_launcher_id: 'vllm-main' }];
+                    launcherValidationProfileContext = new Map([['vllm-main', 'qwen']]);
+                    renderLauncherValidation({
+                        launcher_id: 'vllm-main',
+                        valid: true,
+                        errors: [],
+                        executable: { path: '/home/aiml/vllm/venv/bin/vllm', exists: true, is_file: true, executable: true },
+                        working_dir: null,
+                        runtime: {
+                            checked: true,
+                            valid: true,
+                            code: 0,
+                            elapsed_ms: 44,
+                            command_preview: ['/home/aiml/vllm/venv/bin/vllm', '--help'],
+                            output: '',
+                        },
+                    }, 'vllm-main');
+                `, context);
+                assert(
+                    launcherValidationRecoveryHtml.includes('launcher-validation-recovery') &&
+                    launcherValidationRecoveryHtml.includes('Recover Qwen') &&
+                    launcherValidationRecoveryHtml.includes('runProfileAction(&quot;qwen&quot;') &&
+                    launcherValidationRecoveryHtml.includes('Start profile') &&
+                    launcherValidationRecoveryHtml.includes('loadProfileDetails(&quot;qwen&quot;)') &&
+                    launcherValidationRecoveryHtml.includes('Back to profile'),
+                    'launcher validation should offer direct recovery actions for the failed profile context'
                 );
 
                 const launcherApplyEnvResult = await vm.runInContext(`
@@ -2971,6 +3003,8 @@ def test_static_inference_model_ui_assets_present():
     assert "markInferenceFallbackSync" in app_js
     assert "normalizeInferenceOperationResponse" in app_js
     assert "openLauncherValidation" in app_js
+    assert "launcherValidationProfileContext" in app_js
+    assert "renderLauncherValidationRecovery" in app_js
     assert "websocketEventMatchesSelectedNode" in app_js
     assert "mergeInferenceOperationSnapshot" in app_js
     assert "selectedInferenceNodeIds" in app_js
@@ -3074,6 +3108,7 @@ def test_static_inference_model_ui_assets_present():
     assert ".launcher-validation-output" in style_css
     assert ".launcher-validation-suggestions" in style_css
     assert ".launcher-validation-suggestions-head" in style_css
+    assert ".launcher-validation-recovery" in style_css
     assert ".profile-card" in style_css
     assert ".inference-live-status" in style_css
     assert ".inference-header-controls" in style_css

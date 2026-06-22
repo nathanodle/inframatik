@@ -91,6 +91,7 @@ let inferenceSystemData = null;
 let pendingInferenceProfileActions = new Map();
 let pendingInferenceInstanceActions = new Map();
 let inferenceFailureLogFetches = new Set();
+let launcherValidationProfileContext = new Map();
 let profileDetailCache = new Map();
 let profileDetailModes = new Map();
 let profileOutputCache = new Map();
@@ -2084,6 +2085,7 @@ function removeInferenceLauncher(launcherId) {
     if (!launcherId || !inferenceLaunchersData) return false;
     const before = inferenceLaunchersData.length;
     inferenceLaunchersData = inferenceLaunchersData.filter(item => item.id !== launcherId);
+    launcherValidationProfileContext.delete(launcherId);
     renderLauncherState();
     return inferenceLaunchersData.length !== before;
 }
@@ -3000,7 +3002,7 @@ function operationFailureDiagnosis(operation, detail) {
         cause = 'The launcher process cannot load a required shared library.';
         action = 'Validate the engine launcher. If Suggested Env appears, apply it to add the venv library path, then start the profile again.';
         if (launcherId) {
-            fixAction = `<button type="button" class="btn primary" onclick="openLauncherValidation(${jsArg(launcherId)})">Validate launcher</button>`;
+            fixAction = `<button type="button" class="btn primary" onclick="openLauncherValidation(${jsArg(launcherId)}, ${jsArg(operation.profile_id || '')})">Validate launcher</button>`;
         }
     } else if ((Number.isFinite(restartCount) && restartCount >= 3) || lower.includes('restarted')) {
         cause = 'The generated systemd unit is restarting before the API becomes reachable.';
@@ -3035,8 +3037,9 @@ function operationFailureDiagnosis(operation, detail) {
     `;
 }
 
-async function openLauncherValidation(launcherId) {
+async function openLauncherValidation(launcherId, profileId = '') {
     if (!launcherId) return;
+    if (profileId) launcherValidationProfileContext.set(launcherId, String(profileId));
     setInferenceTab('launchers');
     let launcher = (inferenceLaunchersData || []).find(item => item.id === launcherId);
     if (!launcher) {
@@ -5005,6 +5008,35 @@ function renderLauncherValidationSuggestions(runtime, launcherId = '') {
     `;
 }
 
+function launcherValidationProfileId(launcherId) {
+    if (!launcherId) return '';
+    return launcherValidationProfileContext.get(launcherId) || '';
+}
+
+function renderLauncherValidationRecovery(launcherId = '') {
+    const profileId = launcherValidationProfileId(launcherId);
+    if (!profileId) return '';
+    const profile = profileById(profileId);
+    if (!profile) {
+        launcherValidationProfileContext.delete(launcherId);
+        return '';
+    }
+    const action = profileCanSaveRestart(profile) ? 'restart' : 'start';
+    const profileIdArg = jsArg(profileId);
+    return `
+        <div class="launcher-validation-recovery">
+            <div>
+                <div class="launcher-card-title">Recover ${esc(profile.display_name || profile.id)}</div>
+                <div class="launcher-card-meta">Retry the failed profile after this launcher validates.</div>
+            </div>
+            <div class="profile-detail-actions">
+                <button type="button" class="btn primary" onclick="runProfileAction(${profileIdArg}, '${action}', this)">${esc(profileActionLabel(action))} profile</button>
+                <button type="button" class="btn" onclick="setInferenceTab('profiles'); loadProfileDetails(${profileIdArg})">Back to profile</button>
+            </div>
+        </div>
+    `;
+}
+
 function renderLauncherValidation(result, launcherId = '') {
     const runtime = result.runtime || {};
     const executable = result.executable || {};
@@ -5013,6 +5045,7 @@ function renderLauncherValidation(result, launcherId = '') {
     const command = (runtime.command_preview || []).join(' ');
     const runtimeChecked = runtime.checked === true;
     const runtimeOk = runtime.valid === true;
+    const effectiveLauncherId = launcherId || result.launcher_id || '';
     return `
         <div class="launcher-validation-panel ${result.valid ? 'valid' : 'failed'}">
             <div class="launcher-validation-head">
@@ -5032,7 +5065,8 @@ function renderLauncherValidation(result, launcherId = '') {
             </div>
             ${command ? `<div class="launcher-command-preview">${esc(command)}</div>` : ''}
             ${errors.length ? `<div class="launcher-validation-errors">${errors.map(error => `<div>${esc(error)}</div>`).join('')}</div>` : ''}
-            ${renderLauncherValidationSuggestions(runtime, launcherId || result.launcher_id || '')}
+            ${renderLauncherValidationSuggestions(runtime, effectiveLauncherId)}
+            ${renderLauncherValidationRecovery(effectiveLauncherId)}
             ${runtime.output ? `<pre class="launcher-validation-output">${esc(runtime.output)}</pre>` : ''}
         </div>
     `;
