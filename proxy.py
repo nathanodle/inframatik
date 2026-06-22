@@ -300,6 +300,7 @@ async def _handle_local_inference(method: str, route_path: str, query: dict[str,
 
     if route_path.startswith("/api/inference/profiles/"):
         import inference_profiles
+        import inference_operations
 
         tail = route_path[len("/api/inference/profiles/"):]
         parts = tail.split("/")
@@ -313,6 +314,63 @@ async def _handle_local_inference(method: str, route_path: str, query: dict[str,
             return inference_profiles.delete_profile(profile_id, force=_query_bool(query, "force"))
         if method == "POST" and suffix == "/render":
             return inference_profiles.render_profile(profile_id)
+        if method == "POST" and suffix == "/start":
+            return await inference_operations.start_profile(profile_id)
+        if method == "POST" and suffix == "/stop":
+            return await inference_operations.stop_profile(profile_id)
+        if method == "POST" and suffix == "/restart":
+            return await inference_operations.restart_profile(profile_id)
+        if method == "GET" and suffix == "/instances":
+            return await inference_operations.get_profile_instances(profile_id)
+        if method == "GET" and suffix == "/logs":
+            lines = _query_int(query, "lines", 150)
+            instance_values = query.get("instance") or []
+            instance_index = int(instance_values[-1]) if instance_values else None
+            return await inference_operations.get_profile_logs(profile_id, lines=lines, instance_index=instance_index)
+        if method == "GET" and suffix == "/health":
+            return await inference_operations.get_profile_health(profile_id)
+        if method == "POST" and suffix == "/test":
+            return await inference_operations.test_profile(profile_id, body or {})
+        if len(parts) >= 3 and parts[1] == "instances":
+            instance_index = int(parts[2])
+            instance_suffix = "/" + "/".join(parts[3:]) if len(parts) > 3 else ""
+            if method == "POST" and instance_suffix == "/start":
+                return await inference_operations.start_instance(profile_id, instance_index)
+            if method == "POST" and instance_suffix == "/stop":
+                return await inference_operations.stop_instance(profile_id, instance_index)
+            if method == "POST" and instance_suffix == "/restart":
+                return await inference_operations.restart_instance(profile_id, instance_index)
+            if method == "GET" and instance_suffix == "/logs":
+                return await inference_operations.get_instance_logs(profile_id, instance_index, lines=_query_int(query, "lines", 300))
+            if method == "GET" and instance_suffix == "/health":
+                return await inference_operations.get_instance_health(profile_id, instance_index)
+            if method == "POST" and instance_suffix == "/test":
+                return await inference_operations.test_instance(profile_id, instance_index, body or {})
+        return _NO_MATCH
+
+    if route_path == "/api/inference/operations":
+        import inference_operations
+
+        if method == "GET":
+            profile_values = query.get("profile_id") or []
+            state_values = query.get("state") or []
+            return inference_operations.list_operations(
+                profile_id=profile_values[-1] if profile_values else None,
+                state=state_values[-1] if state_values else None,
+            )
+        return _NO_MATCH
+
+    if route_path.startswith("/api/inference/operations/"):
+        import inference_operations
+
+        tail = route_path[len("/api/inference/operations/"):]
+        parts = tail.split("/")
+        operation_id = parts[0]
+        suffix = "/" + "/".join(parts[1:]) if len(parts) > 1 else ""
+        if method == "GET" and suffix == "":
+            return inference_operations.get_operation(operation_id)
+        if method == "POST" and suffix == "/cancel":
+            return inference_operations.cancel_operation(operation_id)
         return _NO_MATCH
 
     if not route_path.startswith("/api/inference/launchers"):

@@ -1483,6 +1483,147 @@ async def proxy_render_inference_profile(node_id: str, profile_id: str):
         raise HTTPException(502, str(e))
 
 
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles/{profile_id}/start")
+async def proxy_start_inference_profile(node_id: str, profile_id: str):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/profiles/{profile_id}/start")
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles/{profile_id}/stop")
+async def proxy_stop_inference_profile(node_id: str, profile_id: str):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/profiles/{profile_id}/stop")
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles/{profile_id}/restart")
+async def proxy_restart_inference_profile(node_id: str, profile_id: str):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/profiles/{profile_id}/restart")
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/inference/profiles/{profile_id}/instances")
+async def proxy_inference_profile_instances(node_id: str, profile_id: str):
+    try:
+        return await proxy_to_node(node_id, "GET", f"/api/inference/profiles/{profile_id}/instances")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles/{profile_id}/instances/{instance_index}/start")
+async def proxy_start_inference_instance(node_id: str, profile_id: str, instance_index: int):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/profiles/{profile_id}/instances/{instance_index}/start")
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles/{profile_id}/instances/{instance_index}/stop")
+async def proxy_stop_inference_instance(node_id: str, profile_id: str, instance_index: int):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/profiles/{profile_id}/instances/{instance_index}/stop")
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles/{profile_id}/instances/{instance_index}/restart")
+async def proxy_restart_inference_instance(node_id: str, profile_id: str, instance_index: int):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/profiles/{profile_id}/instances/{instance_index}/restart")
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/inference/profiles/{profile_id}/logs")
+async def proxy_inference_profile_logs(node_id: str, profile_id: str, lines: int = 150, instance: Optional[int] = None):
+    params = {"lines": str(lines)}
+    if instance is not None:
+        params["instance"] = str(instance)
+    path = f"/api/inference/profiles/{profile_id}/logs?{urlencode(params)}"
+    try:
+        return await proxy_to_node(node_id, "GET", path)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/inference/profiles/{profile_id}/instances/{instance_index}/logs")
+async def proxy_inference_instance_logs(node_id: str, profile_id: str, instance_index: int, lines: int = 300):
+    path = f"/api/inference/profiles/{profile_id}/instances/{instance_index}/logs?{urlencode({'lines': str(lines)})}"
+    try:
+        return await proxy_to_node(node_id, "GET", path)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/inference/profiles/{profile_id}/health")
+async def proxy_inference_profile_health(node_id: str, profile_id: str):
+    try:
+        return await proxy_to_node(node_id, "GET", f"/api/inference/profiles/{profile_id}/health")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/inference/profiles/{profile_id}/instances/{instance_index}/health")
+async def proxy_inference_instance_health(node_id: str, profile_id: str, instance_index: int):
+    try:
+        return await proxy_to_node(node_id, "GET", f"/api/inference/profiles/{profile_id}/instances/{instance_index}/health")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles/{profile_id}/test")
+async def proxy_test_inference_profile(node_id: str, profile_id: str, body: dict):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/profiles/{profile_id}/test", body)
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/profiles/{profile_id}/instances/{instance_index}/test")
+async def proxy_test_inference_instance(node_id: str, profile_id: str, instance_index: int, body: dict):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/profiles/{profile_id}/instances/{instance_index}/test", body)
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/inference/operations")
+async def proxy_inference_operations(node_id: str, profile_id: Optional[str] = None, state: Optional[str] = None):
+    params = {}
+    if profile_id:
+        params["profile_id"] = profile_id
+    if state:
+        params["state"] = state
+    path = "/api/inference/operations"
+    if params:
+        path = f"{path}?{urlencode(params)}"
+    try:
+        return await proxy_to_node(node_id, "GET", path)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.get("/api/nodes/{node_id}/inference/operations/{operation_id}")
+async def proxy_get_inference_operation(node_id: str, operation_id: str):
+    try:
+        return await proxy_to_node(node_id, "GET", f"/api/inference/operations/{operation_id}")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@cluster_router.post("/api/nodes/{node_id}/inference/operations/{operation_id}/cancel")
+async def proxy_cancel_inference_operation(node_id: str, operation_id: str):
+    try:
+        return await proxy_to_node(node_id, "POST", f"/api/inference/operations/{operation_id}/cancel")
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
 @cluster_router.post("/api/nodes/{node_id}/inference/launchers/{launcher_id}/validate")
 async def proxy_validate_inference_launcher(node_id: str, launcher_id: str):
     try:

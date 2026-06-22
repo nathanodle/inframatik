@@ -1,11 +1,13 @@
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 import inference_launchers
 import inference_planner
 import inference_profiles
+import inference_operations
 
 
 inference_router = APIRouter()
@@ -35,6 +37,10 @@ def _raise_http_error(exc: inference_launchers.LauncherError):
 
 
 def _raise_profile_error(exc: inference_profiles.ProfileError):
+    raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+def _raise_operation_error(exc: inference_operations.OperationError):
     raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
@@ -89,6 +95,164 @@ async def api_render_inference_profile(profile_id: str):
         return inference_profiles.render_profile(profile_id)
     except inference_profiles.ProfileError as e:
         _raise_profile_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/start", status_code=202)
+async def api_start_inference_profile(profile_id: str):
+    try:
+        return await inference_operations.start_profile(profile_id)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/stop", status_code=202)
+async def api_stop_inference_profile(profile_id: str):
+    try:
+        return await inference_operations.stop_profile(profile_id)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/restart", status_code=202)
+async def api_restart_inference_profile(profile_id: str):
+    try:
+        return await inference_operations.restart_profile(profile_id)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.get("/api/inference/profiles/{profile_id}/instances")
+async def api_inference_profile_instances(profile_id: str):
+    try:
+        return await inference_operations.get_profile_instances(profile_id)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/instances/{instance_index}/start", status_code=202)
+async def api_start_inference_instance(profile_id: str, instance_index: int):
+    try:
+        return await inference_operations.start_instance(profile_id, instance_index)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/instances/{instance_index}/stop", status_code=202)
+async def api_stop_inference_instance(profile_id: str, instance_index: int):
+    try:
+        return await inference_operations.stop_instance(profile_id, instance_index)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/instances/{instance_index}/restart", status_code=202)
+async def api_restart_inference_instance(profile_id: str, instance_index: int):
+    try:
+        return await inference_operations.restart_instance(profile_id, instance_index)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.get("/api/inference/profiles/{profile_id}/logs")
+async def api_inference_profile_logs(profile_id: str, lines: int = 150, instance: Optional[int] = None):
+    try:
+        return await inference_operations.get_profile_logs(profile_id, lines=lines, instance_index=instance)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.get("/api/inference/profiles/{profile_id}/instances/{instance_index}/logs")
+async def api_inference_instance_logs(profile_id: str, instance_index: int, lines: int = 300):
+    try:
+        return await inference_operations.get_instance_logs(profile_id, instance_index, lines=lines)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.get("/api/inference/profiles/{profile_id}/health")
+async def api_inference_profile_health(profile_id: str):
+    try:
+        return await inference_operations.get_profile_health(profile_id)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.get("/api/inference/profiles/{profile_id}/instances/{instance_index}/health")
+async def api_inference_instance_health(profile_id: str, instance_index: int):
+    try:
+        return await inference_operations.get_instance_health(profile_id, instance_index)
+    except (inference_operations.OperationError, inference_profiles.ProfileError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        _raise_profile_error(e)
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/test")
+async def api_test_inference_profile(profile_id: str, body: dict = None):
+    try:
+        return await inference_operations.test_profile(profile_id, body or {})
+    except (inference_operations.OperationError, inference_profiles.ProfileError, httpx.HTTPError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        if isinstance(e, inference_profiles.ProfileError):
+            _raise_profile_error(e)
+        raise HTTPException(502, str(e))
+
+
+@inference_router.post("/api/inference/profiles/{profile_id}/instances/{instance_index}/test")
+async def api_test_inference_instance(profile_id: str, instance_index: int, body: dict = None):
+    try:
+        return await inference_operations.test_instance(profile_id, instance_index, body or {})
+    except (inference_operations.OperationError, inference_profiles.ProfileError, httpx.HTTPError) as e:
+        if isinstance(e, inference_operations.OperationError):
+            _raise_operation_error(e)
+        if isinstance(e, inference_profiles.ProfileError):
+            _raise_profile_error(e)
+        raise HTTPException(502, str(e))
+
+
+@inference_router.get("/api/inference/operations")
+async def api_inference_operations(profile_id: Optional[str] = None, state: Optional[str] = None):
+    try:
+        return inference_operations.list_operations(profile_id=profile_id, state=state)
+    except inference_operations.OperationError as e:
+        _raise_operation_error(e)
+
+
+@inference_router.get("/api/inference/operations/{operation_id}")
+async def api_get_inference_operation(operation_id: str):
+    try:
+        return inference_operations.get_operation(operation_id)
+    except inference_operations.OperationError as e:
+        _raise_operation_error(e)
+
+
+@inference_router.post("/api/inference/operations/{operation_id}/cancel")
+async def api_cancel_inference_operation(operation_id: str):
+    try:
+        return inference_operations.cancel_operation(operation_id)
+    except inference_operations.OperationError as e:
+        _raise_operation_error(e)
 
 
 @inference_router.get("/api/inference/launchers")

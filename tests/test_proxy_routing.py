@@ -10,6 +10,7 @@ import cloudflared
 import inference_launchers
 import inference_planner
 import inference_profiles
+import inference_operations
 import proxy
 import services
 import system
@@ -372,6 +373,85 @@ def test_handle_local_inference_profiles_dispatch():
         ("render", "qwen"),
         ("delete", "qwen", True),
     ]
+
+
+def test_handle_local_inference_operations_dispatch():
+    original_start = inference_operations.start_profile
+    original_stop = inference_operations.stop_profile
+    original_restart = inference_operations.restart_profile
+    original_instances = inference_operations.get_profile_instances
+    original_logs = inference_operations.get_profile_logs
+    original_health = inference_operations.get_profile_health
+    original_list_ops = inference_operations.list_operations
+    original_get_op = inference_operations.get_operation
+    original_cancel = inference_operations.cancel_operation
+    calls = []
+
+    async def fake_start(profile_id):
+        calls.append(("start", profile_id))
+        return {"id": "op_start"}
+
+    async def fake_stop(profile_id):
+        calls.append(("stop", profile_id))
+        return {"id": "op_stop"}
+
+    async def fake_restart(profile_id):
+        calls.append(("restart", profile_id))
+        return {"id": "op_restart"}
+
+    async def fake_instances(profile_id):
+        calls.append(("instances", profile_id))
+        return {"instances": []}
+
+    async def fake_logs(profile_id, lines=150, instance_index=None):
+        calls.append(("logs", profile_id, lines, instance_index))
+        return {"logs": ""}
+
+    async def fake_health(profile_id):
+        calls.append(("health", profile_id))
+        return {"health": "healthy"}
+
+    inference_operations.start_profile = fake_start
+    inference_operations.stop_profile = fake_stop
+    inference_operations.restart_profile = fake_restart
+    inference_operations.get_profile_instances = fake_instances
+    inference_operations.get_profile_logs = fake_logs
+    inference_operations.get_profile_health = fake_health
+    inference_operations.list_operations = lambda profile_id=None, state=None: calls.append(("list_ops", profile_id, state)) or {"operations": []}
+    inference_operations.get_operation = lambda op_id: calls.append(("get_op", op_id)) or {"id": op_id}
+    inference_operations.cancel_operation = lambda op_id: calls.append(("cancel", op_id)) or {"id": op_id, "state": "canceled"}
+    try:
+        started = _run(proxy._handle_local_inference("POST", "/api/inference/profiles/qwen/start", {}))
+        stopped = _run(proxy._handle_local_inference("POST", "/api/inference/profiles/qwen/stop", {}))
+        restarted = _run(proxy._handle_local_inference("POST", "/api/inference/profiles/qwen/restart", {}))
+        instances = _run(proxy._handle_local_inference("GET", "/api/inference/profiles/qwen/instances", {}))
+        logs = _run(proxy._handle_local_inference("GET", "/api/inference/profiles/qwen/logs", {"lines": ["22"], "instance": ["1"]}))
+        health = _run(proxy._handle_local_inference("GET", "/api/inference/profiles/qwen/health", {}))
+        ops = _run(proxy._handle_local_inference("GET", "/api/inference/operations", {"profile_id": ["qwen"], "state": ["running"]}))
+        op = _run(proxy._handle_local_inference("GET", "/api/inference/operations/op_1", {}))
+        canceled = _run(proxy._handle_local_inference("POST", "/api/inference/operations/op_1/cancel", {}))
+    finally:
+        inference_operations.start_profile = original_start
+        inference_operations.stop_profile = original_stop
+        inference_operations.restart_profile = original_restart
+        inference_operations.get_profile_instances = original_instances
+        inference_operations.get_profile_logs = original_logs
+        inference_operations.get_profile_health = original_health
+        inference_operations.list_operations = original_list_ops
+        inference_operations.get_operation = original_get_op
+        inference_operations.cancel_operation = original_cancel
+
+    assert started == {"id": "op_start"}
+    assert stopped == {"id": "op_stop"}
+    assert restarted == {"id": "op_restart"}
+    assert instances == {"instances": []}
+    assert logs == {"logs": ""}
+    assert health == {"health": "healthy"}
+    assert ops == {"operations": []}
+    assert op == {"id": "op_1"}
+    assert canceled == {"id": "op_1", "state": "canceled"}
+    assert ("logs", "qwen", 22, 1) in calls
+    assert ("list_ops", "qwen", "running") in calls
 
 
 def test_handle_local_system_dispatch():

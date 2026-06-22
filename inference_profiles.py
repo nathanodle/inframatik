@@ -161,6 +161,48 @@ def get_profile(profile_id: str) -> dict:
         return _public_profile(profile)
 
 
+def get_profile_raw(profile_id: str) -> dict:
+    profile_id = _validate_profile_id(profile_id)
+    initialize_profile_registries()
+    with _lock:
+        profile = _load_profiles_registry().get("profiles", {}).get(profile_id)
+        if not profile:
+            raise ProfileNotFoundError(f"Inference profile not found: {profile_id}")
+        return copy.deepcopy(profile)
+
+
+def list_profile_instances(profile_id: str) -> list[dict]:
+    profile = get_profile_raw(profile_id)
+    return copy.deepcopy(profile.get("instances") or [])
+
+
+def update_profile_runtime_state(profile_id: str, state: str, instance_updates: Optional[dict[int, dict]] = None) -> dict:
+    profile_id = _validate_profile_id(profile_id)
+    initialize_profile_registries()
+    with _lock:
+        registry = _load_profiles_registry()
+        profile = registry.get("profiles", {}).get(profile_id)
+        if not profile:
+            raise ProfileNotFoundError(f"Inference profile not found: {profile_id}")
+        profile["state"] = state
+        profile["updated_at"] = _now()
+        if instance_updates:
+            instances = []
+            for instance in profile.get("instances") or []:
+                item = copy.deepcopy(instance)
+                try:
+                    update = instance_updates.get(int(item.get("index")))
+                except (TypeError, ValueError):
+                    update = None
+                if update:
+                    item.update(copy.deepcopy(update))
+                instances.append(item)
+            profile["instances"] = instances
+        registry["profiles"][profile_id] = profile
+        _save_profiles_registry(registry)
+        return _public_profile(profile)
+
+
 def render_profile(profile_id: str) -> dict:
     profile_id = _validate_profile_id(profile_id)
     initialize_profile_registries()
