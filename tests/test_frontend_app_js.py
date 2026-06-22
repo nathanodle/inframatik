@@ -2458,6 +2458,7 @@ def test_app_js_inference_node_selection_renders_cached_snapshot_immediately():
                 window: { location: { hostname: 'localhost' } },
                 location: { protocol: 'http:', host: 'localhost' },
                 WebSocket: function WebSocket() { return {}; },
+                AbortController,
                 fetch: async () => { throw new Error('fetch should not run'); },
                 setTimeout,
                 clearTimeout,
@@ -2543,6 +2544,45 @@ def test_app_js_inference_node_selection_renders_cached_snapshot_immediately():
                     const workerACalls = calls.filter(call => call[1] === '/api/nodes/worker-a/inference/overview').length;
                     if (workerACalls !== 2) {
                         throw new Error('switching back should still start a fresh background overview request');
+                    }
+
+                    abortActiveInferenceRefresh();
+                    calls.length = 0;
+                    let abortedStaleRefresh = false;
+                    activeInferenceTab = 'profiles';
+                    selectedNodeId = 'worker-a';
+                    api = async function(method, path, body, extraHeaders, options = {}) {
+                        calls.push([method, path]);
+                        if (method === 'GET' && path === '/api/nodes/worker-a/inference/overview') {
+                            return new Promise((_resolve, reject) => {
+                                if (!options.signal) throw new Error('overview refresh should receive an abort signal');
+                                options.signal.addEventListener('abort', () => {
+                                    abortedStaleRefresh = true;
+                                    const error = new Error('aborted');
+                                    error.name = 'AbortError';
+                                    reject(error);
+                                });
+                            });
+                        }
+                        if (method === 'GET' && path === '/api/nodes/worker-a/models') {
+                            return { artifacts: [], jobs: [] };
+                        }
+                        if (method === 'GET' && path === '/api/nodes/worker-a/models/storage') {
+                            return { root: '/models', disk: null };
+                        }
+                        throw new Error('unexpected API call during abort check: ' + method + ' ' + path);
+                    };
+
+                    const staleRefresh = refreshInferenceProfiles();
+                    await Promise.resolve();
+                    activeInferenceTab = 'models';
+                    await refreshInferenceModels();
+                    await staleRefresh;
+                    if (!abortedStaleRefresh) {
+                        throw new Error('starting a newer active-tab refresh should abort the stale one');
+                    }
+                    if (document.getElementById('inference-error').textContent.includes('aborted')) {
+                        throw new Error('aborted stale refreshes should not be shown as UI errors');
                     }
                 })().catch((error) => {
                     console.error(error.stack || error.message);

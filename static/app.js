@@ -104,6 +104,8 @@ let inferenceJobsTimer = null;
 let activeInferenceTab = 'profiles';
 let lastInferenceEventAt = null;
 let lastInferenceFallbackSyncAt = null;
+let activeInferenceRefresh = null;
+let activeInferenceRefreshId = 0;
 const ACTIVE_MODEL_JOB_STATES = new Set(['queued', 'running', 'hashing', 'verifying']);
 const ACTIVE_INFERENCE_OPERATION_STATES = new Set(['queued', 'running']);
 const ACCEPTED_OPERATION_RECONCILE_DELAY_MS = 1200;
@@ -167,6 +169,7 @@ async function showAppView(view) {
     currentAppView = view === 'settings' || view === 'inference' ? view : 'main';
     syncAppViewChrome();
     if (currentAppView === 'settings') {
+        abortActiveInferenceRefresh();
         stopRefreshLoop();
         stopSidebarLoop();
         stopInferencePolling();
@@ -176,6 +179,7 @@ async function showAppView(view) {
         stopSidebarLoop();
         await loadInferenceView();
     } else if (selectedNodeId) {
+        abortActiveInferenceRefresh();
         stopInferencePolling();
         await Promise.all([
             isMaster ? startSidebarLoop() : Promise.resolve(),
@@ -260,10 +264,11 @@ function isRefreshCurrent(context) {
         && context.nodeId === selectedNodeId;
 }
 
-async function api(method, path, body, extraHeaders) {
+async function api(method, path, body, extraHeaders, options = {}) {
     const headers = { 'Content-Type': 'application/json', ...extraHeaders };
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
     const opts = { method, headers, credentials: 'same-origin' };
+    if (options && options.signal) opts.signal = options.signal;
     if (body) opts.body = JSON.stringify(body);
     const resp = await fetch(API + path, opts);
     if (resp.status === 401 && !path.startsWith('/api/auth/')) {
@@ -1563,6 +1568,51 @@ function modelNodePath(path) {
     return nodePathFor(selectedNodeId, path);
 }
 
+function beginActiveInferenceRefresh(nodeId, scope) {
+    if (activeInferenceRefresh && activeInferenceRefresh.controller) {
+        activeInferenceRefresh.controller.abort();
+    }
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const request = {
+        id: ++activeInferenceRefreshId,
+        nodeId,
+        scope,
+        controller,
+        signal: controller ? controller.signal : null,
+    };
+    activeInferenceRefresh = request;
+    return request;
+}
+
+function finishActiveInferenceRefresh(request) {
+    if (activeInferenceRefresh === request) {
+        activeInferenceRefresh = null;
+    }
+}
+
+function abortActiveInferenceRefresh() {
+    if (activeInferenceRefresh && activeInferenceRefresh.controller) {
+        activeInferenceRefresh.controller.abort();
+    }
+    activeInferenceRefresh = null;
+}
+
+function activeInferenceRefreshIsCurrent(request) {
+    return activeInferenceRefresh === request
+        && currentAppView === 'inference'
+        && request
+        && request.nodeId === selectedNodeId;
+}
+
+function isAbortError(error) {
+    return error && (error.name === 'AbortError' || error.code === 20);
+}
+
+function activeInferenceRefreshApi(request, method, path, body) {
+    const options = request && request.signal ? { signal: request.signal } : undefined;
+    return api(method, path, body, null, options);
+}
+
 function setInferenceTab(tab) {
     activeInferenceTab = ['profiles', 'models', 'launchers', 'jobs', 'storage'].includes(tab) ? tab : 'profiles';
     document.querySelectorAll('.inference-tab').forEach(t => {
@@ -1879,10 +1929,11 @@ async function refreshActiveInferenceTab() {
 async function refreshInferenceProfiles() {
     const nodeId = selectedNodeId;
     if (!nodeId) return;
+    const request = beginActiveInferenceRefresh(nodeId, 'profiles');
     setInferenceError('');
     try {
-        const overview = await api('GET', modelNodePath('/api/inference/overview'));
-        if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        const overview = await activeInferenceRefreshApi(request, 'GET', modelNodePath('/api/inference/overview'));
+        if (!activeInferenceRefreshIsCurrent(request)) return;
         const profiles = overview.profiles || {};
         const models = overview.models || { artifacts: [], jobs: [] };
         const launchers = overview.launchers || {};
@@ -1914,21 +1965,25 @@ async function refreshInferenceProfiles() {
         hydrateVisibleInferenceFailures(nodeId);
         updateInferencePolling();
     } catch (e) {
+        if (isAbortError(e)) return;
         setInferenceError(e.message);
         stopInferencePolling();
+    } finally {
+        finishActiveInferenceRefresh(request);
     }
 }
 
 async function refreshInferenceJobs() {
     const nodeId = selectedNodeId;
     if (!nodeId) return;
+    const request = beginActiveInferenceRefresh(nodeId, 'jobs');
     setInferenceError('');
     try {
         const [models, operations] = await Promise.all([
-            api('GET', modelNodePath('/api/models')),
-            api('GET', modelNodePath('/api/inference/operations')),
+            activeInferenceRefreshApi(request, 'GET', modelNodePath('/api/models')),
+            activeInferenceRefreshApi(request, 'GET', modelNodePath('/api/inference/operations')),
         ]);
-        if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        if (!activeInferenceRefreshIsCurrent(request)) return;
         inferenceModelData = models;
         inferenceOperationsData = operations.operations || [];
         saveInferenceNodeSnapshot(nodeId, {
@@ -1941,8 +1996,11 @@ async function refreshInferenceJobs() {
         clearTransientInferenceStatus();
         updateInferencePolling();
     } catch (e) {
+        if (isAbortError(e)) return;
         setInferenceError(e.message);
         stopInferencePolling();
+    } finally {
+        finishActiveInferenceRefresh(request);
     }
 }
 
@@ -5007,10 +5065,11 @@ function renderInferenceOperations(operations) {
 async function refreshInferenceLaunchers() {
     const nodeId = selectedNodeId;
     if (!nodeId) return;
+    const request = beginActiveInferenceRefresh(nodeId, 'launchers');
     setInferenceError('');
     try {
-        const data = await api('GET', modelNodePath('/api/inference/launchers'));
-        if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        const data = await activeInferenceRefreshApi(request, 'GET', modelNodePath('/api/inference/launchers'));
+        if (!activeInferenceRefreshIsCurrent(request)) return;
         inferenceLaunchersData = data.launchers || [];
         saveInferenceNodeSnapshot(nodeId, {
             launchers: inferenceLaunchersData,
@@ -5018,7 +5077,10 @@ async function refreshInferenceLaunchers() {
         renderLaunchers(inferenceLaunchersData);
         clearTransientInferenceStatus();
     } catch (e) {
+        if (isAbortError(e)) return;
         setInferenceError(e.message);
+    } finally {
+        finishActiveInferenceRefresh(request);
     }
 }
 
@@ -5491,13 +5553,14 @@ function updateInferencePolling() {
 async function refreshInferenceModels() {
     const nodeId = selectedNodeId;
     if (!nodeId) return;
+    const request = beginActiveInferenceRefresh(nodeId, 'models');
     setInferenceError('');
     try {
         const [models, storage] = await Promise.all([
-            api('GET', modelNodePath('/api/models')),
-            api('GET', modelNodePath('/api/models/storage')),
+            activeInferenceRefreshApi(request, 'GET', modelNodePath('/api/models')),
+            activeInferenceRefreshApi(request, 'GET', modelNodePath('/api/models/storage')),
         ]);
-        if (currentAppView !== 'inference' || nodeId !== selectedNodeId) return;
+        if (!activeInferenceRefreshIsCurrent(request)) return;
         inferenceModelData = models;
         inferenceStorageData = storage;
         saveInferenceNodeSnapshot(nodeId, {
@@ -5511,8 +5574,11 @@ async function refreshInferenceModels() {
         clearTransientInferenceStatus();
         updateInferencePolling();
     } catch (e) {
+        if (isAbortError(e)) return;
         setInferenceError(e.message);
         stopInferencePolling();
+    } finally {
+        finishActiveInferenceRefresh(request);
     }
 }
 
