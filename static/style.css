@@ -783,6 +783,85 @@ body {
     margin-top: 4px;
 }
 
+.inference-header-controls {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.inference-live-status {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+    min-width: 168px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.inference-live-status > span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.035);
+}
+
+.inference-live-status strong,
+.inference-live-status small {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inference-live-status strong {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.inference-live-status small {
+    margin-top: 1px;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.inference-live-status.green {
+    border-color: rgba(16, 185, 129, 0.22);
+    background: var(--green-glow);
+}
+
+.inference-live-status.green > span {
+    background: var(--green);
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.13);
+}
+
+.inference-live-status.yellow {
+    border-color: rgba(245, 158, 11, 0.24);
+    background: var(--yellow-glow);
+}
+
+.inference-live-status.yellow > span {
+    background: var(--yellow);
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.13);
+}
+
+.inference-live-status.red {
+    border-color: rgba(239, 68, 68, 0.24);
+    background: var(--red-glow);
+}
+
+.inference-live-status.red > span {
+    background: var(--red);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.13);
+}
+
 .inference-node-picker {
     display: flex;
     align-items: center;
@@ -3286,6 +3365,11 @@ body {
 
     .inference-page-header {
         flex-direction: column;
+    }
+
+    .inference-header-controls {
+        width: 100%;
+        justify-content: flex-start;
     }
 
     .inference-node-picker {

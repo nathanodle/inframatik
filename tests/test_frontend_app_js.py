@@ -2140,11 +2140,18 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
                     wsConnected = true;
                     handleWsDisconnected();
                     const activeTimerId = inferenceJobsTimer;
+                    const liveStatusEl = document.getElementById('inference-live-status');
                     assert(wsConnected === false, 'websocket close should mark the socket disconnected');
                     assert(activeTimerId !== null, 'websocket close should start fallback polling for active operations');
                     assert(
                         calls.some(call => call[0] === 'setInterval' && call[1] === activeTimerId && call[2] === 2500),
                         'fallback polling should run on the inference activity cadence'
+                    );
+                    assert(
+                        liveStatusEl.className.includes('yellow') &&
+                        liveStatusEl.innerHTML.includes('Fallback sync') &&
+                        liveStatusEl.innerHTML.includes('Event stream reconnecting'),
+                        'websocket close with active work should show fallback sync status'
                     );
 
                     await timerCallbacks.get(activeTimerId)();
@@ -2160,6 +2167,11 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
                     assert(
                         calls.some(call => call[0] === 'clearInterval' && call[1] === activeTimerId),
                         'terminal operation should clear the fallback timer'
+                    );
+                    assert(
+                        liveStatusEl.innerHTML.includes('Event stream') &&
+                        liveStatusEl.innerHTML.includes('Idle'),
+                        'terminal fallback refresh should return the live status to idle when no work remains'
                     );
 
                     calls.length = 0;
@@ -2230,6 +2242,11 @@ def test_app_js_inference_ws_state_transitions_manage_activity_polling():
 
                     await handleWsConnected();
                     assert(wsConnected === true, 'websocket reconnect should mark the socket connected');
+                    assert(
+                        liveStatusEl.className.includes('green') &&
+                        liveStatusEl.innerHTML.includes('Live events'),
+                        'websocket reconnect should show live event status'
+                    );
                     assert(
                         calls.some(call => call[0] === 'clearInterval' && call[1] === reconnectTimerId),
                         'websocket reconnect should stop fallback polling'
@@ -2580,6 +2597,7 @@ def test_static_inference_model_ui_assets_present():
     assert 'id="profile-llama-tensor-split"' in index_html
     assert 'id="inference-profiles-list"' in index_html
     assert 'id="inference-operations-list"' in index_html
+    assert 'id="inference-live-status"' in index_html
     assert 'data-inference-tab="launchers"' in index_html
     assert 'id="launcher-executable"' in index_html
     assert 'id="launcher-venv-path"' in index_html
@@ -2634,6 +2652,9 @@ def test_static_inference_model_ui_assets_present():
     assert "inference_operation" in app_js
     assert "handleInferenceOperationEvent" in app_js
     assert "handleInferenceOperationEvent(msg.operation, msg)" in app_js
+    assert "renderInferenceLiveStatus" in app_js
+    assert "markInferenceLiveEvent" in app_js
+    assert "markInferenceFallbackSync" in app_js
     assert "websocketEventMatchesSelectedNode" in app_js
     assert "mergeInferenceOperationSnapshot" in app_js
     assert "selectedInferenceNodeIds" in app_js
@@ -2733,6 +2754,8 @@ def test_static_inference_model_ui_assets_present():
     assert ".launcher-validation-panel" in style_css
     assert ".launcher-validation-output" in style_css
     assert ".profile-card" in style_css
+    assert ".inference-live-status" in style_css
+    assert ".inference-header-controls" in style_css
     assert ".profile-action-bar" in style_css
     assert ".profile-action-group" in style_css
     assert ".profile-action-buttons" in style_css

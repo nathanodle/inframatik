@@ -43,12 +43,14 @@ function onWsProgress(task, callback) {
 
 async function handleWsConnected() {
     wsConnected = true;
+    renderInferenceLiveStatus('connected');
     updateInferencePolling();
     await resyncInferenceAfterWsReconnect();
 }
 
 function handleWsDisconnected() {
     wsConnected = false;
+    renderInferenceLiveStatus('disconnected');
     updateInferencePolling();
 }
 
@@ -95,6 +97,8 @@ let profileOutputCache = new Map();
 let operationLogOutputCache = new Map();
 let inferenceJobsTimer = null;
 let activeInferenceTab = 'profiles';
+let lastInferenceEventAt = null;
+let lastInferenceFallbackSyncAt = null;
 const ACTIVE_MODEL_JOB_STATES = new Set(['queued', 'running', 'hashing', 'verifying']);
 const ACTIVE_INFERENCE_OPERATION_STATES = new Set(['queued', 'running']);
 
@@ -1623,6 +1627,58 @@ function setInferenceStatus(message) {
     setElementText('inference-status', message || '');
 }
 
+function inferenceFreshnessLabel(timestamp) {
+    if (!timestamp) return '';
+    const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+    if (seconds < 2) return 'just now';
+    if (seconds < 60) return `${seconds}s ago`;
+    return `${Math.floor(seconds / 60)}m ago`;
+}
+
+function renderInferenceLiveStatus(reason = '') {
+    const el = document.getElementById('inference-live-status');
+    if (!el) return;
+    const active = hasActiveInferenceActivity();
+    let tone = 'muted';
+    let label = 'Connecting';
+    let detail = 'Waiting for live events';
+    if (wsConnected) {
+        tone = 'green';
+        label = 'Live events';
+        detail = lastInferenceEventAt ? `Last event ${inferenceFreshnessLabel(lastInferenceEventAt)}` : 'WebSocket connected';
+    } else if (active && inferenceJobsTimer) {
+        tone = 'yellow';
+        label = 'Fallback sync';
+        detail = lastInferenceFallbackSyncAt ? `Last sync ${inferenceFreshnessLabel(lastInferenceFallbackSyncAt)}` : 'Event stream reconnecting';
+    } else if (active) {
+        tone = 'yellow';
+        label = 'Reconnecting';
+        detail = 'Active work waiting for event stream';
+    } else {
+        label = 'Event stream';
+        detail = reason === 'disconnected' ? 'Reconnect pending' : 'Idle';
+    }
+    el.className = `inference-live-status ${tone}`;
+    el.title = `${label}: ${detail}`;
+    setHtmlIfChanged(el, `
+        <span></span>
+        <div>
+            <strong>${esc(label)}</strong>
+            <small>${esc(detail)}</small>
+        </div>
+    `);
+}
+
+function markInferenceLiveEvent() {
+    lastInferenceEventAt = Date.now();
+    renderInferenceLiveStatus('event');
+}
+
+function markInferenceFallbackSync() {
+    lastInferenceFallbackSyncAt = Date.now();
+    renderInferenceLiveStatus('fallback');
+}
+
 function selectedNodeLabel() {
     const node = nodes.find(n => n.node_id === selectedNodeId || n.config_node_id === selectedNodeId);
     if (node) return node.node_name || selectedNodeId;
@@ -1667,6 +1723,7 @@ async function loadInferenceView() {
     renderInferenceNodePicker();
     const subtitle = document.getElementById('inference-page-subtitle');
     if (subtitle) subtitle.textContent = `${selectedNodeLabel()} · node-local inference storage`;
+    renderInferenceLiveStatus('load');
     showInferencePendingState();
     await refreshActiveInferenceTab();
 }
@@ -3598,6 +3655,7 @@ function patchProfileFromOperation(operation) {
 
 function handleInferenceOperationEvent(operation, event = {}) {
     if (!websocketEventMatchesSelectedNode(event)) return;
+    markInferenceLiveEvent();
     const terminal = isTerminalInferenceOperation(operation);
     mergeInferenceOperation(operation, { suppressProfileRender: terminal });
     if (terminal && currentAppView === 'inference') {
@@ -3733,6 +3791,7 @@ function mergeModelJob(job) {
 
 function handleModelJobEvent(job, event = {}) {
     if (!websocketEventMatchesSelectedNode(event)) return;
+    markInferenceLiveEvent();
     mergeModelJob(job);
 }
 
@@ -4791,6 +4850,7 @@ function stopInferencePolling() {
         clearInterval(inferenceJobsTimer);
         inferenceJobsTimer = null;
     }
+    renderInferenceLiveStatus('polling-stopped');
 }
 
 function hasActiveInferenceModelJob() {
@@ -4834,9 +4894,11 @@ async function refreshInferenceActivity() {
         } else {
             updateInferencePolling();
         }
+        markInferenceFallbackSync();
     } catch (e) {
         setInferenceError(e.message);
         stopInferencePolling();
+        renderInferenceLiveStatus('fallback-error');
     }
 }
 
@@ -4851,6 +4913,7 @@ function updateInferencePolling() {
     } else if (!shouldPoll && inferenceJobsTimer) {
         stopInferencePolling();
     }
+    renderInferenceLiveStatus('polling');
 }
 
 async function refreshInferenceModels() {

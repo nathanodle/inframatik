@@ -308,9 +308,18 @@
                 <h2>Inference</h2>
                 <p id="inference-page-subtitle">Node-local model inventory and jobs.</p>
             </div>
-            <div class="inference-node-picker" id="inference-node-picker" style="display:none">
-                <label>Node</label>
-                <select id="inference-node-select" onchange="selectNode(this.value)"></select>
+            <div class="inference-header-controls">
+                <div class="inference-live-status muted" id="inference-live-status" title="Inference event stream state">
+                    <span></span>
+                    <div>
+                        <strong>Connecting</strong>
+                        <small>Waiting for live events</small>
+                    </div>
+                </div>
+                <div class="inference-node-picker" id="inference-node-picker" style="display:none">
+                    <label>Node</label>
+                    <select id="inference-node-select" onchange="selectNode(this.value)"></select>
+                </div>
             </div>
         </div>
 
