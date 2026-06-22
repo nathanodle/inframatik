@@ -347,6 +347,59 @@ def test_app_js_cloudflare_section_gating_by_role():
                     'active model jobs should show transfer rate, elapsed time, and ETA'
                 );
 
+                const submitUrlJobResult = await vm.runInContext(`
+                    (async () => {
+                        const localCalls = [];
+                        isMaster = false;
+                        selectedNodeId = 'self-node';
+                        currentAppView = 'inference';
+                        activeInferenceTab = 'models';
+                        inferenceModelData = { artifacts: [], jobs: [] };
+                        inferenceOperationsData = [];
+                        document.getElementById('model-url-url').value = 'https://example.invalid/model.gguf';
+                        document.getElementById('model-url-artifact').value = 'qwen-url';
+                        document.getElementById('model-url-snapshot').value = 'v1';
+                        document.getElementById('model-url-extract').checked = false;
+                        refreshInferenceModels = async function() {
+                            localCalls.push(['refreshInferenceModels']);
+                        };
+                        api = async function(method, path, body) {
+                            localCalls.push([method, path, body && body.source && body.source.url]);
+                            if (method === 'POST' && path === '/api/models/download') {
+                                return {
+                                    id: 'mdl-new',
+                                    kind: 'download',
+                                    artifact_id: 'qwen-url',
+                                    snapshot: 'v1',
+                                    source: { type: 'url', url: 'https://example.invalid/model.gguf' },
+                                    state: 'queued',
+                                    progress: 0,
+                                    downloaded_bytes: 0,
+                                    total_bytes: 0,
+                                };
+                            }
+                            throw new Error('unexpected API call: ' + method + ' ' + path);
+                        };
+                        await submitModelUrlDownload();
+                        return {
+                            calls: localCalls,
+                            activeInferenceTab,
+                            jobsHtml: document.getElementById('model-jobs-list').innerHTML,
+                            operationsHtml: document.getElementById('inference-operations-list').innerHTML,
+                            jobs: inferenceModelData.jobs.map(job => job.id),
+                        };
+                    })()
+                `, context);
+                assert(
+                    submitUrlJobResult.calls.some(call => call[0] === 'POST' && call[1] === '/api/models/download') &&
+                    !submitUrlJobResult.calls.some(call => call[0] === 'refreshInferenceModels') &&
+                    submitUrlJobResult.activeInferenceTab === 'jobs' &&
+                    submitUrlJobResult.jobs.includes('mdl-new') &&
+                    submitUrlJobResult.jobsHtml.includes('qwen-url') &&
+                    submitUrlJobResult.operationsHtml.includes('No inference operations yet.'),
+                    'model download start should render the returned job without a broad model refresh'
+                );
+
                 const startupPanelHtml = vm.runInContext(`
                     renderProfileOperationPanel({
                         id: 'op-start',
@@ -1873,6 +1926,7 @@ def test_static_inference_model_ui_assets_present():
     assert "renderLauncherValidation" in app_js
     assert "cleanModelJobStaging" in app_js
     assert "modelJobStagingCleaned" in app_js
+    assert "showStartedModelJob" in app_js
     assert ".model-job-badges" in style_css
     assert "force_stopped_references=true" in app_js
     assert "path.startsWith('/api/models')" in app_js

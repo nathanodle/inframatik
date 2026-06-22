@@ -4627,6 +4627,13 @@ function modelOptionalValue(id) {
     return value || null;
 }
 
+function showStartedModelJob(job, message) {
+    setInferenceStatus(message);
+    setInferenceTab('jobs');
+    mergeModelJob(job);
+    renderInferenceOperations(inferenceOperationsData);
+}
+
 async function submitModelImport() {
     const path = modelOptionalValue('model-import-path');
     if (!path) {
@@ -4636,15 +4643,13 @@ async function submitModelImport() {
     setInferenceError('');
     setInferenceStatus('Starting import...');
     try {
-        await api('POST', modelNodePath('/api/models/import'), {
+        const job = await api('POST', modelNodePath('/api/models/import'), {
             path,
             artifact_id: modelOptionalValue('model-import-artifact'),
             display_name: modelOptionalValue('model-import-name'),
             snapshot: modelOptionalValue('model-import-snapshot'),
         });
-        setInferenceStatus('Import job started.');
-        setInferenceTab('jobs');
-        await refreshInferenceModels();
+        showStartedModelJob(job, 'Import job started.');
     } catch (e) {
         setInferenceError(e.message);
         setInferenceStatus('');
@@ -4666,14 +4671,12 @@ async function submitModelUrlDownload() {
     setInferenceError('');
     setInferenceStatus('Starting download...');
     try {
-        await api('POST', modelNodePath('/api/models/download'), {
+        const job = await api('POST', modelNodePath('/api/models/download'), {
             source,
             artifact_id: modelOptionalValue('model-url-artifact'),
             snapshot: modelOptionalValue('model-url-snapshot'),
         });
-        setInferenceStatus('Download job started.');
-        setInferenceTab('jobs');
-        await refreshInferenceModels();
+        showStartedModelJob(job, 'Download job started.');
     } catch (e) {
         setInferenceError(e.message);
         setInferenceStatus('');
@@ -4697,14 +4700,12 @@ async function submitModelHfDownload() {
     setInferenceError('');
     setInferenceStatus('Starting Hugging Face download...');
     try {
-        await api('POST', modelNodePath('/api/models/download'), {
+        const job = await api('POST', modelNodePath('/api/models/download'), {
             source,
             artifact_id: modelOptionalValue('model-hf-artifact'),
         });
         if (tokenEl) tokenEl.value = '';
-        setInferenceStatus('Download job started.');
-        setInferenceTab('jobs');
-        await refreshInferenceModels();
+        showStartedModelJob(job, 'Download job started.');
     } catch (e) {
         setInferenceError(e.message);
         setInferenceStatus('');
